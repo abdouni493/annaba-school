@@ -734,11 +734,11 @@ function TeacherSubjectsView({
       <Modal open={isAddOpen} onClose={() => setIsAddOpen(false)} title="Créer un sujet / exercice">
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Titre de la fiche *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Titre de la fiche</label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Devoir blanc Math" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Groupe ciblé *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Groupe ciblé</label>
             <Select value={sessionId} onChange={(e) => setSessionId(e.target.value)} className="w-full">
               <option value="">Sélectionner...</option>
               {teacherSessions.map((s) => {

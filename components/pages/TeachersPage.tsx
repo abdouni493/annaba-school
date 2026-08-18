@@ -777,15 +777,14 @@ export function TeachersPage() {
    *  next settlement, once. */
   const handleCreateExpense = () => {
     if (!selectedTeacher) return;
+    // Only the name is required — a dépense is often noted the moment the school
+    // carries it and priced once the receipt arrives. A 0 DA line simply
+    // deducts nothing from the next règlement.
     if (!expenseName.trim()) {
-      alert("Le nom de la dépense est obligatoire.");
+      alert("Indiquez au moins le nom de la dépense.");
       return;
     }
     const value = Math.max(0, Math.round(expenseAmount || 0));
-    if (value <= 0) {
-      alert("Le montant de la dépense doit être supérieur à 0 DA.");
-      return;
-    }
     push("teacherExpenses", {
       id: uid("tex"),
       teacherId: selectedTeacher.id,
@@ -2284,7 +2283,7 @@ export function TeachersPage() {
             </div>
           )}
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">Nom de la dépense *</label>
+            <label className="mb-1 block text-xs font-semibold text-muted">Nom de la dépense</label>
             <Input
               value={expenseName}
               onChange={(e) => setExpenseName(e.target.value)}
@@ -2294,7 +2293,7 @@ export function TeachersPage() {
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Montant (DA) *</label>
+              <label className="mb-1 block text-xs font-semibold text-muted">Montant (DA)</label>
               <Input
                 type="number"
                 min={0}
@@ -2304,7 +2303,7 @@ export function TeachersPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Date *</label>
+              <label className="mb-1 block text-xs font-semibold text-muted">Date</label>
               <Input
                 type="date"
                 value={expenseDate}
@@ -2403,7 +2402,7 @@ export function TeachersPage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom *</label>
+              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom</label>
               <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Prénom" />
             </div>
             <div>

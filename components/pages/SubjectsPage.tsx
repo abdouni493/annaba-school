@@ -41,8 +41,9 @@ export function SubjectsPage() {
   };
 
   const handleCreateSubject = () => {
-    if (!title || !sessionId) {
-      alert("Le titre et le groupe sont obligatoires.");
+    // Only the title is required — the fiche can be attached to its groupe later.
+    if (!title.trim()) {
+      alert("Indiquez au moins un titre pour la fiche.");
       return;
     }
 
@@ -212,12 +213,12 @@ export function SubjectsPage() {
       <Modal open={isCreateOpen} onClose={() => setIsCreateOpen(false)} title="Créer un sujet / exercice" wide>
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Titre de la fiche *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Titre de la fiche</label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Devoir de Mathématiques Trimestre 1" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Groupe / Séance concerné *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Groupe / Séance concerné</label>
             <Select value={sessionId} onChange={(e) => setSessionId(e.target.value)} className="w-full">
               <option value="">Sélectionner le groupe d'élèves</option>
               {sessions.map((s) => (

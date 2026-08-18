@@ -55,3 +55,8 @@ make sure to make on the sql code all the table for all the interfaces and all t
 
 make sure to connect all the interfaces and all the button action to make them use only the supabase data base connection 
 
+
+
+fix the creation of emploi du temps remove the requarement of remplire tous les champs and remove the option of requaremen on the creation for all the interfaces 
+fix the interface of create new emploi du temps make it when user select more than one day for that emploi du temps then request from him to set the starting hour and ending hour of each day
+change the logic of create new emploi du temps dont let the user select the salle until he select the days and the starting hour and the ending hour of each day then display for him the created sales that disponible on that day and hours or not disponible 

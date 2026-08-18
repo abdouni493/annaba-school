@@ -24,10 +24,15 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import type { ScheduleSession, Day, Subscription, Teacher } from "@/lib/types";
+import type { DayTime, ScheduleSession, Day, Subscription, Teacher } from "@/lib/types";
 import {
+  clashingDays,
+  formatDays,
+  minutesOf,
   monthlyPriceOf,
   schoolMonthShareOf,
+  sessionTimeLabel,
+  sessionTimesOn,
   soldFor,
   teacherMonthShareOf,
   teacherPerSeanceOf,
@@ -139,10 +144,12 @@ export function PlannerPage() {
   const [salleId, setSalleId] = useState("");
   const [teacherId, setTeacherId] = useState("");
   const [selectedDays, setSelectedDays] = useState<Day[]>([]);
-  const [startHour, setStartHour] = useState("08");
-  const [startMin, setStartMin] = useState("00");
-  const [endHour, setEndHour] = useState("10");
-  const [endMin, setEndMin] = useState("00");
+  /**
+   * The hours of EACH selected day, keyed by day. An emploi may run Samedi
+   * 08:00–10:00 and Mardi 14:00–16:00, so the desk sets a pair per day as soon
+   * as it picks more than one. A single day still reads as one simple pair.
+   */
+  const [dayTimes, setDayTimes] = useState<Partial<Record<Day, DayTime>>>({});
 
   // ---- Tarification mensuelle de l'emploi du temps ------------------------
   // The desk gives TWO figures — the séances a month contains and what that
@@ -243,13 +250,117 @@ export function PlannerPage() {
     return t ? `${t.firstName} ${t.lastName}` : "-";
   };
 
+  const DEFAULT_DAY_TIME: DayTime = { startTime: "08:00", endTime: "10:00" };
+
+  /**
+   * Picking a day opens its own pair of hours; unpicking it takes them away.
+   * A new day starts from the hours already set (the previous day's, or the
+   * default), so a week of identical créneaux is one click per day.
+   */
   const toggleDay = (day: Day) => {
     if (selectedDays.includes(day)) {
       setSelectedDays(selectedDays.filter((d) => d !== day));
-    } else {
-      setSelectedDays([...selectedDays, day]);
+      setDayTimes((prev) => {
+        const next = { ...prev };
+        delete next[day];
+        return next;
+      });
+      return;
     }
+    const template = selectedDays.length
+      ? dayTimes[selectedDays[selectedDays.length - 1]] ?? DEFAULT_DAY_TIME
+      : DEFAULT_DAY_TIME;
+    setSelectedDays([...selectedDays, day]);
+    setDayTimes((prev) => ({ ...prev, [day]: { ...template } }));
   };
+
+  /** Sets one end of one day's créneau. */
+  const setDayTime = (day: Day, key: keyof DayTime, value: string) =>
+    setDayTimes((prev) => ({
+      ...prev,
+      [day]: { ...(prev[day] ?? DEFAULT_DAY_TIME), [key]: value },
+    }));
+
+  /** Copies the first day's hours onto every other selected day. */
+  const applyFirstDayToAll = () => {
+    const first = selectedDays[0];
+    if (!first) return;
+    const model = dayTimes[first] ?? DEFAULT_DAY_TIME;
+    setDayTimes(Object.fromEntries(selectedDays.map((d) => [d, { ...model }])));
+  };
+
+  /** The selected days, in the school's week order rather than the click order. */
+  const orderedDays = useMemo(
+    () => WEEKDAYS.map((w) => w.key).filter((d) => selectedDays.includes(d)),
+    [selectedDays],
+  );
+
+  /** A day is settled once its two hours are set and the end follows the start. */
+  const dayTimeValid = (day: Day) => {
+    const t = dayTimes[day];
+    return !!t?.startTime && !!t?.endTime && minutesOf(t.endTime) > minutesOf(t.startTime);
+  };
+
+  /** Every selected day carries a coherent créneau — what unlocks the salle. */
+  const timingReady = selectedDays.length > 0 && orderedDays.every(dayTimeValid);
+
+  /** The days whose end hour does not follow their start — flagged inline. */
+  const invalidDays = orderedDays.filter((d) => dayTimes[d] && !dayTimeValid(d));
+
+  /** What the form currently describes, in the shape the clash check expects. */
+  const draftTiming = useMemo(() => {
+    const first = orderedDays[0];
+    const base = (first && dayTimes[first]) || DEFAULT_DAY_TIME;
+    return {
+      days: orderedDays,
+      startTime: base.startTime,
+      endTime: base.endTime,
+      dayTimes,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedDays, dayTimes]);
+
+  /**
+   * Salle availability for the créneaux currently on screen.
+   *
+   * A salle is taken when another emploi du temps already occupies it on one of
+   * the selected days at an overlapping hour. Ends that merely touch (10:00 /
+   * 10:00) do not clash — the room frees exactly as the next cours starts.
+   */
+  interface SalleAvailability {
+    id: string;
+    name: string;
+    free: boolean;
+    /** the emplois already in that salle on those créneaux */
+    clashes: { sessionId: string; label: string; days: Day[]; timeLabel: string }[];
+  }
+
+  const salleAvailability = useMemo<SalleAvailability[]>(() => {
+    const editingId = selectedSession?.id;
+    return salles.map((salle) => {
+      const clashes = sessions
+        .filter((other) => other.id !== editingId)
+        .filter((other) => (other.salleIds?.length ? other.salleIds : [other.salleId]).includes(salle.id))
+        .map((other) => ({ other, days: clashingDays(draftTiming, other) }))
+        .filter(({ days }) => days.length > 0)
+        .map(({ other, days }) => ({
+          sessionId: other.id,
+          label: other.title || getModuleName(other.moduleId),
+          days,
+          timeLabel: days
+            .map((d) => {
+              const { startTime, endTime } = sessionTimesOn(other, d);
+              return `${startTime}–${endTime}`;
+            })
+            .filter((v, i, a) => a.indexOf(v) === i)
+            .join(" · "),
+        }));
+      return { id: salle.id, name: salle.name, free: clashes.length === 0, clashes };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salles, sessions, draftTiming, selectedSession]);
+
+  const freeSalleCount = salleAvailability.filter((s) => s.free).length;
 
   const handleCreateModule = () => {
     if (!newModuleName.trim()) return;
@@ -393,16 +504,16 @@ export function PlannerPage() {
    * hand-made subscription.
    */
   const handleSaveOpenSeance = async () => {
-    if (!openModuleId) return alert("Veuillez sélectionner le module de la séance libre.");
-    if (openClassIds.length === 0) return alert("Veuillez sélectionner au moins une classe concernée.");
-    if (openGroupIds.length === 0) return alert("Veuillez sélectionner au moins un groupe concerné.");
-    if (openSalleIds.length === 0) return alert("Veuillez sélectionner au moins une salle.");
-    if (!openPeriodStart || !openPeriodEnd) return alert("Veuillez définir la date de début et la date de fin de la période.");
+    // A séance libre only needs the period it runs over and the days inside it —
+    // that is what makes it exist in the calendar. Module, classes, groupes,
+    // salles, enseignant and prix can all be completed afterwards.
+    if (!openPeriodStart || !openPeriodEnd) {
+      return alert("Indiquez la période : une séance libre existe entre deux dates.");
+    }
     if (openPeriodStart > openPeriodEnd) return alert("La date de début doit précéder la date de fin.");
-    if (openDays.length === 0) return alert("Veuillez sélectionner au moins un jour d'étude dans cette période.");
-    if (openPrice <= 0) return alert("Veuillez saisir le prix d'une séance.");
-    if (openTeacherMode === "existing" && !openTeacherId) return alert("Veuillez sélectionner un enseignant existant.");
-    if (openTeacherMode === "passager" && !openPassagerName.trim()) return alert("Veuillez saisir le nom de l'enseignant passager.");
+    if (openDays.length === 0) {
+      return alert("Sélectionnez au moins un jour d'étude dans cette période.");
+    }
 
     setSavingOpenSeance(true);
     try {
@@ -438,11 +549,15 @@ export function PlannerPage() {
 
       const title = openTitleOverride.trim() || buildOpenTitle();
       const payload = {
-        classId: openClassIds[0],
+        // The single-value columns mirror the first of each list. Those lists
+        // may now be empty — the séance libre only needs its période and its
+        // jours — so they fall back on "" rather than undefined, which the
+        // database would refuse on these not-null columns.
+        classId: openClassIds[0] ?? "",
         moduleId: openModuleId,
-        groupId: openGroupIds[0],
-        salleId: openSalleIds[0],
-        teacherId,
+        groupId: openGroupIds[0] ?? "",
+        salleId: openSalleIds[0] ?? "",
+        teacherId: teacherId || "",
         days: openDays,
         startTime: `${openStartHour}:${openStartMin}`,
         endTime: `${openEndHour}:${openEndMin}`,
@@ -476,9 +591,41 @@ export function PlannerPage() {
     }
   };
 
+  /**
+   * What the form writes on the emploi du temps. `startTime`/`endTime` keep the
+   * first day's hours as the default — everything that only needs "roughly
+   * when" reads them — and `dayTimes` carries the per-day créneaux. A timing
+   * that runs identical hours all week stores no override at all.
+   */
+  const timingPayload = () => {
+    const first = orderedDays[0];
+    const base = (first && dayTimes[first]) || DEFAULT_DAY_TIME;
+    const perDay = Object.fromEntries(
+      orderedDays.map((d) => [d, dayTimes[d] ?? base]),
+    ) as Partial<Record<Day, DayTime>>;
+    const uniform = orderedDays.every(
+      (d) => perDay[d]!.startTime === base.startTime && perDay[d]!.endTime === base.endTime,
+    );
+    return {
+      days: orderedDays,
+      startTime: base.startTime,
+      endTime: base.endTime,
+      dayTimes: uniform ? undefined : perDay,
+    };
+  };
+
+  /**
+   * Only the days are required — an emploi du temps that runs on no day never
+   * occurs, and the salle availability has nothing to check against. Classe,
+   * module, groupe, salle and enseignant can all be filled in later.
+   */
   const handleCreateSession = () => {
-    if (!classId || !moduleId || !groupId || !salleId || !teacherId || selectedDays.length === 0) {
-      alert("Veuillez remplir tous les champs obligatoires et sélectionner au moins un jour.");
+    if (selectedDays.length === 0) {
+      alert("Sélectionnez au moins un jour : c'est ce qui fait exister l'emploi du temps.");
+      return;
+    }
+    if (invalidDays.length > 0) {
+      alert(`L'heure de fin doit suivre l'heure de début : ${formatDays(invalidDays)}.`);
       return;
     }
     const newSession: ScheduleSession = {
@@ -488,9 +635,7 @@ export function PlannerPage() {
       groupId,
       salleId,
       teacherId,
-      days: selectedDays,
-      startTime: `${startHour}:${startMin}`,
-      endTime: `${endHour}:${endMin}`,
+      ...timingPayload(),
       title: title.trim() || undefined,
     };
     push("sessions", newSession);
@@ -501,8 +646,12 @@ export function PlannerPage() {
 
   const handleEditSession = () => {
     if (!selectedSession) return;
-    if (!classId || !moduleId || !groupId || !salleId || !teacherId || selectedDays.length === 0) {
-      alert("Veuillez remplir tous les champs obligatoires.");
+    if (selectedDays.length === 0) {
+      alert("Sélectionnez au moins un jour : c'est ce qui fait exister l'emploi du temps.");
+      return;
+    }
+    if (invalidDays.length > 0) {
+      alert(`L'heure de fin doit suivre l'heure de début : ${formatDays(invalidDays)}.`);
       return;
     }
     const updated: Partial<ScheduleSession> = {
@@ -511,9 +660,7 @@ export function PlannerPage() {
       groupId,
       salleId,
       teacherId,
-      days: selectedDays,
-      startTime: `${startHour}:${startMin}`,
-      endTime: `${endHour}:${endMin}`,
+      ...timingPayload(),
       title: title.trim() || undefined,
     };
     updateItem("sessions", selectedSession.id, updated);
@@ -542,10 +689,7 @@ export function PlannerPage() {
     setSalleId("");
     setTeacherId("");
     setSelectedDays([]);
-    setStartHour("08");
-    setStartMin("00");
-    setEndHour("10");
-    setEndMin("00");
+    setDayTimes({});
     setSelectedSession(null);
     resetPricing();
   };
@@ -559,12 +703,11 @@ export function PlannerPage() {
     setSalleId(s.salleId);
     setTeacherId(s.teacherId);
     setSelectedDays(s.days);
-    const [sh, sm] = s.startTime.split(":");
-    const [eh, em] = s.endTime.split(":");
-    setStartHour(sh);
-    setStartMin(sm);
-    setEndHour(eh);
-    setEndMin(em);
+    // Days that carry no override fall back on the emploi's default hours, so
+    // the form always opens with a real pair in front of every selected day.
+    setDayTimes(
+      Object.fromEntries(s.days.map((d) => [d, sessionTimesOn(s, d)])) as Partial<Record<Day, DayTime>>,
+    );
     const sub = subscriptions.find((x) => x.sessionId === s.id);
     setMonthSeances(sub?.monthlySeances ?? 0);
     setMonthPrice(monthlyPriceOf(sub));
@@ -595,7 +738,7 @@ export function PlannerPage() {
         (day) => `
           <tr>
             <td style="font-weight:bold;">${L.days[day]}</td>
-            <td style="font-family:monospace; font-weight:700;">${s.startTime} – ${s.endTime}</td>
+            <td style="font-family:monospace; font-weight:700;">${sessionTimesOn(s, day).startTime} – ${sessionTimesOn(s, day).endTime}</td>
             <td>${getModuleName(s.moduleId)}</td>
             <td>${getGroupName(s.groupId)}</td>
             <td>${getClassName(s.classId)}</td>
@@ -672,6 +815,211 @@ export function PlannerPage() {
 
   const getHours = () => Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
   const getMinutes = () => ["00", "15", "30", "45"];
+
+  /** One "HH:mm" picker, split into an hour and a minute select. */
+  const renderTimePicker = (value: string, onChange: (next: string) => void) => {
+    const [h = "08", m = "00"] = (value || "").split(":");
+    return (
+      <div className="flex gap-1.5">
+        <Select value={h} onChange={(e) => onChange(`${e.target.value}:${m}`)} className="flex-1 !px-2">
+          {getHours().map((x) => (
+            <option key={x} value={x}>{x} H</option>
+          ))}
+        </Select>
+        <Select value={m} onChange={(e) => onChange(`${h}:${e.target.value}`)} className="flex-1 !px-2">
+          {getMinutes().map((x) => (
+            <option key={x} value={x}>{x} Min</option>
+          ))}
+        </Select>
+      </div>
+    );
+  };
+
+  /**
+   * Days, then the hours of EACH of them.
+   *
+   * One day reads as a single créneau. As soon as a second is picked, every day
+   * gets its own start and end — an emploi that runs Samedi matin and Mardi
+   * après-midi is one emploi, not two — with a shortcut to copy the first day's
+   * hours onto the rest when they are in fact identical.
+   */
+  const renderDaysAndHours = () => (
+    <div className="space-y-4">
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <label className="block text-xs font-semibold text-muted font-sans">Jours de cours</label>
+          <Badge tone={selectedDays.length ? "primary" : "warning"} className="text-[9px] font-bold">
+            {selectedDays.length ? `${selectedDays.length} jour(s)` : "Aucun jour"}
+          </Badge>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {WEEKDAYS.map((day) => {
+            const active = selectedDays.includes(day.key);
+            return (
+              <Button
+                key={day.key}
+                variant={active ? "primary" : "outline"}
+                onClick={() => toggleDay(day.key)}
+                size="sm"
+                className="w-full text-start py-2 justify-between"
+              >
+                <span>{day.label}</span>
+                {active && <span className="text-[10px] bg-white/25 px-1.5 rounded">✔</span>}
+              </Button>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectedDays.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-line bg-canvas/40 p-3 text-[11px] leading-relaxed text-muted">
+          Choisissez d&apos;abord les jours. Vous fixerez ensuite l&apos;heure de début et de fin
+          <strong className="text-ink"> de chaque jour</strong>, et les salles libres sur ces
+          créneaux vous seront proposées.
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-primary/25 bg-primary-50/30 p-3 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+              {selectedDays.length > 1 ? "Horaire de chaque jour" : "Horaire du jour"}
+            </span>
+            {selectedDays.length > 1 && (
+              <button
+                type="button"
+                onClick={applyFirstDayToAll}
+                className="text-[10px] font-semibold text-primary hover:underline"
+              >
+                Appliquer l&apos;horaire du {WEEKDAYS.find((w) => w.key === orderedDays[0])?.label} à tous
+              </button>
+            )}
+          </div>
+
+          {orderedDays.map((day) => {
+            const t = dayTimes[day] ?? DEFAULT_DAY_TIME;
+            const bad = !dayTimeValid(day);
+            return (
+              <div
+                key={day}
+                className={`rounded-xl border p-2.5 ${bad ? "border-danger/40 bg-danger/5" : "border-line bg-surface"}`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-bold text-ink">
+                    {WEEKDAYS.find((w) => w.key === day)?.label}
+                  </span>
+                  {bad && (
+                    <span className="text-[9px] font-semibold text-danger">
+                      La fin doit suivre le début
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="block text-[9px] uppercase font-semibold text-muted mb-1">Début</span>
+                    {renderTimePicker(t.startTime, (v) => setDayTime(day, "startTime", v))}
+                  </div>
+                  <div>
+                    <span className="block text-[9px] uppercase font-semibold text-muted mb-1">Fin</span>
+                    {renderTimePicker(t.endTime, (v) => setDayTime(day, "endTime", v))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  /**
+   * The salle, chosen LAST.
+   *
+   * It stays locked until every selected day carries a coherent créneau —
+   * without that there is nothing to check a room against. Once unlocked, each
+   * salle says whether it is free on those créneaux or which emploi already
+   * occupies it, so a clash is seen before it is booked, not after.
+   */
+  const renderSalleField = () => (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+        <label className="block text-xs font-semibold text-muted font-sans">Salle</label>
+        {timingReady && (
+          <div className="flex items-center gap-2">
+            <Badge tone={freeSalleCount ? "success" : "danger"} className="text-[9px] font-bold">
+              {freeSalleCount} / {salles.length} libre(s)
+            </Badge>
+            <button
+              onClick={() => setShowAddSalle(!showAddSalle)}
+              className="text-xs text-primary hover:underline"
+            >
+              + Nouvelle salle
+            </button>
+          </div>
+        )}
+      </div>
+
+      {!timingReady ? (
+        <div className="rounded-xl border border-dashed border-line bg-canvas/40 p-3 text-[11px] leading-relaxed text-muted">
+          🔒 Fixez d&apos;abord les <strong className="text-ink">jours</strong> et
+          l&apos;<strong className="text-ink">heure de début et de fin de chaque jour</strong>. Les
+          salles disponibles sur ces créneaux s&apos;afficheront ici.
+        </div>
+      ) : showAddSalle ? (
+        <div className="flex gap-2">
+          <Input
+            value={newSalleName}
+            onChange={(e) => setNewSalleName(e.target.value)}
+            placeholder="Nom de la salle"
+            className="flex-1"
+          />
+          <Button size="sm" onClick={handleCreateSalle}>Créer</Button>
+        </div>
+      ) : salles.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-line bg-canvas/40 p-3 text-[11px] text-muted">
+          Aucune salle enregistrée — créez-en une avec « + Nouvelle salle ».
+        </div>
+      ) : (
+        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-0.5">
+          {salleAvailability.map((sa) => {
+            const picked = salleId === sa.id;
+            return (
+              <button
+                key={sa.id}
+                type="button"
+                onClick={() => setSalleId(picked ? "" : sa.id)}
+                className={`w-full text-start rounded-xl border p-2.5 transition-all ${
+                  picked
+                    ? "border-primary bg-primary/10 ring-2 ring-primary/25"
+                    : sa.free
+                      ? "border-line bg-surface hover:bg-primary-50/40"
+                      : "border-danger/30 bg-danger/5"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-ink truncate">{sa.name}</span>
+                  <Badge tone={sa.free ? "success" : "danger"} className="text-[9px] font-bold shrink-0">
+                    {sa.free ? "Disponible" : "Occupée"}
+                  </Badge>
+                </div>
+                {!sa.free && (
+                  <div className="mt-1 space-y-0.5">
+                    {sa.clashes.map((c) => (
+                      <span key={c.sessionId} className="block text-[10px] leading-snug text-danger">
+                        {c.label} · {formatDays(c.days)} · {c.timeLabel}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+          <p className="pt-1 text-[10px] leading-relaxed text-muted">
+            Une salle occupée reste sélectionnable — l&apos;école peut vouloir doubler un créneau —
+            mais le conflit est affiché avant l&apos;enregistrement.
+          </p>
+        </div>
+      )}
+    </div>
+  );
 
   const clearFilters = () => {
     setFilterSessionId("");
@@ -860,7 +1208,11 @@ export function PlannerPage() {
               // Filter and sort sessions chronologically for this day
               const daySessions = filteredSessions
                 .filter((s) => s.days.includes(day.key))
-                .sort((a, b) => a.startTime.localeCompare(b.startTime));
+                .sort(
+                  (a, b) =>
+                    minutesOf(sessionTimesOn(a, day.key).startTime) -
+                    minutesOf(sessionTimesOn(b, day.key).startTime),
+                );
 
               return (
                 <div key={day.key} className="flex flex-col bg-canvas/30 rounded-2xl border border-line p-3 min-h-[420px] space-y-3.5">
@@ -894,7 +1246,10 @@ export function PlannerPage() {
                             {/* Timings */}
                             <div className="flex items-center gap-1 text-[9px] font-bold font-mono">
                               <Clock className="h-3 w-3 shrink-0" />
-                              <span>{s.startTime} - {s.endTime}</span>
+                              <span>
+                                {sessionTimesOn(s, day.key).startTime} -{" "}
+                                {sessionTimesOn(s, day.key).endTime}
+                              </span>
                             </div>
 
                             {/* Module & Class Info */}
@@ -1003,7 +1358,7 @@ export function PlannerPage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <Clock className="h-3.5 w-3.5 text-primary shrink-0" />
-                            <span>Horaires: <strong className="font-mono">{s.startTime} - {s.endTime}</strong></span>
+                            <span>Horaires: <strong className="font-mono">{sessionTimeLabel(s)}</strong></span>
                           </div>
                           {s.isOpen && (
                             <>
@@ -1094,7 +1449,7 @@ export function PlannerPage() {
           <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-muted font-sans">Module *</label>
+                <label className="block text-xs font-semibold text-muted font-sans">Module</label>
                 <button onClick={() => setShowAddModule(!showAddModule)} className="text-xs text-primary hover:underline">
                   + Nouveau module
                 </button>
@@ -1133,9 +1488,9 @@ export function PlannerPage() {
 
             {/* Multi-selects: classes / groupes / salles */}
             {([
-              { label: "Classes concernées *", items: classes.map((c) => ({ id: c.id, name: `${c.name} (${c.type === "cours" ? c.coursLevel : c.formationLevel})` })), selected: openClassIds, set: setOpenClassIds },
-              { label: "Groupes concernés *", items: groups, selected: openGroupIds, set: setOpenGroupIds },
-              { label: "Salles *", items: salles, selected: openSalleIds, set: setOpenSalleIds },
+              { label: "Classes concernées", items: classes.map((c) => ({ id: c.id, name: `${c.name} (${c.type === "cours" ? c.coursLevel : c.formationLevel})` })), selected: openClassIds, set: setOpenClassIds },
+              { label: "Groupes concernés", items: groups, selected: openGroupIds, set: setOpenGroupIds },
+              { label: "Salles", items: salles, selected: openSalleIds, set: setOpenSalleIds },
             ] as const).map((block) => (
               <div key={block.label}>
                 <div className="flex items-center justify-between mb-1">
@@ -1169,7 +1524,7 @@ export function PlannerPage() {
 
             {/* Teacher: existing or passager */}
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1.5 font-sans">Enseignant *</label>
+              <label className="block text-xs font-semibold text-muted mb-1.5 font-sans">Enseignant</label>
               <div className="grid grid-cols-2 gap-2 mb-2">
                 <button
                   type="button"
@@ -1326,7 +1681,7 @@ export function PlannerPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prix d&apos;une séance (DA) *</label>
+              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prix d&apos;une séance (DA)</label>
               <Input
                 type="number"
                 min={0}
@@ -1455,34 +1810,7 @@ export function PlannerPage() {
               )}
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-muted font-sans">Salle</label>
-                <button onClick={() => setShowAddSalle(!showAddSalle)} className="text-xs text-primary hover:underline">
-                  + Nouvelle salle
-                </button>
-              </div>
-              {showAddSalle ? (
-                <div className="flex gap-2">
-                  <Input
-                    value={newSalleName}
-                    onChange={(e) => setNewSalleName(e.target.value)}
-                    placeholder="Nom de la salle"
-                    className="flex-1"
-                  />
-                  <Button size="sm" onClick={handleCreateSalle}>Créer</Button>
-                </div>
-              ) : (
-                <Select value={salleId} onChange={(e) => setSalleId(e.target.value)} className="w-full">
-                  <option value="">Sélectionner une salle</option>
-                  {salles.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </div>
+            {renderSalleField()}
 
             <div>
               <label className="block text-xs font-semibold text-muted mb-1 font-sans">Enseignant</label>
@@ -1499,50 +1827,7 @@ export function PlannerPage() {
 
           {/* Right panel - days & times */}
           <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-2 font-sans">Sélectionner les jours de cours</label>
-              <div className="grid grid-cols-2 gap-2">
-                {WEEKDAYS.map((day) => {
-                  const active = selectedDays.includes(day.key);
-                  return (
-                    <Button
-                      key={day.key}
-                      variant={active ? "primary" : "outline"}
-                      onClick={() => toggleDay(day.key)}
-                      size="sm"
-                      className="w-full text-start py-2 justify-between"
-                    >
-                      <span>{day.label}</span>
-                      {active && <span className="text-[10px] bg-white/25 px-1.5 rounded">✔</span>}
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Heure de début</label>
-              <div className="flex gap-2">
-                <Select value={startHour} onChange={(e) => setStartHour(e.target.value)} className="flex-1">
-                  {getHours().map((h) => <option key={h} value={h}>{h} H</option>)}
-                </Select>
-                <Select value={startMin} onChange={(e) => setStartMin(e.target.value)} className="flex-1">
-                  {getMinutes().map((m) => <option key={m} value={m}>{m} Min</option>)}
-                </Select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Heure de fin</label>
-              <div className="flex gap-2">
-                <Select value={endHour} onChange={(e) => setEndHour(e.target.value)} className="flex-1">
-                  {getHours().map((h) => <option key={h} value={h}>{h} H</option>)}
-                </Select>
-                <Select value={endMin} onChange={(e) => setEndMin(e.target.value)} className="flex-1">
-                  {getMinutes().map((m) => <option key={m} value={m}>{m} Min</option>)}
-                </Select>
-              </div>
-            </div>
+            {renderDaysAndHours()}
 
             {/* Generated Name Preview */}
             <div className="bg-canvas/50 border border-line rounded-xl p-3 text-xs">
@@ -1717,17 +2002,7 @@ export function PlannerPage() {
               </Select>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Salle</label>
-              <Select value={salleId} onChange={(e) => setSalleId(e.target.value)} className="w-full">
-                <option value="">Sélectionner une salle</option>
-                {salles.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {renderSalleField()}
 
             <div>
               <label className="block text-xs font-semibold text-muted mb-1 font-sans">Enseignant</label>
@@ -1743,50 +2018,7 @@ export function PlannerPage() {
           </div>
 
           <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-2 font-sans">Sélectionner les jours</label>
-              <div className="grid grid-cols-2 gap-2">
-                {WEEKDAYS.map((day) => {
-                  const active = selectedDays.includes(day.key);
-                  return (
-                    <Button
-                      key={day.key}
-                      variant={active ? "primary" : "outline"}
-                      onClick={() => toggleDay(day.key)}
-                      size="sm"
-                      className="w-full text-start py-2 justify-between"
-                    >
-                      <span>{day.label}</span>
-                      {active && <span className="text-[10px]">✔</span>}
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Heure de début</label>
-              <div className="flex gap-2">
-                <Select value={startHour} onChange={(e) => setStartHour(e.target.value)} className="flex-1">
-                  {getHours().map((h) => <option key={h} value={h}>{h} H</option>)}
-                </Select>
-                <Select value={startMin} onChange={(e) => setStartMin(e.target.value)} className="flex-1">
-                  {getMinutes().map((m) => <option key={m} value={m}>{m} Min</option>)}
-                </Select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Heure de fin</label>
-              <div className="flex gap-2">
-                <Select value={endHour} onChange={(e) => setEndHour(e.target.value)} className="flex-1">
-                  {getHours().map((h) => <option key={h} value={h}>{h} H</option>)}
-                </Select>
-                <Select value={endMin} onChange={(e) => setEndMin(e.target.value)} className="flex-1">
-                  {getMinutes().map((m) => <option key={m} value={m}>{m} Min</option>)}
-                </Select>
-              </div>
-            </div>
+            {renderDaysAndHours()}
           </div>
         </div>
 
@@ -2027,22 +2259,32 @@ export function PlannerPage() {
                   <Clock className="h-4 w-4 text-primary" /> Jours & Horaires
                 </h4>
                 <div className="bg-surface border border-line p-4 rounded-xl space-y-3">
-                  <div className="flex justify-between items-center text-xs border-b border-line pb-2">
-                    <span className="text-muted">Heure de début:</span>
-                    <strong className="text-primary font-bold">{selectedSession.startTime}</strong>
-                  </div>
-                  <div className="flex justify-between items-center text-xs border-b border-line pb-2">
-                    <span className="text-muted">Heure de fin:</span>
-                    <strong className="text-primary font-bold">{selectedSession.endTime}</strong>
-                  </div>
+                  {/* One line per day: an emploi may run at different hours
+                      depending on the weekday. */}
                   <div>
-                    <span className="text-[10px] text-muted block mb-1.5 font-sans">Jours programmés:</span>
-                    <div className="flex flex-wrap gap-1">
-                      {selectedSession.days.map((d) => (
-                        <Badge key={d} tone="primary" className="uppercase text-[9px] font-bold">
-                          {WEEKDAYS.find((wd) => wd.key === d)?.label || d}
-                        </Badge>
-                      ))}
+                    <span className="text-[10px] text-muted block mb-1.5 font-sans">
+                      Jours programmés et horaires:
+                    </span>
+                    <div className="space-y-1.5">
+                      {WEEKDAYS.filter((wd) => selectedSession.days.includes(wd.key)).map((wd) => {
+                        const { startTime, endTime } = sessionTimesOn(selectedSession, wd.key);
+                        return (
+                          <div
+                            key={wd.key}
+                            className="flex items-center justify-between gap-2 text-xs border-b border-line/60 pb-1.5 last:border-0 last:pb-0"
+                          >
+                            <Badge tone="primary" className="uppercase text-[9px] font-bold">
+                              {wd.label}
+                            </Badge>
+                            <strong className="text-primary font-bold font-mono">
+                              {startTime} – {endTime}
+                            </strong>
+                          </div>
+                        );
+                      })}
+                      {selectedSession.days.length === 0 && (
+                        <span className="text-xs text-muted">Aucun jour programmé.</span>
+                      )}
                     </div>
                   </div>
                 </div>

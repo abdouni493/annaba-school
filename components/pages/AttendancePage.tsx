@@ -38,9 +38,11 @@ import {
   dayKeyOf,
   formatDateFr,
   groupName,
+  minutesOf,
   moduleName as moduleNameOf,
   salleName,
   sessionCurrentMonthCode,
+  sessionTimesOn,
   studentName,
   teacherName,
 } from "@/lib/helpers";
@@ -84,7 +86,13 @@ export function AttendancePage() {
         .filter((s) => s.days.includes(sheetDow))
         .filter((s) => !s.periodStart || s.periodStart <= sheetDate)
         .filter((s) => !s.periodEnd || s.periodEnd >= sheetDate)
-        .sort((a, b) => a.startTime.localeCompare(b.startTime)),
+        // Sorted by the hour they run ON THAT DAY — an emploi may start at a
+        // different hour depending on the weekday.
+        .sort(
+          (a, b) =>
+            minutesOf(sessionTimesOn(a, sheetDow).startTime) -
+            minutesOf(sessionTimesOn(b, sheetDow).startTime),
+        ),
     [sessions, sheetDow, sheetDate],
   );
 
@@ -229,7 +237,8 @@ export function AttendancePage() {
                       >
                         <strong className="block">{sessionTitle(s)}</strong>
                         <span className={active ? "text-white/80" : "text-muted"}>
-                          {s.startTime}–{s.endTime} · {groupName(db, s.groupId)} ·{" "}
+                          {sessionTimesOn(s, sheetDow).startTime}–{sessionTimesOn(s, sheetDow).endTime} ·{" "}
+                          {groupName(db, s.groupId)} ·{" "}
                           {salleName(db, s.salleId)}
                         </span>
                         <span className={`block text-[9px] ${active ? "text-white/70" : "text-muted"}`}>

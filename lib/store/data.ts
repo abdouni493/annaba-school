@@ -2,7 +2,13 @@
 
 import { create } from "zustand";
 import { emptyDatabase, loadDatabase, loadSchool } from "@/lib/supabase/load";
-import { cycleSizeOf, currentCycleCode, netPriceFor, studentHasDebt } from "@/lib/helpers";
+import {
+  cycleSizeOf,
+  currentCycleCode,
+  netPriceFor,
+  sessionTimesOn,
+  studentHasDebt,
+} from "@/lib/helpers";
 import type {
   AbsencePenalty,
   Announcement,
@@ -133,6 +139,18 @@ function dateKey(value: Date | string): string {
 
 function dayOf(d: Date): Day {
   return JS_DAYS[d.getDay()];
+}
+
+/** The weekday a YYYY-MM-DD key falls on. Parsed at midday so a timezone shift
+ *  can never push the date onto the day before. */
+function dayOfKey(key: string): Day {
+  return dayOf(new Date(`${key}T12:00:00`));
+}
+
+/** When an emploi du temps starts on a GIVEN date — its hours may differ from
+ *  one weekday to the next. */
+function startTimeOnDate(session: ScheduleSession, date: string): string {
+  return sessionTimesOn(session, dayOfKey(date)).startTime;
 }
 
 function minutesOf(d: Date): number {
@@ -664,21 +682,23 @@ export const useData = create<DataStore>((set, get) => ({
         (!se.periodEnd || se.periodEnd >= today),
     );
 
+    // An emploi may run at different hours depending on the weekday, so every
+    // comparison below reads the hours OF TODAY, never the emploi's default.
+    const startsAt = (se: ScheduleSession) => timeToMinutes(sessionTimesOn(se, dow).startTime);
+    const endsAt = (se: ScheduleSession) => timeToMinutes(sessionTimesOn(se, dow).endTime);
+
     const matched = scheduledToday
       .filter(
         (se) =>
-          nowMin >= timeToMinutes(se.startTime) - SCAN_EARLY_MARGIN &&
-          nowMin <= timeToMinutes(se.endTime) &&
-          eligible(se),
+          nowMin >= startsAt(se) - SCAN_EARLY_MARGIN && nowMin <= endsAt(se) && eligible(se),
       )
       .sort((a, b) => {
-        const started = (s: ScheduleSession) => (nowMin >= timeToMinutes(s.startTime) ? 0 : 1);
+        const started = (s: ScheduleSession) => (nowMin >= startsAt(s) ? 0 : 1);
         const own = (s: ScheduleSession) => (enrollments.some((e) => e.sessionId === s.id) ? 0 : 1);
         return (
           started(a) - started(b) ||
           own(a) - own(b) ||
-          Math.abs(timeToMinutes(a.startTime) - nowMin) -
-            Math.abs(timeToMinutes(b.startTime) - nowMin)
+          Math.abs(startsAt(a) - nowMin) - Math.abs(startsAt(b) - nowMin)
         );
       })[0];
 
@@ -686,7 +706,7 @@ export const useData = create<DataStore>((set, get) => ({
       const eligibleToday = scheduledToday.filter(eligible);
       if (eligibleToday.length > 0) {
         const upcoming = eligibleToday
-          .map((se) => timeToMinutes(se.startTime))
+          .map(startsAt)
           .filter((m) => m - SCAN_EARLY_MARGIN > nowMin)
           .sort((a, b) => a - b)[0];
         if (upcoming !== undefined) {
@@ -708,8 +728,8 @@ export const useData = create<DataStore>((set, get) => ({
       const runningNow = db.sessions.some(
         (se) =>
           se.days.includes(dow) &&
-          nowMin >= timeToMinutes(se.startTime) - SCAN_EARLY_MARGIN &&
-          nowMin <= timeToMinutes(se.endTime),
+          nowMin >= startsAt(se) - SCAN_EARLY_MARGIN &&
+          nowMin <= endsAt(se),
       );
       return {
         ok: false,
@@ -783,8 +803,8 @@ export const useData = create<DataStore>((set, get) => ({
         groupName,
         otherGroup: !ownGroup,
         ownGroupName,
-        sessionStart: matched.startTime,
-        sessionEnd: matched.endTime,
+        sessionStart: sessionTimesOn(matched, dow).startTime,
+        sessionEnd: sessionTimesOn(matched, dow).endTime,
         messageKey: "scan.alreadyPresent",
       };
     }
@@ -799,8 +819,8 @@ export const useData = create<DataStore>((set, get) => ({
         sessionId: matched.id,
         moduleName,
         groupName,
-        sessionStart: matched.startTime,
-        sessionEnd: matched.endTime,
+        sessionStart: sessionTimesOn(matched, dow).startTime,
+        sessionEnd: sessionTimesOn(matched, dow).endTime,
         messageKey: "scan.subscriptionExpired",
       };
     }
@@ -828,7 +848,7 @@ export const useData = create<DataStore>((set, get) => ({
     const cost = student.isFree || offered ? 0 : price;
 
     const status: "present" | "late" =
-      nowMin > timeToMinutes(matched.startTime) + SCAN_LATE_AFTER ? "late" : "present";
+      nowMin > startsAt(matched) + SCAN_LATE_AFTER ? "late" : "present";
 
     // The teacher taught the séance: an offered one still pays.
     const teacherBase =
@@ -902,8 +922,8 @@ export const useData = create<DataStore>((set, get) => ({
       groupName,
       otherGroup: !ownGroup,
       ownGroupName,
-      sessionStart: matched.startTime,
-      sessionEnd: matched.endTime,
+      sessionStart: sessionTimesOn(matched, dow).startTime,
+      sessionEnd: sessionTimesOn(matched, dow).endTime,
       free: isFreePeriod,
       freePeriodName: isFreePeriod ? freePeriod!.name || undefined : undefined,
       preStart: beforeStart && !isFreePeriod,
@@ -1026,7 +1046,7 @@ export const useData = create<DataStore>((set, get) => ({
     const occurred =
       date === dateKey(new Date())
         ? new Date().toISOString()
-        : new Date(`${date}T${session.startTime}:00`).toISOString();
+        : new Date(`${date}T${startTimeOnDate(session, date)}:00`).toISOString();
 
     const consumes = !student.isFree && !offered && !!enrollment?.enrollmentId;
     const before = enrollment?.remaining ?? 0;
@@ -1232,7 +1252,7 @@ export const useData = create<DataStore>((set, get) => ({
     const occurred =
       date === dateKey(new Date())
         ? new Date().toISOString()
-        : new Date(`${date}T${session.startTime}:00`).toISOString();
+        : new Date(`${date}T${startTimeOnDate(session, date)}:00`).toISOString();
 
     const record: AttendanceRecord = {
       id: existing?.id ?? uid("att"),

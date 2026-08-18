@@ -206,6 +206,12 @@ export interface WorkerShift {
   createdAt: string;
 }
 
+/** The hours ONE day of an emploi du temps runs on. */
+export interface DayTime {
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+}
+
 export interface ScheduleSession {
   id: string;
   classId: string;
@@ -214,8 +220,20 @@ export interface ScheduleSession {
   salleId: string;
   teacherId: string;
   days: Day[];
+  /**
+   * The emploi's DEFAULT hours — what every day runs on unless `dayTimes` says
+   * otherwise. Always filled, so anything that only needs "roughly when" can
+   * read them directly.
+   */
   startTime: string; // HH:mm
   endTime: string; // HH:mm
+  /**
+   * Per-day hours. An emploi that runs Samedi 08:00–10:00 and Mardi 14:00–16:00
+   * carries both here; a day absent from the map simply runs on
+   * `startTime`/`endTime`. Read it through `sessionTimesOn()` — never directly,
+   * so the fallback stays in one place.
+   */
+  dayTimes?: Partial<Record<Day, DayTime>>;
   /** "séance libre" timing: several classes/groups/salles over a date period */
   isOpen?: boolean;
   /** explicit, readable name — only set for séance libre timings */
@@ -597,7 +615,9 @@ export interface ExpenseCategory {
 export interface Expense {
   id: string;
   name: string;
-  categoryId: string;
+  /** absent = dépense non classée; the column is a foreign key, so it is left
+   *  empty rather than pointing at a category that does not exist */
+  categoryId?: string;
   amount: number;
   date: string;
 }

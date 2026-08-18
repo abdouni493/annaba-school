@@ -4,6 +4,7 @@ import type {
   AttendanceRecord,
   CoursLevel,
   Day,
+  DayTime,
   Enrollment,
   Payment,
   ScheduleSession,
@@ -29,6 +30,74 @@ export function formatDays(days: Day[] = []): string {
   return DAYS.filter((d) => days.includes(d))
     .map((d) => DAY_LABELS_FR[d])
     .join(", ");
+}
+
+// ---- Horaires jour par jour ------------------------------------------------
+/**
+ * The hours an emploi du temps runs on a GIVEN day.
+ *
+ * An emploi may run at different hours depending on the day — Samedi 08:00 and
+ * Mardi 14:00 on the same module. `dayTimes` holds those overrides and
+ * `startTime`/`endTime` remain the default, so a timing that keeps the same
+ * hours all week stores nothing extra.
+ */
+export function sessionTimesOn(session: ScheduleSession, day?: Day): DayTime {
+  const override = day ? session.dayTimes?.[day] : undefined;
+  return {
+    startTime: override?.startTime || session.startTime,
+    endTime: override?.endTime || session.endTime,
+  };
+}
+
+/** "08:00 – 10:00" for one day, or every distinct pair when no day is given. */
+export function sessionTimeLabel(session: ScheduleSession, day?: Day): string {
+  if (day) {
+    const { startTime, endTime } = sessionTimesOn(session, day);
+    return `${startTime} – ${endTime}`;
+  }
+  const seen = new Set<string>();
+  for (const d of session.days ?? []) {
+    const { startTime, endTime } = sessionTimesOn(session, d);
+    seen.add(`${startTime} – ${endTime}`);
+  }
+  if (seen.size === 0) return `${session.startTime} – ${session.endTime}`;
+  return [...seen].join(" · ");
+}
+
+/** Does the emploi keep the same hours every day it runs? */
+export function hasUniformTimes(session: ScheduleSession): boolean {
+  const seen = new Set<string>();
+  for (const d of session.days ?? []) {
+    const { startTime, endTime } = sessionTimesOn(session, d);
+    seen.add(`${startTime}-${endTime}`);
+  }
+  return seen.size <= 1;
+}
+
+/** "08:30" -> 510. Anything unparsable sorts first, at 0. */
+export function minutesOf(time: string): number {
+  const [h, m] = (time || "").split(":");
+  return (Number(h) || 0) * 60 + (Number(m) || 0);
+}
+
+/** Do two half-open [start, end) ranges overlap? Touching ends do NOT clash:
+ *  a room frees at 10:00 and the next cours may start at 10:00. */
+export function timesOverlap(a: DayTime, b: DayTime): boolean {
+  return minutesOf(a.startTime) < minutesOf(b.endTime) && minutesOf(b.startTime) < minutesOf(a.endTime);
+}
+
+/**
+ * The days on which two emplois du temps collide in time — used to tell the
+ * desk which salle is already taken before it picks one.
+ */
+export function clashingDays(
+  a: { days: Day[]; startTime: string; endTime: string; dayTimes?: Partial<Record<Day, DayTime>> },
+  b: ScheduleSession,
+): Day[] {
+  const shared = (a.days ?? []).filter((d) => (b.days ?? []).includes(d));
+  return shared.filter((d) =>
+    timesOverlap(sessionTimesOn(a as ScheduleSession, d), sessionTimesOn(b, d)),
+  );
 }
 
 export const teacherName = (db: Database, id: string) => {
