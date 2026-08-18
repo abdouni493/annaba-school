@@ -39,7 +39,10 @@ import type {
   Teacher,
   TeacherAbsence,
   TeacherAcompte,
+  TeacherChildCharge,
+  TeacherExpense,
   TeacherPayment,
+  TeacherPaymentDeduction,
   UnpaidTeacherSession,
   WorkerShift,
 } from "@/lib/types";
@@ -70,6 +73,8 @@ export interface Database {
   absencePenalties: AbsencePenalty[];
   unpaidTeacher: UnpaidTeacherSession[];
   acomptes: TeacherAcompte[];
+  /** costs the school carries for a teacher, deducted from his next settlement */
+  teacherExpenses: TeacherExpense[];
   absences: TeacherAbsence[];
   subjects: Subject[];
   announcements: Announcement[];
@@ -291,6 +296,9 @@ interface DataActions {
     amount: number;
     monthCode?: string;
     description?: string;
+    /** "teacher_salary": the school is paid out of a teacher-father's pay, so
+     *  the solde is credited but NO cash movement is posted. */
+    source?: "cash" | "teacher_salary";
   }) => Promise<{ ok: boolean; paymentId?: string; balance?: number; monthCode?: string }>;
   cancelAttendance: (attendanceId: string) => Promise<ScanResult>;
   /** Corrects one presence (status / date-time / amount charged); the balance
@@ -339,15 +347,32 @@ interface DataActions {
     amount: number,
     description?: string,
   ) => Promise<{ ok: boolean; days?: number; minutes?: number; messageKey?: string }>;
-  /** Settles the selected teacher timings ("YYYY-MM-DD|sessionId" keys). */
+  /**
+   * Settles the selected teacher timings ("YYYY-MM-DD|sessionId" keys).
+   *
+   * `amount` is what he actually takes home. Everything taken off on the way
+   * there is settled in the same movement and never comes back: the dépenses
+   * and acomptes listed in `expenseIds` / `acompteIds` are flagged paid, and
+   * the soldes of the children in `childCharges` are cleared — the school is
+   * paid for them out of their father's salary, so no cash changes hands.
+   */
   payTeacherSessions: (args: {
     teacherId: string;
     keys: string[];
+    /** net paid to the teacher */
     amount: number;
+    /** what the séances earned him before the deductions */
+    gross?: number;
     method: "fixed" | "percent";
     percentage?: number;
     details?: unknown[];
     description?: string;
+    /** dépenses cleared by this settlement */
+    expenseIds?: string[];
+    /** acomptes cleared by this settlement */
+    acompteIds?: string[];
+    /** children whose inscriptions this settlement pays for */
+    childCharges?: TeacherChildCharge[];
   }) => Promise<{ ok: boolean; paymentId?: string; sessions?: number; messageKey?: string }>;
   /** Buys N séances on one inscription: creates or tops up the
    *  `{studentId, subscriptionId}` enrollment and writes the matching Payment
@@ -1260,7 +1285,7 @@ export const useData = create<DataStore>((set, get) => ({
    * that emploi's own months — by default the month the student is walking
    * through right now on it.
    */
-  addSold: async ({ studentId, subscriptionId, amount, monthCode, description }) => {
+  addSold: async ({ studentId, subscriptionId, amount, monthCode, description, source }) => {
     const db = get();
     const student = db.students.find((s) => s.id === studentId);
     const sub = db.subscriptions.find((s) => s.id === subscriptionId);
@@ -1340,16 +1365,22 @@ export const useData = create<DataStore>((set, get) => ({
             }
           : st,
       ),
-      cash: [
-        ...state.cash,
-        {
-          id: uid("csh"),
-          type: "student_payment" as const,
-          amount: credit,
-          date: now,
-          description: `Solde ${code} — ${student.firstName} ${student.lastName}`,
-        },
-      ],
+      // Money settled from a teacher-father's salary never passes through the
+      // till: the teacher is simply paid less. Posting an inflow here would
+      // book it twice.
+      cash:
+        source === "teacher_salary"
+          ? state.cash
+          : [
+              ...state.cash,
+              {
+                id: uid("csh"),
+                type: "student_payment" as const,
+                amount: credit,
+                date: now,
+                description: `Solde ${code} — ${student.firstName} ${student.lastName}`,
+              },
+            ],
     }));
 
     return { ok: true, paymentId: payment.id, balance: enrollment.balance, monthCode: code };
@@ -1939,10 +1970,14 @@ export const useData = create<DataStore>((set, get) => ({
     teacherId,
     keys,
     amount,
+    gross,
     method,
     percentage,
     details,
     description,
+    expenseIds,
+    acompteIds,
+    childCharges,
   }) => {
     const db = get();
     const teacher = db.teachers.find((t) => t.id === teacherId);
@@ -1983,12 +2018,44 @@ export const useData = create<DataStore>((set, get) => ({
     const passagerIds = new Set(settledPassagers.map((i) => i.id));
     const paidAmount = Math.max(amount, 0);
 
+    // What is taken off the pay — each line settled here and only here.
+    const clearedExpenses = db.teacherExpenses.filter(
+      (e) => e.teacherId === teacherId && !e.paid && (expenseIds ?? []).includes(e.id),
+    );
+    const clearedAcomptes = db.acomptes.filter(
+      (a) => a.teacherId === teacherId && !a.paid && (acompteIds ?? []).includes(a.id),
+    );
+    const expenseSnapshot: TeacherPaymentDeduction[] = clearedExpenses.map((e) => ({
+      id: e.id,
+      kind: "expense",
+      label: e.name,
+      description: e.description,
+      amount: e.amount,
+      date: e.date,
+    }));
+    const acompteSnapshot: TeacherPaymentDeduction[] = clearedAcomptes.map((a) => ({
+      id: a.id,
+      kind: "acompte",
+      label: "Acompte",
+      description: a.description,
+      amount: a.amount,
+      date: dateKey(a.date),
+    }));
+    const expenseIdSet = new Set(clearedExpenses.map((e) => e.id));
+    const acompteIdSet = new Set(clearedAcomptes.map((a) => a.id));
+
     set((state) => ({
       unpaidTeacher: state.unpaidTeacher.map((u) =>
         dueIds.has(u.id) ? { ...u, paid: true } : u,
       ),
       independent: state.independent.map((i) =>
         passagerIds.has(i.id) ? { ...i, teacherPaid: true } : i,
+      ),
+      teacherExpenses: state.teacherExpenses.map((e) =>
+        expenseIdSet.has(e.id) ? { ...e, paid: true, paymentId } : e,
+      ),
+      acomptes: state.acomptes.map((a) =>
+        acompteIdSet.has(a.id) ? { ...a, paid: true, paymentId } : a,
       ),
       teacherPayments: [
         ...state.teacherPayments,
@@ -2004,6 +2071,10 @@ export const useData = create<DataStore>((set, get) => ({
             description?.trim() ||
             `Règlement séances ${teacher.firstName} ${teacher.lastName}`,
           details: (details ?? []) as TeacherPayment["details"],
+          gross: Math.max(0, Math.round(gross ?? paidAmount)),
+          expenses: expenseSnapshot,
+          acomptes: acompteSnapshot,
+          childCharges: childCharges ?? [],
           paidAt: new Date().toISOString(),
         },
       ],
@@ -2018,6 +2089,23 @@ export const useData = create<DataStore>((set, get) => ({
         },
       ],
     }));
+
+    // The children of a teacher-father are schooled on his pay: their soldes
+    // are brought back to zero here, without any cash moving — the school is
+    // paid by simply handing him less.
+    for (const charge of childCharges ?? []) {
+      for (const line of charge.lines) {
+        if (line.amount <= 0) continue;
+        await get().addSold({
+          studentId: charge.studentId,
+          subscriptionId: line.subscriptionId,
+          amount: line.amount,
+          monthCode: line.monthCode,
+          source: "teacher_salary",
+          description: `Réglé sur le salaire de ${teacher.firstName} ${teacher.lastName} (${line.monthCode})`,
+        });
+      }
+    }
 
     return { ok: true, paymentId, sessions: covered };
   },

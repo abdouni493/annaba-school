@@ -45,4 +45,11 @@ apply this updates then push all updates to repo
 
 
 
-create new interface 
+create new interface on the side bare make it under the dashboard name it emplois de temps make this interface for display all the exisiting emploi du temps on the week with possibility of filtering by classe and by year and by filier and by module exactly like the interface of create new students and make sure to make it detailed and organized display the timings on table organized with possibility of click on the timings to see the details and make the cards display all the informations about that timings and the teacher and organize the table by the times and days on the week 
+
+fix the interface of view details interface button action onthe interface of teacher make it display for each assigned emploi du temps for that teacher make it display the days of each emploi du temps also 
+
+fix the interface of seance libre on the side bare make itwhen user comes to create seance libre make it can seach about existing student or can type the full name for this sudent passager or can let it empty to save the seance as seance libre for student passager and make sure to let the user seach about the emploi du temps  that student studyed on it with name of emploi and make it display the price for one seance then let user validate the payment and create the seance libre and ask him for print the invoice and make it smal ans strealined 
+and make sure to create new option on the interface of create new seance libre make when user choose the cours then make option user can check it make it for make this seance libre for free that teacher will not payed on it and the same for the school and make sure to make this new information of free seance libre display on the genrale reports also with value of them
+
+apply this updates and push all updates to repo

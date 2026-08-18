@@ -87,13 +87,6 @@ function normalise(db: Database): Database {
     };
   });
 
-  db.enrollments = db.enrollments.map((e) => {
-    if (e.balance != null) return e;
-    const sub = db.subscriptions.find((x) => x.id === e.subscriptionId);
-    const unit = sub?.pricePerSession ?? 0;
-    return { ...e, balance: (e.paidSeances - e.consumedSeances) * unit };
-  });
-
   // A purchase belongs to the emploi it credited, on the month the student was
   // walking through when it was made.
   db.payments = db.payments.map((p) => {
@@ -114,6 +107,34 @@ function normalise(db: Database): Database {
       ...p,
       subscriptionId: enr.subscriptionId,
       monthCode: `M${Math.floor(before / size) + 1}`,
+    };
+  });
+
+  // The SOLDE is what was handed over minus what the séances ate. It has to be
+  // derived from the very rows the month ledger reads, or the card and the
+  // month-by-month breakdown of the same inscription would disagree.
+  db.enrollments = db.enrollments.map((e) => {
+    const sub = db.subscriptions.find((x) => x.id === e.subscriptionId);
+    const credited = db.payments
+      .filter((p) => p.studentId === e.studentId && p.subscriptionId === e.subscriptionId)
+      .reduce((t, p) => t + p.amountPaid, 0);
+    const consumed = db.attendance
+      .filter(
+        (a) =>
+          a.studentId === e.studentId &&
+          a.sessionId === sub?.sessionId &&
+          a.status !== "cancelled" &&
+          !a.noCharge,
+      )
+      .reduce((t, a) => t + (a.amountDeducted || 0), 0);
+    const balance = credited - consumed;
+    const unit = Math.max(1, sub?.pricePerSession ?? 1);
+    return {
+      ...e,
+      balance,
+      // Keep the legacy séance counter in step with the money, so the screens
+      // that still count séances read something coherent.
+      paidSeances: e.consumedSeances + Math.max(0, Math.floor(balance / unit)),
     };
   });
 
@@ -1003,6 +1024,30 @@ function rawSeed(): Database {
         amount: 5000,
         description: "Acompte sur salaire",
         date: stamp(-10, "12:00"),
+        paid: false,
+      },
+    ],
+
+    // Costs the school carried FOR a teacher — taken off his next settlement.
+    teacherExpenses: [
+      {
+        id: "tex-1",
+        teacherId: "tea-1",
+        name: "Photocopies de séries d'exercices",
+        amount: 1800,
+        description: "3 séries · 40 élèves",
+        date: shiftDays(-8),
+        paid: false,
+        createdAt: stamp(-8, "10:30"),
+      },
+      {
+        id: "tex-2",
+        teacherId: "tea-1",
+        name: "Transport (déplacement examen blanc)",
+        amount: 1200,
+        date: shiftDays(-4),
+        paid: false,
+        createdAt: stamp(-4, "17:00"),
       },
     ],
 

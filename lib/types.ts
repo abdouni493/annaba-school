@@ -105,6 +105,7 @@ export interface Teacher {
 export interface TeacherPayment {
   id: string;
   teacherId: string;
+  /** what he actually took home: gross − dépenses − acomptes − frais des enfants */
   amount: number;
   method: "fixed" | "percent";
   percentage?: number;
@@ -113,7 +114,39 @@ export interface TeacherPayment {
   description: string;
   /** frozen snapshot of the settled timings, so the receipt can be reprinted */
   details: TeacherPaymentDetail[];
+  /** what the séances earned him, BEFORE anything was taken off */
+  gross?: number;
+  /** the dépenses this settlement cleared — never deducted twice */
+  expenses?: TeacherPaymentDeduction[];
+  /** the acomptes it cleared */
+  acomptes?: TeacherPaymentDeduction[];
+  /** his children's inscriptions, settled out of his pay */
+  childCharges?: TeacherChildCharge[];
   paidAt: string;
+}
+
+/** One line taken off a settlement: a dépense or an acompte. */
+export interface TeacherPaymentDeduction {
+  id: string;
+  kind: "expense" | "acompte";
+  label: string;
+  description?: string;
+  amount: number;
+  date: string;
+}
+
+/**
+ * A student whose schooling is settled from his teacher-father's pay
+ * (`Student.studentCase === "teacher_child"`): what he owed, and on which
+ * emplois du temps, at the moment the salary was paid.
+ */
+export interface TeacherChildCharge {
+  studentId: string;
+  studentName: string;
+  registrationNumber?: string;
+  /** what he owes, emploi by emploi */
+  lines: { subscriptionId: string; label: string; monthCode: string; amount: number }[];
+  amount: number;
 }
 
 export interface TeacherPaymentDetail {
@@ -495,6 +528,27 @@ export interface TeacherAcompte {
   amount: number;
   description: string;
   date: string;
+  /** taken off a settlement already — it never comes back on the next one */
+  paid?: boolean;
+  paymentId?: string;
+}
+
+/**
+ * A cost the school carries FOR one teacher (matériel, transport, avance de
+ * frais …). It is deducted from his next settlement, exactly once: reception
+ * types a name, an amount, an optional description and a date.
+ */
+export interface TeacherExpense {
+  id: string;
+  teacherId: string;
+  name: string;
+  amount: number;
+  description?: string;
+  date: string; // YYYY-MM-DD
+  /** already taken off a settlement — it never reappears on the next one */
+  paid?: boolean;
+  paymentId?: string;
+  createdAt?: string;
 }
 export interface TeacherAbsence {
   id: string;
