@@ -1,76 +1,48 @@
-You are a senior full-stack engineer working directly inside my codebase 
-in VS Code via Claude Code. You can read, search, and edit the project 
-files yourself.
+fix the interface of planner page make change the name of create new seance to create new emploi du temps and the same for the name of the emploi du temps on the interface of create emploi du temps
+and fix the interface of create new emploi du temps add for it new option user can set the number of seances on the month and the total price for the month and make it calculate the price per seance automatically 
+then let user set how much the school will get money from this total price of the month and make it calculate the rest , that reset for the teacher payment make it divided by the number of the seances  that wil display the seance price that will get pay the teacher from this empoloi du temps and make sure to make this new informations display on the interface of teacher view details interface and make sure to make this new options on the creation of emploi du temps displaying on the interface of view details button action of that created emploi
 
-Your job: analyze my application and fix the request I describe at the 
-bottom — cleanly, safely, and completely.
+fix the creation of the students create new option when user select each emploi du temps then let user set how much the student payed for this emploi du temps as sold for that emploi du temps 
+and make sure to do the same for all the rest selected emplois du temps make user set how much have payed as give a sold for that emploi du temps and make it when user create the student then ask him for print the bon dinscriptions that will display the personal informations of that student and the groupes that subscribed on them and the sold payed for each emploi du temps 
+make sure to make this new informations of payement on the creation of the students dispaly on the interface of students view details button action 
 
-Follow this process:
+fix the interface of students remove the buttons actions of inscriptions and remove the button action of renouvelement of subscription replace them with one button action for pay and recharge the emploi du temps solds make sure to make it display the current subscribed emploi du temps of that student and the current sold rest negative or positive with make option for filtering by the monthes m1 and m2 ... and make sure to make it display alert for the debt or sold 0 or soon to expire 
+thenont he same interface make option of create new sold for each emploi du temps with askhim for print the payement 
 
-1. EXPLORE FIRST — Before changing anything, examine the relevant parts of 
-   the project: structure, framework, database layer, and the files tied to 
-   my request. Detect the tech stack and the SQL dialect (MySQL, PostgreSQL, 
-   etc.) from the project itself.
+fix the interface of students change the design of the card of students make it display the presonal informations and number of creation make it statiing onthe cretion of students form 00001 
+and let user can seach about that student with that number 
+make the card display all the subscripitons emploi du temps of that student and remove the number of presences and remove the restes seances and make it display only the total of debts with alert with make user can click on it to see the details on the interface create view details of student 
 
-2. PLAN — Briefly tell me what you understand the problem to be, the root 
-   cause, and your proposed fix (which files you'll change and why). Keep it 
-   short.
+fix the logic of calculating of monthes remove the logic of months starting with september as M1 i wanna change it like this : 
+i wanna make it when user create the emploi du temps then each emploi have independent starting and the starting will begin with the first presense and ending when the seances ends like this example :
+when user create emploi du temps on august and that emploi du temps have 4 seances on month then the user comes to set the presences on september then its will start calculating from the first time of presence
+and name it as M1 for that emploi du temps and the month will expire when user set the 4th presence of that emploi du temps that will close the M1 and starting directly with M2 with same logic 
+make sure to apply this logic to application on the interface of presences and on the interface of dashboard and evrywhere on the application
 
-3. IMPLEMENT — Apply the fix directly to the files. Match the existing code 
-   style and conventions. Do not break existing functionality.
+fix the interface of dashboard remove the button  of quick access to 
+Nouvel abonnement and payemnt for teacher and remove the creaion of expenses keep only the button of create new student make sure to make it when user click on it then make sure to make it open the interface of create new student of the interface of students on the side bare make it open on the same interface of dashboard and make possibility of user can create the student from it 
 
-4. TRACK DATABASE CHANGES — As you work, record every database change your 
-   fix requires: new tables, new/altered columns, indexes, constraints, 
-   foreign keys, seed data, etc.
+fix teh interface of dashboard make the design of display the emplois du temps of today make it better on a table and make sure to make it like this :
+make it display on the first column the hour like from 8:00 to 10:00 and on the second column make it display the name of the emploi du temps and on the 3rd column make it display the salle anem of that emploi du temps and let user click on open to see the details of that emploi du tmeps 
+first thing make sure to make the interface of open that emploi du tempa bigger and streamlined for the pc and moible and make sure to make it display the list of the students on table with possibilty of search about the studets with name or creation number and make button for create new student on that group make it open the interface of create new student that same interface of create new student on the interface of students and make it selcte by default this emploi du temps and make it can pay for sold of this emploi du temps with possibility of select another emploi on the sameinterface of create new sudent and let him save the student with ask him for print the payement or not 
+ and make sure to make the students display on table with columns of the full name of the student and phone number the for the next columns make it display
+for each seance from the seances number independet column with status of present or absent or canceled or empty means not yet 
+then the next column make it display the statue of current month how much the current sold of that emploi du temps according to that student with button action for create new payment on the same column statue of this month that user can set new sold and when user create it make it ask him for print
+make sure to make this column of currect statude of the current month display also the case of that student if its a son of teacher or the rest cases 
+on next column make it display the statue of previous month if there is not debt make it display done imoji if there is debt let user click on it to see the details and to pay the debt and ask him for print after creation 
+on next column make it for other debts make it display statue of other subscriptions of that student if there is debts and user can click on it to see the details and make it can click on them to pay the debt like the previouse statue 
+on the last column make it for the set presence of that student for the currect seance of that date make it can make him presente without cofirmation when user make him present it its will minus the seance cost from his sold for that emploi du temps and change the statude of the column of that seance on the same table and if the user set the student absent then make the same let it minus the cost of seance from his sold with change the statue of that column seance on the same table and make sure to set condition on abssence make it that is the first seance of that student and he have not presented before on that emploi du temps then make it mark it as absent with do not minus the cost of that seance from his sold 
+on the same column make it for cancel if user made that seance calceled for that student then make i mark the statue on that seanc on the same table and  do not minus from his sold
+make sure to make option for return if the user hade wrong to make the presence or absence or calceling revocated and recover that sold that minus 
+analyse the interface of presence on the side bare make sure to edit it like this treatement exacly make sure to make it run with same system this we will apply it on the interface dashboard
+make sure to make the presence or absence or or cancel make it without cofirmations
+andmake sure to make option of print the feuille presence when user complet to set all students and make sure to make it print the same table with same coloumn execp the buttons and make it nice template with informaitons of the school 
+and make sure to apply this system on the interfaceo f prsence on the side bare with exactly the same treatement and same tabl and columns with keep the option of go to the previous months of M1 and M2 like this
 
-Rules:
-- Be specific and name the exact files and functions you change.
-- Flag anything risky (security, data loss, performance) BEFORE doing it.
-- Verify against the real schema/models — never invent columns or fields 
-  that don't exist.
-- If something is ambiguous or destructive, ask me before proceeding.
+fix the interface of seance libre on the side bare make itwhen user comes to create seance libre make it can seach about existing student or can type the full name for this sudent passager or can let it empty to save the seance as seance libre for student passager and make sure to let the user seach about the emploi du temps  that student studyed on it with name of emploi and make it display the price for one seance then let user validate the payment and create the seance libre and ask him for print the invoice and make it smal ans strealined 
 
-VERY IMPORTANT — At the very END of your response, give me ONE consolidated, 
-ready-to-run SQL script with ALL database changes needed for this update:
-- Use the correct SQL dialect for this project.
-- Put it in a single ```sql code block.
-- Order the statements so they run top-to-bottom without errors.
-- Make it safe to re-run (use IF NOT EXISTS / IF EXISTS where appropriate).
-- Add a short comment above each statement explaining what it does.
-- If no database changes are needed, say clearly: "No SQL changes required."
+apply this updates then push all updates to repo 
 
-Here is my request:
 
-fix the prinitng of invoice when user create new sold make it display on the bon also the email and password of the account of that student and make sure to make the invoice display also the modules that student subscribe on them 
 
-fix the interface of assign subscription mobule create on it new option make it for reduction let user can set reduction for each module with pourcentage or with montan fix and make sure to make when user presenting make sure to make it calculate the decreasing with that reduced price for each module and for the reduction option make another option of selecting multipes modules and make on them the reduction on the one time without set each one independently
-
-fix the interface of emploi du temps make new option let user can select create timing for seaces libre then let him select the classes that about metter of this seach libre and make possibility of select multiple classes and multiple groupes andm ultiple sales and make new option let user can set the starting date and ending date of this seance libre and according to that selected periode make sure to make user can select the days of that periode that will students study this seances libre then let him set the hout and minutes of starting and ending and make the name of timing save with another format more claire for the seaces libre and make option of user set the price of one seance of this seances libre and make sure to make when user create the timing then make it save that subscription on the interface of subscription automatically with informations of that seance libre and information of the module and informaitons acount the price and make it display normally on the interface of subscription like its user create it on the interface of subscription
-and for the selecting of teachers make new option of user can seach about existing teacher with make sure to make the teacher pay about this seance libre like the other seances and make new option user can type only the teacher name as teacher passager then make sure to make when user create the emploi du temps of this seance libre make that teacher save on the interface of teachers with payment button action and view details button action only make the interface of button action of view details display the history of seances libre of this teacher and make it display on another part the number of students that study on his seances libre and make sure to make this interface of view details display more informations about this teacher with all the small details also of payements 
-make the button action interface of payment display the total students that presented on his seance libre timing and make user can type amount of how much will pay to this teacher and make another payment methode with poucentage let user set the pourcentage that will get for each student and for each module cost and make it calculate how much he have to pay for him automatically and make button for display the details of the students that presented for that timing and filter them by group for each one and make it display also how much student passager 
-when user create the payment make option of user can print it with make the template organized and display this details : 
-school informations and logo and make it display the informstions of the teacher and the informations of that timing and make it display the toatl of students that presented of that timing and make it display how much the teacher will get money 
-make sure to make the interface of payment display only the not payed timings of that teacher when user create the payement make sure to makethat timing with payed statue and do not display it again on the interface of payment 
-this treatement for the teacher passager that not have accounts on the school 
-and for the other teachers that created on the system make them payed on the seance libre normally like the same treatement of the payement of the normal courses
-make sure to fix the interfac of create new seance libre for the students passager make it user can search about a cours or can search about a seance libre created on the timing interface and remove the creaion of perfectionement make sure to fix the interface of seance libre and perfectionement make it only for the creation of the seaces libre make sure to make on it only one interface and one button for create the seances libre make it sure to make it user can search about existing student with his name or with carnumber and make if the user did not seach about the student and did not select any student then make it save that student on the creation of seance libre as passager and make sure to make the interface of create seance libre only like this : let the user can search about the normal cource module and mkae sure to make it display all informations about that cours for make more clair and make it can search about seance libre timing and let him select it to load the price and make sure can create and make the main page display all the seances libre and students name or with name of passager and make on the cards button action of edit and delete and view details to see the informatons of that created seance libre and make options for the filtering and option for the seaching and make the cards displaying the date and hours and minuts of the creation and make option of user can seach and filtering and can switch the view to table 
-
-fix the pronounicing of the alerts when user scan his card i removed the cases and only set 5 alerts make them like this : 
-1.debt.mp3 if the user have debt 
-2.credit_insufficient.mp3 if the student dont have credit to enter
-3.welcome.mp3 for the entering normally 
-4.already_scanned.mp3 for the scaning multiple times 
-5.card_not_found.mp3 if the card not found
-
-make sure to fix the scanning system make on it new condition if the student is from friday to the next friday have not scanned his car on some module them make sure to make that price of that module minus from his sold automatically and make sure to program this option for each module independently and make sure to make this information display on the history of that student and make it display on the acount of that student and on the account of that parent 
-
-fix the template of print the payment invoice of teachers remove the details make only like this : make it display the informaitons of the school and logo and informations of the teacher and make it display only the total number of students that presented for each group and make it display table and organized this informations of the payment and make it calculate the total with pourcentage of that teacher for each groupe and on the final make it display the total ammount to pay
-
-fix the interface of anonces make new option user can seach about the groupes that will see the anonce with possibillity of multiple selecting groups that will see the anonce and make the parents of each student can see that anonce also and make option for select all or select the teachers only and make sure to make on it all the options of filtering 
-
-fix the interface of reports create new par interface on the interface of repports make it for the generale reports analyses make it display on that seelcted period a pourcentage circle for see the the total binifits pourcnetage and total payements of teachers pourcentage and make a pert on the circle make it for the total of expenses and make part for the payements of the other workers and make sure to make this informations display out the circle also more detailed and make sure to make to do another part for the analyse by teacher how much the pourcnetage of each teacher how much he participating for the total gains and make filtering to see the part of that teacher for the payment pourcentage on that periode 
-
-fix the interface of workers make new option on the creation of the workers make it for user can scan an rfid card for that worker and make sure to make new methode for payement with hours and price for one hour 
-make this option on the payement like this :
-let the user for each day pointing the preseneting and the ending of his work and make it calculate for each day how much hours he worked and make sure to fix the interfae of payment for this workers type make it display only the not payed days for that worker and make it dispay the tatal hourse of that not payed days and make button for see the details of all that calculated days make it dipslay for each day how much hours he worked and let the user can save the payement and do not display that payed days again 
-for the scanning of the worker make condition if the worker pointing the work starting and did not pointing the ending of the work then stop the calculating of the hours of that day when its ending that day and make sure to make that day freesing and make sure to make it display an alert on his car and user can click on the view details interface for fix the problem and set the ending hour of that worker and make sure to make it display alert on the payement interface also if there is days like this user did not set the poinitng of ending work make it display alert and make user can click on it to see the problem and can edit it and fix it with set the ending hour of that day 
+create new interface 

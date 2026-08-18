@@ -29,21 +29,15 @@ import {
 } from "lucide-react";
 import type { IndependentSession, Student } from "@/lib/types";
 import { printHtmlDocument } from "@/lib/print";
-import {
-  bannerHtml,
-  fmtDate,
-  fmtDateTime,
-  letterheadHtml,
-  metaFooterHtml,
-  printDocument,
-  signaturesHtml,
-} from "@/lib/printTemplates";
-import { formatDateFr, totalRemainingSeances } from "@/lib/helpers";
+import { formatDateFr, registrationNumberOf, studentMatches } from "@/lib/helpers";
+import { seanceLibreInvoiceHtml } from "@/lib/reports/documents";
 import { useSettings } from "@/lib/store/settings";
 
 /** Everything the séance libre receipt needs, captured at creation time. */
 interface CasualReceiptData {
   personName: string;
+  /** set when the payer is a registered student */
+  registrationNumber?: string;
   isRegisteredStudent: boolean;
   itemLabel: string;
   teacherName?: string;
@@ -72,59 +66,6 @@ interface SeanceOption {
   timeLabel: string;
   periodLabel?: string;
 }
-
-const RECEIPT_LABELS = {
-  fr: {
-    docTitle: "Reçu — Séance Libre",
-    receiptNo: "Reçu N° :",
-    seanceTitle: "Détail de la Séance",
-    person: "Élève / Passager :",
-    registered: "Élève inscrit",
-    passenger: "Passager occasionnel",
-    item: "Cours / Créneau :",
-    teacher: "Enseignant :",
-    classLevel: "Classe / Niveau :",
-    time: "Horaire :",
-    date: "Date de la séance :",
-    payTitle: "Règlement",
-    amount: "Montant payé :",
-    method: "Mode de paiement :",
-    cash: "Espèces",
-    paidOn: "Encaissé le :",
-    total: "TOTAL ENCAISSÉ :",
-    signClient: "Le Client",
-    signCashier: "La Caisse",
-    da: "DA",
-  },
-  ar: {
-    docTitle: "وصل — حصة حرة",
-    receiptNo: "وصل رقم :",
-    seanceTitle: "تفاصيل الحصة",
-    person: "التلميذ / الزائر :",
-    registered: "تلميذ مسجل",
-    passenger: "زائر عابر",
-    item: "الدرس / الحصة :",
-    teacher: "الأستاذ :",
-    classLevel: "القسم / المستوى :",
-    time: "التوقيت :",
-    date: "تاريخ الحصة :",
-    payTitle: "الدفع",
-    amount: "المبلغ المدفوع :",
-    method: "طريقة الدفع :",
-    cash: "نقدًا",
-    paidOn: "تم التحصيل في :",
-    total: "الإجمالي المحصَّل :",
-    signClient: "الزبون",
-    signCashier: "الصندوق",
-    da: "دج",
-  },
-} as const;
-
-/** Receipt number, generated at print time (module scope: never during render). */
-function makeReceiptNumber(): string {
-  return `SL-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
-}
-
 const DAY_LABELS: Record<string, string> = {
   saturday: "Sam",
   sunday: "Dim",
@@ -138,7 +79,6 @@ const DAY_LABELS: Record<string, string> = {
 export function IndependentPage() {
   const db = useData();
   const {
-    school,
     independent,
     teachers,
     students,
@@ -262,14 +202,7 @@ export function IndependentPage() {
   const matchedStudents = useMemo(() => {
     const q = studentSearchQuery.trim().toLowerCase();
     if (!q) return [];
-    return students
-      .filter(
-        (st) =>
-          `${st.firstName} ${st.lastName}`.toLowerCase().includes(q) ||
-          (st.rfid ?? "").toLowerCase().includes(q) ||
-          st.phone.includes(studentSearchQuery.trim()),
-      )
-      .slice(0, 25);
+    return students.filter((st) => studentMatches(db, st, studentSearchQuery)).slice(0, 25);
   }, [students, studentSearchQuery]);
 
   const effectivePrice = customPrice ?? selectedItem?.price ?? 0;
@@ -351,13 +284,11 @@ export function IndependentPage() {
       return;
     }
 
-    // No student picked in the search => the attendee is a "passager", named
-    // from whatever the agent typed in the search box.
-    const passagerName = !selectedStudent ? studentSearchQuery.trim() : undefined;
-    if (!selectedStudent && !passagerName) {
-      alert("Recherchez un élève (nom ou n° de carte), ou saisissez le nom du passager.");
-      return;
-    }
+    // Three ways to name the payer, all valid: an élève found in the search,
+    // a free-typed name for a passager, or nothing at all — in which case the
+    // séance is booked for an anonymous "passager".
+    const typed = studentSearchQuery.trim();
+    const passagerName = selectedStudent ? undefined : typed || "Passager";
 
     const price = effectivePrice;
 
@@ -412,7 +343,8 @@ export function IndependentPage() {
     setReceiptData({
       personName: selectedStudent
         ? `${selectedStudent.firstName} ${selectedStudent.lastName}`
-        : passagerName || "-",
+        : passagerName || "Passager",
+      registrationNumber: selectedStudent ? registrationNumberOf(db, selectedStudent) : undefined,
       isRegisteredStudent: !!selectedStudent,
       itemLabel: selectedItem.label,
       teacherName: selectedItem.teacherName,
@@ -435,61 +367,17 @@ export function IndependentPage() {
 
   // ---- Receipt --------------------------------------------------------------
 
+  /** The séance-libre receipt: one small, streamlined ticket, never an A4. */
   const handlePrintReceipt = (data: CasualReceiptData) => {
-    const L = RECEIPT_LABELS[language];
-    const receiptNum = makeReceiptNumber();
-
-    const bodyHtml = `
-      ${letterheadHtml(school)}
-      ${bannerHtml(L.docTitle, `${L.receiptNo} <strong style="font-family:monospace;">${receiptNum}</strong>`)}
-
-      <div class="frame frame-info" style="margin-bottom:15px;">
-        <h3>${L.seanceTitle}</h3>
-        <table style="margin-top:0;">
-          <tr>
-            <td style="width:30%; font-weight:bold; color:#5c567a;">${L.person}</td>
-            <td style="font-weight:bold; font-size:1.05em;">${data.personName}
-              <span class="badge ${data.isRegisteredStudent ? "badge-primary" : "badge-warning"}" style="margin-inline-start:6px;">
-                ${data.isRegisteredStudent ? L.registered : L.passenger}
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td style="font-weight:bold; color:#5c567a;">${L.item}</td>
-            <td style="font-weight:bold;">${data.itemLabel}</td>
-          </tr>
-          ${data.teacherName ? `<tr><td style="font-weight:bold; color:#5c567a;">${L.teacher}</td><td>${data.teacherName}</td></tr>` : ""}
-          ${data.classLabel ? `<tr><td style="font-weight:bold; color:#5c567a;">${L.classLevel}</td><td>${data.classLabel}</td></tr>` : ""}
-          ${data.timeLabel ? `<tr><td style="font-weight:bold; color:#5c567a;">${L.time}</td><td style="font-family:monospace;">${data.timeLabel}</td></tr>` : ""}
-          <tr>
-            <td style="font-weight:bold; color:#5c567a;">${L.date}</td>
-            <td style="font-family:monospace;">${fmtDate(data.date, language)}</td>
-          </tr>
-        </table>
-      </div>
-
-      <div class="summary-card" style="margin-top:0;">
-        <h3>${L.payTitle}</h3>
-        <div class="summary-line"><span>${L.amount}</span><strong>${data.price} ${L.da}</strong></div>
-        <div class="summary-line"><span>${L.method}</span><strong>${L.cash}</strong></div>
-        <div class="summary-line"><span>${L.paidOn}</span><strong>${fmtDateTime(data.createdAt, language)}</strong></div>
-        <div class="net-pay-box">
-          <span>${L.total}</span>
-          <span>${data.price} ${L.da}</span>
-        </div>
-      </div>
-
-      ${signaturesHtml(L.signClient, L.signCashier)}
-      ${metaFooterHtml(school.name, language)}
-    `;
-
     printHtmlDocument(
-      printDocument({
-        title: `${L.docTitle} - ${data.personName}`,
-        lang: language,
-        bodyHtml,
-        // Receipt: compact centered column instead of the full A4 width.
-        extraCss: "body { max-width: 620px; margin: 0 auto; }",
+      seanceLibreInvoiceHtml(db, {
+        payer: data.personName,
+        registrationNumber: data.registrationNumber,
+        itemLabel: data.itemLabel,
+        price: data.price,
+        date: data.date,
+        time: data.timeLabel,
+        language,
       }),
     );
   };
@@ -835,7 +723,7 @@ export function IndependentPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-muted mb-1 font-sans">
-                Rechercher un élève (nom ou n° de carte)
+                Rechercher un élève (nom, n° d&apos;inscription ou n° de carte)
               </label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
@@ -845,13 +733,15 @@ export function IndependentPage() {
                     setStudentSearchQuery(e.target.value);
                     if (selectedStudent) setSelectedStudent(null);
                   }}
-                  placeholder="Nom, prénom ou numéro de carte RFID..."
+                  placeholder="Nom, n° d'inscription (00001), téléphone ou carte RFID…"
                   className="pl-9"
                 />
               </div>
               <p className="text-[10px] text-muted mt-1 leading-relaxed">
-                Si aucun élève n&apos;est sélectionné, la séance est enregistrée au nom saisi ci-dessus
-                en tant que <strong>passager</strong>.
+                Trois possibilités : <strong>sélectionner un élève</strong> trouvé ci-dessous,{" "}
+                <strong>saisir un nom libre</strong> pour un passager, ou{" "}
+                <strong>laisser vide</strong> — la séance est alors enregistrée pour un passager
+                anonyme.
               </p>
             </div>
 
@@ -877,7 +767,7 @@ export function IndependentPage() {
                         <div className="min-w-0">
                           <span className="font-semibold block truncate">{st.firstName} {st.lastName}</span>
                           <span className="text-[9px] text-muted block mt-0.5 font-mono">
-                            🎫 {st.rfid || "sans carte"} · 📞 {st.phone} · {totalRemainingSeances(db, st.id)} séance(s)
+                            N° {registrationNumberOf(db, st)} · 📞 {st.phone || "—"}
                           </span>
                         </div>
                         {isSelected && <Check className="h-4 w-4 text-primary shrink-0" />}
@@ -886,7 +776,7 @@ export function IndependentPage() {
                   })}
                   {matchedStudents.length === 0 && (
                     <div className="p-3 text-center text-xs text-muted bg-surface rounded-xl border border-line">
-                      ⚠️ Aucun élève trouvé. Sera enregistré comme passager :{" "}
+                      Aucun élève inscrit sous ce nom — la séance sera enregistrée pour le passager{" "}
                       <strong>&laquo;&nbsp;{studentSearchQuery}&nbsp;&raquo;</strong>
                     </div>
                   )}
@@ -904,9 +794,8 @@ export function IndependentPage() {
                 <span className="text-[10px] text-muted block uppercase font-bold">Élève sélectionné</span>
                 <strong className="text-ink block mt-0.5">{selectedStudent.firstName} {selectedStudent.lastName}</strong>
                 <span className="text-muted">
-                  Séances restantes : {totalRemainingSeances(db, selectedStudent.id)} — une séance libre se
-                  règle en espèces et ne consomme <strong className="text-ink">aucune</strong> séance de ses
-                  abonnements.
+                  N° {registrationNumberOf(db, selectedStudent)} — une séance libre se règle en espèces
+                  et ne touche <strong className="text-ink">aucun</strong> de ses soldes.
                   {selectedStudent.isFree && " (élève gratuit)"}
                 </span>
               </div>
@@ -917,7 +806,7 @@ export function IndependentPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-muted mb-1 font-sans">
-                Rechercher un cours ou un créneau de séance libre *
+                Rechercher l&apos;emploi du temps suivi (par nom) *
               </label>
               <div className="flex gap-1.5 mb-2">
                 {([
@@ -941,7 +830,7 @@ export function IndependentPage() {
                 <Input
                   value={itemSearchQuery}
                   onChange={(e) => setItemSearchQuery(e.target.value)}
-                  placeholder="Module, classe, groupe, salle ou enseignant..."
+                  placeholder="Nom de l'emploi du temps, classe, groupe, salle ou enseignant…"
                   className="pl-9"
                 />
               </div>
@@ -1002,9 +891,26 @@ export function IndependentPage() {
                     <strong>{selectedItem.price} DA</strong>. Modifiable pour cette séance uniquement.
                   </p>
                 </div>
-                <div className="bg-success/10 border border-success/20 rounded-xl p-3.5 flex justify-between items-center text-xs">
-                  <span className="text-success font-semibold">Total à encaisser :</span>
-                  <strong className="text-success text-sm font-extrabold">{effectivePrice} DA</strong>
+                <div className="rounded-xl border border-success/25 bg-success/10 p-3.5 text-xs">
+                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-success">
+                    Validation du paiement
+                  </span>
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-muted">Élève / passager</span>
+                    <strong className="text-ink">
+                      {selectedStudent
+                        ? `${selectedStudent.firstName} ${selectedStudent.lastName}`
+                        : studentSearchQuery.trim() || "Passager"}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-muted">Prix d&apos;une séance</span>
+                    <strong className="text-ink">{selectedItem.price} DA</strong>
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between border-t border-success/25 pt-2">
+                    <span className="font-semibold text-success">Total à encaisser</span>
+                    <strong className="text-sm font-extrabold text-success">{effectivePrice} DA</strong>
+                  </div>
                 </div>
               </div>
             )}
@@ -1013,8 +919,8 @@ export function IndependentPage() {
 
         <div className="flex justify-end gap-2 pt-4 mt-6 border-t border-line">
           <Button variant="outline" onClick={() => setIsFormOpen(false)}>Annuler</Button>
-          <Button onClick={handleSubmit}>
-            {selectedCasual ? "Enregistrer les modifications" : "Enregistrer la Séance"}
+          <Button onClick={handleSubmit} disabled={!selectedItem}>
+            {selectedCasual ? "Enregistrer les modifications" : "Valider le paiement"}
           </Button>
         </div>
       </Modal>
@@ -1098,8 +1004,8 @@ export function IndependentPage() {
                   </div>
                   {student && (
                     <div className="flex justify-between border-b border-line/50 pb-1.5">
-                      <span className="text-muted">Séances d'abonnement :</span>
-                      <strong className="text-ink">Aucune consommée</strong>
+                      <span className="text-muted">Soldes d&apos;abonnement :</span>
+                      <strong className="text-ink">Aucun débité</strong>
                     </div>
                   )}
                   <div className="flex justify-between">

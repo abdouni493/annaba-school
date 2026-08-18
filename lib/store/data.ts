@@ -2,11 +2,12 @@
 
 import { create } from "zustand";
 import { buildSeed } from "@/lib/store/seed";
-import { monthCodeForDate, netPriceFor, studentHasDebt } from "@/lib/helpers";
+import { cycleSizeOf, currentCycleCode, netPriceFor, studentHasDebt } from "@/lib/helpers";
 import type {
   AbsencePenalty,
   Announcement,
   AttendanceRecord,
+  AttendanceStatus,
   CashTransaction,
   ClassCategory,
   Coursework,
@@ -177,8 +178,8 @@ export interface ScanResult {
    *  presence any more — this only sizes the teacher's share and is what the
    *  receipt prints. */
   cost?: number;
-  /** present | late (set on successful writes) */
-  status?: "present" | "late" | "absent";
+  /** present | late | absent | cancelled (set on successful writes) */
+  status?: AttendanceStatus;
   /** séances left on that inscription once the presence is written */
   remaining?: number;
   /** this presence took the last séance of the inscription */
@@ -212,6 +213,23 @@ export interface ScanResult {
    *  price NOT charged) */
   waived?: number;
   messageKey: string;
+}
+
+/** What one click on the présence sheet actually did. */
+export interface PresenceResult {
+  ok: boolean;
+  messageKey: string;
+  /** what is now written for that day — null when the row was removed */
+  status?: AttendanceStatus | null;
+  /** money taken off the solde by this click */
+  charged?: number;
+  /** money given back by this click */
+  refunded?: number;
+  /** the solde of that emploi once the click is applied */
+  balance?: number;
+  /** the row costs nothing (annulée, or a first-ever absence) */
+  noCharge?: boolean;
+  moduleName?: string;
 }
 
 export interface TeacherSettlement {
@@ -248,12 +266,38 @@ interface DataActions {
     status: "present" | "late" | "absent",
     opts?: { date?: string; allowDebt?: boolean; skipTeacherDue?: boolean },
   ) => Promise<ScanResult>;
+  /**
+   * The présence sheet writes through THIS action: one call per click, no
+   * confirmation, fully reversible. It upserts the row of
+   * `{student, emploi, day}` and moves the student's SOLDE by exactly the price
+   * of one séance — forward on présent/absent, not at all on annulée, and
+   * backwards when `status` is null (the click was a mistake).
+   */
+  setPresence: (args: {
+    studentId: string;
+    sessionId: string;
+    date: string;
+    /** null undoes whatever was recorded that day */
+    status: AttendanceStatus | null;
+  }) => Promise<PresenceResult>;
+  /**
+   * Recharges the SOLDE of one emploi du temps. The money is booked on ONE of
+   * that emploi's own months (M1, M2 …) — by default the month the student is
+   * currently on.
+   */
+  addSold: (args: {
+    studentId: string;
+    subscriptionId: string;
+    amount: number;
+    monthCode?: string;
+    description?: string;
+  }) => Promise<{ ok: boolean; paymentId?: string; balance?: number; monthCode?: string }>;
   cancelAttendance: (attendanceId: string) => Promise<ScanResult>;
   /** Corrects one presence (status / date-time / amount charged); the balance
    *  moves by exactly the same delta. */
   updateAttendance: (
     attendanceId: string,
-    fields: { status?: "present" | "late" | "absent"; occurredAt?: string; amount?: number },
+    fields: { status?: AttendanceStatus; occurredAt?: string; amount?: number },
   ) => Promise<ScanResult>;
   /** Removes one automatic weekly-absence charge and refunds it. */
   deleteAbsencePenalty: (penaltyId: string) => Promise<ScanResult>;
@@ -478,6 +522,23 @@ function activeFreePeriod(
         (fp.allClasses || fp.classIds.some((c) => classIds.includes(c))),
     )
     .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+}
+
+/**
+ * What the teacher earns on ONE séance of a given emploi du temps. When the
+ * emploi carries a monthly split (month price -> school share -> teacher
+ * remainder / séances), that fixed per-séance price wins; otherwise the
+ * teacher's own percentage contract applies.
+ */
+function teacherDueFor(
+  db: Database,
+  session: ScheduleSession,
+  sub: Subscription | undefined,
+  base: number,
+): number {
+  const perSeance = sub?.teacherPerSeance ?? 0;
+  if (perSeance > 0) return Math.max(0, Math.round(perSeance));
+  return teacherShare(db, session.teacherId, base);
 }
 
 function teacherShare(db: Database, teacherId: string | undefined, base: number): number {
@@ -726,8 +787,10 @@ export const useData = create<DataStore>((set, get) => ({
       (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
     const teacherDue = teacherShare(db, matched.teacherId, teacherBase);
 
-    // Consume ONE séance — never money. A student with nothing left is still
-    // let in (the presence is flagged so the desk can regularise it).
+    // Burn ONE séance and take its price off the SOLDE of that emploi — exactly
+    // what the présence sheet does, so a badge and a click can never disagree.
+    // A student whose solde is already empty is still let in: it simply goes
+    // into the red and the desk regularises it.
     const consumes = !student.isFree && !offered && !!enrollment?.enrollmentId;
     const before = enrollment?.remaining ?? 0;
     const outOfSeances = consumes && before <= 0;
@@ -753,7 +816,11 @@ export const useData = create<DataStore>((set, get) => ({
       if (consumes) {
         patch.enrollments = state.enrollments.map((e) =>
           e.id === enrollment!.enrollmentId
-            ? { ...e, consumedSeances: e.consumedSeances + 1 }
+            ? {
+                ...e,
+                consumedSeances: e.consumedSeances + 1,
+                balance: (e.balance ?? 0) - cost,
+              }
             : e,
         );
       }
@@ -845,7 +912,11 @@ export const useData = create<DataStore>((set, get) => ({
         enrollments: refundSeance
           ? state.enrollments.map((e) =>
               e.id === enrollment!.enrollmentId
-                ? { ...e, consumedSeances: Math.max(0, e.consumedSeances - 1) }
+                ? {
+                    ...e,
+                    consumedSeances: Math.max(0, e.consumedSeances - 1),
+                    balance: (e.balance ?? 0) + (existing.amountDeducted || 0),
+                  }
                 : e,
             )
           : state.enrollments,
@@ -932,7 +1003,11 @@ export const useData = create<DataStore>((set, get) => ({
       if (consumes) {
         patch.enrollments = state.enrollments.map((e) =>
           e.id === enrollment!.enrollmentId
-            ? { ...e, consumedSeances: e.consumedSeances + 1 }
+            ? {
+                ...e,
+                consumedSeances: e.consumedSeances + 1,
+                balance: (e.balance ?? 0) - cost,
+              }
             : e,
         );
       }
@@ -974,6 +1049,312 @@ export const useData = create<DataStore>((set, get) => ({
     };
   },
 
+  /**
+   * The présence sheet writes through here: ONE click, no confirmation, and
+   * always reversible.
+   *
+   * The row of `{student, emploi, day}` is upserted, and the student's SOLDE on
+   * that emploi moves by exactly the price of one séance:
+   *  - `present` / `late` / `absent` -> the séance is burnt and its price is
+   *    taken off the solde,
+   *  - EXCEPT when the absence is the student's very first record on that
+   *    emploi: his month has not opened yet, so it costs him nothing,
+   *  - `cancelled` -> the séance did not happen: nothing burnt, nothing taken,
+   *  - `null` -> the click was a mistake: the row goes and the money comes back.
+   */
+  setPresence: async ({ studentId, sessionId, date, status }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    if (!student) return { ok: false, messageKey: "scan.notFound" };
+    const session = db.sessions.find((s) => s.id === sessionId);
+    if (!session) return { ok: false, messageKey: "attendance.sessionNotFound" };
+
+    const moduleName = MODULE_NAME(db, session.moduleId);
+    const sub = db.subscriptions.find((x) => x.sessionId === sessionId);
+    // A student enrolled on the emploi but who has never paid has no solde row
+    // yet. He still has to be pointed — and his solde still has to go into the
+    // red — so the row is opened here, empty, the first time he is marked.
+    let enrollment = sub
+      ? db.enrollments.find((e) => e.studentId === studentId && e.subscriptionId === sub.id)
+      : undefined;
+    if (!enrollment && sub && student.subscriptionIds.includes(sub.id)) {
+      enrollment = {
+        id: uid("enr"),
+        studentId,
+        subscriptionId: sub.id,
+        paidSeances: 0,
+        consumedSeances: 0,
+        balance: 0,
+        startDate: student.subscriptionDates?.[sub.id]?.startDate,
+        monthSeances: cycleSizeOf(sub),
+        createdAt: new Date().toISOString(),
+      };
+      const opened = enrollment;
+      set((state) => ({ enrollments: [...state.enrollments, opened] }));
+    }
+    const discount =
+      enrollment?.discount ?? (sub ? student.subscriptionDiscounts?.[sub.id] : undefined);
+    const listPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
+
+    const existing = db.attendance.find(
+      (a) => a.studentId === studentId && a.sessionId === sessionId && dateKey(a.timestamp) === date,
+    );
+
+    // What the row already written for that day costs today — undoing it gives
+    // exactly that back.
+    const undoBillable = !!existing && existing.status !== "cancelled" && !existing.noCharge;
+    const undoCharge = undoBillable ? existing!.amountDeducted || 0 : 0;
+    const balanceBefore = enrollment?.balance ?? 0;
+
+    const dropDayRows = (rows: UnpaidTeacherSession[]) =>
+      rows.filter(
+        (u) =>
+          !(
+            u.studentId === studentId &&
+            u.sessionId === sessionId &&
+            !u.paid &&
+            dateKey(u.date) === date
+          ),
+      );
+
+    if (status === null) {
+      if (!existing) {
+        return {
+          ok: true,
+          messageKey: "attendance.nothingToUndo",
+          status: null,
+          balance: balanceBefore,
+          moduleName,
+        };
+      }
+      set((state) => ({
+        attendance: state.attendance.filter((a) => a.id !== existing.id),
+        unpaidTeacher: dropDayRows(state.unpaidTeacher),
+        enrollments: enrollment
+          ? state.enrollments.map((e) =>
+              e.id === enrollment.id
+                ? {
+                    ...e,
+                    consumedSeances: Math.max(0, e.consumedSeances - (undoBillable ? 1 : 0)),
+                    balance: (e.balance ?? 0) + undoCharge,
+                  }
+                : e,
+            )
+          : state.enrollments,
+      }));
+      return {
+        ok: true,
+        messageKey: "attendance.undone",
+        status: null,
+        refunded: undoCharge,
+        balance: balanceBefore + undoCharge,
+        moduleName,
+      };
+    }
+
+    // A student may only be marked on HIS own group (séances libres excepted).
+    const ownGroup = !!sub && student.subscriptionIds.includes(sub.id);
+    if (!ownGroup && !session.isOpen) {
+      return { ok: false, messageKey: "scan.wrongGroup", moduleName };
+    }
+
+    // "First séance ever and he is not there": the month has not opened, so the
+    // absence is recorded but never billed.
+    const hasEarlierBillable = db.attendance.some(
+      (a) =>
+        a.studentId === studentId &&
+        a.sessionId === sessionId &&
+        a.id !== existing?.id &&
+        a.status !== "cancelled" &&
+        !a.noCharge &&
+        dateKey(a.timestamp) < date,
+    );
+    const firstAbsence = status === "absent" && !hasEarlierBillable;
+
+    const freePeriod = activeFreePeriod(db, [session.classId, ...(session.classIds ?? [])], date);
+    const startDate = enrollment?.startDate ?? student.subscriptionDates?.[sub?.id ?? ""]?.startDate;
+    const beforeStart = !!startDate && startDate > date;
+
+    const noCharge = status === "cancelled" || firstAbsence;
+    const offered = !noCharge && (!!freePeriod || beforeStart || student.isFree);
+    const netPrice = netPriceFor(listPrice, discount);
+    const charge = noCharge || offered ? 0 : netPrice;
+    const waived = offered ? netPrice : 0;
+
+    const occurred =
+      date === dateKey(new Date())
+        ? new Date().toISOString()
+        : new Date(`${date}T${session.startTime}:00`).toISOString();
+
+    const record: AttendanceRecord = {
+      id: existing?.id ?? uid("att"),
+      studentId,
+      sessionId,
+      timestamp: existing?.timestamp ?? occurred,
+      amountDeducted: charge,
+      status,
+      substituteGroup: !ownGroup,
+      freePeriodId: freePeriod && !noCharge ? freePeriod.id : undefined,
+      waivedAmount: waived,
+      preStart: beforeStart && !freePeriod && !noCharge,
+      noCharge: noCharge || undefined,
+    };
+
+    // The teacher earns on the séances that happened; an annulée pays nobody.
+    const teacherBase = noCharge ? 0 : charge || waived;
+    const teacherDue = teacherDueFor(db, session, sub, teacherBase);
+    const billable = !noCharge;
+
+    set((state) => {
+      const patch: Partial<DataStore> = {
+        attendance: existing
+          ? state.attendance.map((a) => (a.id === record.id ? record : a))
+          : [...state.attendance, record],
+        unpaidTeacher: dropDayRows(state.unpaidTeacher),
+      };
+      if (enrollment) {
+        patch.enrollments = state.enrollments.map((e) =>
+          e.id === enrollment.id
+            ? {
+                ...e,
+                consumedSeances: Math.max(
+                  0,
+                  e.consumedSeances - (undoBillable ? 1 : 0) + (billable ? 1 : 0),
+                ),
+                balance: (e.balance ?? 0) + undoCharge - charge,
+              }
+            : e,
+        );
+      }
+      if (session.teacherId && billable && teacherDue > 0) {
+        patch.unpaidTeacher = [
+          ...(patch.unpaidTeacher as UnpaidTeacherSession[]),
+          {
+            id: uid("utp"),
+            teacherId: session.teacherId,
+            sessionId,
+            studentId,
+            amount: teacherDue,
+            date: record.timestamp,
+            paid: false,
+          },
+        ];
+      }
+      return patch;
+    });
+
+    return {
+      ok: true,
+      messageKey: "attendance.saved",
+      status,
+      charged: charge,
+      refunded: undoCharge,
+      balance: balanceBefore + undoCharge - charge,
+      noCharge,
+      moduleName,
+    };
+  },
+
+  /**
+   * Recharges the SOLDE of one emploi du temps. The money is booked on ONE of
+   * that emploi's own months — by default the month the student is walking
+   * through right now on it.
+   */
+  addSold: async ({ studentId, subscriptionId, amount, monthCode, description }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+    if (!student || !sub) return { ok: false };
+
+    const credit = Math.max(0, Math.round(amount || 0));
+    if (credit <= 0) return { ok: false };
+
+    const code = monthCode || currentCycleCode(db, studentId, subscriptionId);
+    const now = new Date().toISOString();
+    const today = dateKey(new Date());
+    const existing = db.enrollments.find(
+      (e) => e.studentId === studentId && e.subscriptionId === subscriptionId,
+    );
+    const enrollmentId = existing?.id ?? uid("enr");
+    const packSeances = cycleSizeOf(sub);
+    const unit = Math.max(1, netPriceFor(sub.pricePerSession, existing?.discount));
+
+    const enrollment: Enrollment = existing
+      ? { ...existing, balance: (existing.balance ?? 0) + credit }
+      : {
+          id: enrollmentId,
+          studentId,
+          subscriptionId,
+          paidSeances: 0,
+          consumedSeances: 0,
+          balance: credit,
+          startDate: student.subscriptionDates?.[subscriptionId]?.startDate ?? today,
+          plan: student.subscriptionDates?.[subscriptionId]?.plan,
+          monthSeances: packSeances,
+          createdAt: now,
+        };
+    // The séance counter follows the money, so the old screens keep reading a
+    // coherent "séances restantes".
+    enrollment.paidSeances =
+      enrollment.consumedSeances + Math.max(0, Math.floor((enrollment.balance ?? 0) / unit));
+
+    const payment: Payment = {
+      id: uid("pay"),
+      studentId,
+      enrollmentId,
+      subscriptionId,
+      monthCode: code,
+      seancesPurchased: Math.round(credit / unit),
+      unitPrice: unit,
+      grossTotal: credit,
+      netTotal: credit,
+      amountPaid: credit,
+      rest: 0,
+      type: "subscription_payment",
+      date: now,
+      description:
+        description?.trim() ||
+        `Solde ${code} — ${MODULE_NAME(db, sub ? db.sessions.find((x) => x.id === sub.sessionId)?.moduleId ?? "" : "")}`,
+    };
+
+    set((state) => ({
+      enrollments: existing
+        ? state.enrollments.map((e) => (e.id === enrollmentId ? enrollment : e))
+        : [...state.enrollments, enrollment],
+      payments: [...state.payments, payment],
+      students: state.students.map((st) =>
+        st.id === studentId
+          ? {
+              ...st,
+              subscriptionIds: st.subscriptionIds.includes(subscriptionId)
+                ? st.subscriptionIds
+                : [...st.subscriptionIds, subscriptionId],
+              subscriptionDates: {
+                ...st.subscriptionDates,
+                [subscriptionId]: {
+                  ...st.subscriptionDates?.[subscriptionId],
+                  subscribedAt: st.subscriptionDates?.[subscriptionId]?.subscribedAt ?? today,
+                  startDate: st.subscriptionDates?.[subscriptionId]?.startDate ?? today,
+                },
+              },
+            }
+          : st,
+      ),
+      cash: [
+        ...state.cash,
+        {
+          id: uid("csh"),
+          type: "student_payment" as const,
+          amount: credit,
+          date: now,
+          description: `Solde ${code} — ${student.firstName} ${student.lastName}`,
+        },
+      ],
+    }));
+
+    return { ok: true, paymentId: payment.id, balance: enrollment.balance, monthCode: code };
+  },
+
   // Cancelling a presence gives the séance back — the mirror of consuming it.
   cancelAttendance: async (attendanceId) => {
     const db = get();
@@ -1002,7 +1383,11 @@ export const useData = create<DataStore>((set, get) => ({
       enrollments: refundSeance
         ? state.enrollments.map((e) =>
             e.id === enrollment!.enrollmentId
-              ? { ...e, consumedSeances: Math.max(0, e.consumedSeances - 1) }
+              ? {
+                  ...e,
+                  consumedSeances: Math.max(0, e.consumedSeances - 1),
+                  balance: (e.balance ?? 0) + (att.amountDeducted || 0),
+                }
               : e,
           )
         : state.enrollments,
@@ -1695,6 +2080,8 @@ export const useData = create<DataStore>((set, get) => ({
           ...existing,
           paidSeances: monthly ? count : existing.paidSeances + count,
           consumedSeances: monthly ? 0 : existing.consumedSeances,
+          // What was handed over lands on the emploi's solde.
+          balance: (existing.balance ?? 0) + Math.max(0, Math.round(amountPaid || 0)),
           discount: discount ?? existing.discount,
           startDate: startDate ?? existing.startDate,
           expiryDate: monthly ? expiryDate : expiryDate ?? existing.expiryDate,
@@ -1707,6 +2094,7 @@ export const useData = create<DataStore>((set, get) => ({
           subscriptionId,
           paidSeances: count,
           consumedSeances: 0,
+          balance: Math.max(0, Math.round(amountPaid || 0)),
           discount,
           startDate: startDate ?? today,
           expiryDate,
@@ -1719,6 +2107,10 @@ export const useData = create<DataStore>((set, get) => ({
       id: uid("pay"),
       studentId,
       enrollmentId,
+      subscriptionId,
+      // Months belong to the emploi, so the money lands on the month this
+      // student is currently walking through on it.
+      monthCode: currentCycleCode(db, studentId, subscriptionId),
       seancesPurchased: count,
       unitPrice,
       grossTotal,
@@ -1872,13 +2264,13 @@ export const useData = create<DataStore>((set, get) => ({
 
     // Only the unpaid remainders that fall in the requested school month.
     const monthOwed = db.payments
-      .filter((p) => p.studentId === studentId && p.rest > 0 && monthCodeForDate(p.date) === monthCode)
+      .filter((p) => p.studentId === studentId && p.rest > 0 && (p.monthCode || "M1") === monthCode)
       .reduce((s, p) => s + p.rest, 0);
     const settled = Math.min(Math.max(0, Math.round(amount || 0)), Math.max(monthOwed, 0));
     if (settled <= 0) return { ok: false, settled: 0, remainingDebt: Math.max(monthOwed, 0) };
 
     const order = db.payments
-      .filter((p) => p.studentId === studentId && p.rest > 0 && monthCodeForDate(p.date) === monthCode)
+      .filter((p) => p.studentId === studentId && p.rest > 0 && (p.monthCode || "M1") === monthCode)
       .sort((a, b) => a.date.localeCompare(b.date));
     const reduced = new Map<string, number>();
     let left = settled;

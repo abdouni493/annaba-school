@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useData } from "@/lib/store/data";
+import { dayKeyOf } from "@/lib/helpers";
 import { useSession } from "@/lib/store/session";
 import { changeOwnPassword } from "@/lib/demo/users";
 import { Card, CardBody } from "@/components/ui/Card";
@@ -501,7 +502,7 @@ function TeacherAttendanceView({
   push: any;
   updateItem: any;
 }) {
-  const markAttendance = useData((s) => s.markAttendance);
+  const setPresence = useData((s) => s.setPresence);
   const [activeSession, setActiveSession] = useState<ScheduleSession | null>(null);
 
   // Enrolled students for selected session group
@@ -526,13 +527,18 @@ function TeacherAttendanceView({
    *  costs (one séance) and what the teacher earns for it, so the teacher's own
    *  sheet can never drift from reception's. */
   const handleToggleAttendance = (student: Student, session: ScheduleSession, status: AttendanceStatus) => {
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = new Date().toLocaleDateString("fr-CA");
     const existing = attendance.find(
-      (a) => a.studentId === student.id && a.sessionId === session.id && a.timestamp.startsWith(todayStr),
+      (a) => a.studentId === student.id && a.sessionId === session.id && dayKeyOf(a.timestamp) === todayStr,
     );
-    if (existing && existing.status === status) return; // already has this status
-
-    void markAttendance(student.id, session.id, status, { date: todayStr });
+    // Clicking the status already written takes it back — same "retour" the
+    // reception sheet offers.
+    void setPresence({
+      studentId: student.id,
+      sessionId: session.id,
+      date: todayStr,
+      status: existing && existing.status === status ? null : status,
+    });
   };
 
   return (

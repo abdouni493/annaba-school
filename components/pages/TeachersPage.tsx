@@ -25,9 +25,15 @@ import {
 } from "lucide-react";
 import type { Teacher, TeacherPaymentDetail } from "@/lib/types";
 import { printHtmlDocument } from "@/lib/print";
+import { formatDA } from "@/lib/utils";
 import { buildTeacherPaymentReport } from "@/lib/reports/teacherPayment";
 import { buildTeacherSettlementReceipt } from "@/lib/reports/teacherSettlement";
-import { formatDateFr } from "@/lib/helpers";
+import {
+  cycleSizeOf,
+  monthlyPriceOf,
+  schoolMonthShareOf,
+  teacherMonthShareOf,
+  teacherPerSeanceOf, formatDateFr } from "@/lib/helpers";
 import { useSettings } from "@/lib/store/settings";
 
 /** One unpaid timing of a teacher: a (date, séance) pair with everyone who was
@@ -72,6 +78,7 @@ export function TeachersPage() {
     modules,
     groups,
     classes,
+    subscriptions,
     students,
     payments,
     unpaidTeacher,
@@ -1207,6 +1214,81 @@ export function TeachersPage() {
                 </Badge>
               </div>
             </div>
+
+            {/* -------------------------------------------------------------- */}
+            {/* Ses emplois du temps et ce que chacun lui rapporte              */}
+            {/* -------------------------------------------------------------- */}
+            {(() => {
+              const mine = sessions.filter((se) => se.teacherId === selectedTeacher.id);
+              if (mine.length === 0) return null;
+              return (
+                <div className="rounded-2xl border border-line bg-surface p-4">
+                  <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-muted">
+                    📅 Emplois du temps &amp; rémunération
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[720px] text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-line text-[10px] font-bold uppercase text-muted">
+                          <th className="py-1.5">Emploi du temps</th>
+                          <th className="py-1.5 text-center">Séances / mois</th>
+                          <th className="py-1.5 text-right">Prix du mois</th>
+                          <th className="py-1.5 text-right">Prix séance</th>
+                          <th className="py-1.5 text-right">Part école</th>
+                          <th className="py-1.5 text-right">Part enseignant</th>
+                          <th className="py-1.5 text-right">Séance enseignant</th>
+                          <th className="py-1.5 text-center">Inscrits</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mine.map((se) => {
+                          const sub = subscriptions.find((x) => x.sessionId === se.id);
+                          const label =
+                            se.title || modules.find((m) => m.id === se.moduleId)?.name || "Emploi du temps";
+                          return (
+                            <tr key={se.id} className="border-b border-line/50 last:border-0">
+                              <td className="py-2">
+                                <span className="block font-semibold text-ink">{label}</span>
+                                <span className="block font-mono text-[9px] text-muted">
+                                  {groups.find((g) => g.id === se.groupId)?.name ?? "-"} ·{" "}
+                                  {se.startTime}-{se.endTime}
+                                </span>
+                              </td>
+                              <td className="py-2 text-center font-mono">
+                                {sub ? cycleSizeOf(sub) : "—"}
+                              </td>
+                              <td className="py-2 text-right font-mono">
+                                {sub ? formatDA(monthlyPriceOf(sub)) : "—"}
+                              </td>
+                              <td className="py-2 text-right font-mono text-primary">
+                                {sub ? formatDA(sub.pricePerSession) : "—"}
+                              </td>
+                              <td className="py-2 text-right font-mono">
+                                {sub ? formatDA(schoolMonthShareOf(sub)) : "—"}
+                              </td>
+                              <td className="py-2 text-right font-mono font-bold text-success">
+                                {sub ? formatDA(teacherMonthShareOf(sub)) : "—"}
+                              </td>
+                              <td className="py-2 text-right font-mono font-bold text-success">
+                                {sub ? formatDA(teacherPerSeanceOf(sub)) : "—"}
+                              </td>
+                              <td className="py-2 text-center font-mono">
+                                {sub ? students.filter((st) => st.subscriptionIds.includes(sub.id)).length : 0}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-muted">
+                    La « séance enseignant » est ce que chaque présence lui rapporte : part enseignant du
+                    mois ÷ nombre de séances du mois, telle qu&apos;elle a été fixée à la création de
+                    l&apos;emploi du temps.
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* -------------------------------------------------------------- */}
             {/* Passager: a dedicated, complete file (history + payments)       */}

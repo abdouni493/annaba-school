@@ -54,6 +54,73 @@ function weekday(n = 0): Day {
 const TODAY = weekday(0);
 
 export function buildSeed(): Database {
+  return normalise(rawSeed());
+}
+
+/**
+ * Brings the hand-written demo data in line with the current model, so the seed
+ * itself stays readable:
+ *  - every élève gets his sequential registration number (00001, 00002 …),
+ *  - every emploi du temps gets a monthly pack (it is what opens and closes the
+ *    M1 / M2 months of its students),
+ *  - every inscription gets its money SOLDE, derived from the séances it was
+ *    seeded with,
+ *  - every purchase is attributed to its emploi and to the month it fell in.
+ */
+function normalise(db: Database): Database {
+  db.students = db.students.map((s, i) => ({
+    ...s,
+    registrationNumber: s.registrationNumber ?? String(i + 1).padStart(5, "0"),
+  }));
+
+  db.subscriptions = db.subscriptions.map((sub) => {
+    if ((sub.monthlySeances ?? 0) > 0) return sub;
+    const seances = 8;
+    const monthlyPrice = Math.round(sub.pricePerSession * seances * 0.9);
+    const schoolMonthShare = Math.round(monthlyPrice * 0.55);
+    return {
+      ...sub,
+      monthlySeances: seances,
+      monthlyPrice,
+      schoolMonthShare,
+      teacherPerSeance: Math.round((monthlyPrice - schoolMonthShare) / seances),
+    };
+  });
+
+  db.enrollments = db.enrollments.map((e) => {
+    if (e.balance != null) return e;
+    const sub = db.subscriptions.find((x) => x.id === e.subscriptionId);
+    const unit = sub?.pricePerSession ?? 0;
+    return { ...e, balance: (e.paidSeances - e.consumedSeances) * unit };
+  });
+
+  // A purchase belongs to the emploi it credited, on the month the student was
+  // walking through when it was made.
+  db.payments = db.payments.map((p) => {
+    if (p.subscriptionId || !p.enrollmentId) return p;
+    const enr = db.enrollments.find((e) => e.id === p.enrollmentId);
+    if (!enr) return p;
+    const sub = db.subscriptions.find((x) => x.id === enr.subscriptionId);
+    const size = Math.max(1, sub?.monthlySeances ?? 4);
+    const before = db.attendance.filter(
+      (a) =>
+        a.studentId === p.studentId &&
+        a.sessionId === sub?.sessionId &&
+        a.status !== "cancelled" &&
+        !a.noCharge &&
+        a.timestamp <= p.date,
+    ).length;
+    return {
+      ...p,
+      subscriptionId: enr.subscriptionId,
+      monthCode: `M${Math.floor(before / size) + 1}`,
+    };
+  });
+
+  return db;
+}
+
+function rawSeed(): Database {
   return {
     // -----------------------------------------------------------------------
     school: {

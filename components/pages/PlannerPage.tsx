@@ -25,7 +25,14 @@ import {
   X
 } from "lucide-react";
 import type { ScheduleSession, Day, Subscription, Teacher } from "@/lib/types";
-import { totalRemainingSeances } from "@/lib/helpers";
+import {
+  monthlyPriceOf,
+  schoolMonthShareOf,
+  soldFor,
+  teacherMonthShareOf,
+  teacherPerSeanceOf,
+} from "@/lib/helpers";
+import { formatDA } from "@/lib/utils";
 import { formatDateFr } from "@/lib/helpers";
 import { printHtmlDocument } from "@/lib/print";
 import {
@@ -105,6 +112,7 @@ export function PlannerPage() {
     push,
     deleteFrom,
     updateItem,
+    setSubscriptionPrice,
   } = db;
   const { language } = useSettings();
 
@@ -135,6 +143,37 @@ export function PlannerPage() {
   const [startMin, setStartMin] = useState("00");
   const [endHour, setEndHour] = useState("10");
   const [endMin, setEndMin] = useState("00");
+
+  // ---- Tarification mensuelle de l'emploi du temps ------------------------
+  // The desk gives TWO figures — the séances a month contains and what that
+  // month costs — and everything else falls out of them: the price of one
+  // séance, what the school keeps, what is left for the teacher, and what the
+  // teacher earns per séance.
+  const [monthSeances, setMonthSeances] = useState<number>(0);
+  const [monthPrice, setMonthPrice] = useState<number>(0);
+  const [schoolShare, setSchoolShare] = useState<number>(0);
+
+  const pricePerSeance = monthSeances > 0 ? Math.round(monthPrice / monthSeances) : 0;
+  const teacherShare = Math.max(0, monthPrice - schoolShare);
+  const teacherPerSeance = monthSeances > 0 ? Math.round(teacherShare / monthSeances) : 0;
+
+  const resetPricing = () => {
+    setMonthSeances(0);
+    setMonthPrice(0);
+    setSchoolShare(0);
+  };
+
+  /** Writes the tariff of the emploi du temps (and of every group of the same
+   *  cours) once the créneau itself is saved. */
+  const savePricing = (sessionId: string) => {
+    if (monthSeances <= 0 || monthPrice <= 0) return;
+    void setSubscriptionPrice(sessionId, pricePerSeance, {
+      monthlySeances: monthSeances,
+      monthlyPrice: monthPrice,
+      schoolMonthShare: Math.min(schoolShare, monthPrice),
+      teacherPerSeance,
+    });
+  };
 
   // Inline creations
   const [newModuleName, setNewModuleName] = useState("");
@@ -455,6 +494,7 @@ export function PlannerPage() {
       title: title.trim() || undefined,
     };
     push("sessions", newSession);
+    savePricing(newSession.id);
     setIsCreateOpen(false);
     resetForm();
   };
@@ -477,6 +517,7 @@ export function PlannerPage() {
       title: title.trim() || undefined,
     };
     updateItem("sessions", selectedSession.id, updated);
+    savePricing(selectedSession.id);
     setIsEditOpen(false);
     resetForm();
   };
@@ -506,6 +547,7 @@ export function PlannerPage() {
     setEndHour("10");
     setEndMin("00");
     setSelectedSession(null);
+    resetPricing();
   };
 
   const openEdit = (s: ScheduleSession) => {
@@ -523,6 +565,10 @@ export function PlannerPage() {
     setStartMin(sm);
     setEndHour(eh);
     setEndMin(em);
+    const sub = subscriptions.find((x) => x.sessionId === s.id);
+    setMonthSeances(sub?.monthlySeances ?? 0);
+    setMonthPrice(monthlyPriceOf(sub));
+    setSchoolShare(sub ? schoolMonthShareOf(sub) : 0);
     setIsEditOpen(true);
     setIsDetailsOpen(false);
   };
@@ -685,7 +731,7 @@ export function PlannerPage() {
             <Sparkles className="h-4 w-4" /> Créneau Séance Libre
           </Button>
           <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" /> Créer une Séance
+            <Plus className="h-4 w-4" /> Créer un emploi du temps
           </Button>
         </div>
       </div>
@@ -895,7 +941,7 @@ export function PlannerPage() {
         <div>
           {filteredSessions.length === 0 ? (
             <div className="text-center p-12 bg-canvas/30 border border-line border-dashed rounded-2xl text-muted text-xs">
-              Aucune séance d'emploi du temps ne correspond aux filtres actuels.
+              Aucun emploi du temps ne correspond aux filtres actuels.
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1320,19 +1366,19 @@ export function PlannerPage() {
       </Modal>
 
       {/* Creation Modal */}
-      <Modal open={isCreateOpen} onClose={() => setIsCreateOpen(false)} title="Créer un emploi du temps" wide>
+      <Modal open={isCreateOpen} onClose={() => setIsCreateOpen(false)} title="Créer un nouvel emploi du temps" wide>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Left panel - core drop downs */}
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Nom du créneau (optionnel)</label>
+              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Nom de l&apos;emploi du temps (optionnel)</label>
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Ex: Maths — Groupe A (Samedi matin)"
               />
               <p className="mt-1 text-[10px] text-muted">
-                Laissez vide pour utiliser le nom du module. Ce nom apparaît partout où le créneau est listé.
+                Laissez vide pour utiliser le nom du module. Ce nom apparaît partout où l&apos;emploi du temps est listé.
               </p>
             </div>
             <div>
@@ -1496,7 +1542,7 @@ export function PlannerPage() {
 
             {/* Generated Name Preview */}
             <div className="bg-canvas/50 border border-line rounded-xl p-3 text-xs">
-              <span className="text-[10px] text-muted block font-semibold mb-1 font-sans">Nom suggéré de l'emploi</span>
+              <span className="text-[10px] text-muted block font-semibold mb-1 font-sans">Nom suggéré de l&apos;emploi du temps</span>
               <div className="font-bold text-ink line-clamp-2">
                 {classId ? classes.find((c) => c.id === classId)?.name : "?"} -{" "}
                 {moduleId ? getModuleName(moduleId) : "?"} (Gr: {groupId ? getGroupName(groupId) : "?"} / Salle:{" "}
@@ -1504,6 +1550,108 @@ export function PlannerPage() {
               </div>
             </div>
           </div>
+        </div>
+
+
+        {/* ---- Tarif de l'emploi du temps -----------------------------------
+             Two figures are typed — the séances a month contains and what that
+             month costs — and the rest is derived: the price of one séance,
+             what the school keeps, what is left for the enseignant, and what he
+             earns per séance. That last figure is what every règlement pays. */}
+        <div className="mt-6 space-y-3 rounded-2xl border border-primary/25 bg-primary-50/25 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+              💰 Tarif de l&apos;emploi du temps
+            </span>
+            <span className="text-[10px] text-muted">
+              Le mois d&apos;un élève s&apos;ouvre à sa 1<sup>re</sup> présence et se ferme à la
+              dernière séance du pack.
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Nombre de séances du mois *
+              </label>
+              <Input
+                type="number"
+                min={0}
+                value={monthSeances || ""}
+                onChange={(e) => setMonthSeances(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="Ex: 8"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Prix total du mois (DA) *
+              </label>
+              <Input
+                type="number"
+                min={0}
+                value={monthPrice || ""}
+                onChange={(e) => setMonthPrice(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="Ex: 4000"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Prix d&apos;une séance (calculé)
+              </label>
+              <div className="flex h-10 items-center rounded-xl border border-primary/40 bg-primary-50/60 px-3 text-sm font-black text-primary">
+                {formatDA(pricePerSeance)}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Part de l&apos;école sur le mois (DA)
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={monthPrice || undefined}
+                value={schoolShare || ""}
+                onChange={(e) => setSchoolShare(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="Ex: 2200"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Reste pour l&apos;enseignant (calculé)
+              </label>
+              <div className="flex h-10 items-center rounded-xl border border-success/40 bg-success/10 px-3 text-sm font-black text-success">
+                {formatDA(teacherShare)}
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Séance payée à l&apos;enseignant (calculé)
+              </label>
+              <div className="flex h-10 items-center rounded-xl border border-success/40 bg-success/10 px-3 text-sm font-black text-success">
+                {formatDA(teacherPerSeance)}
+              </div>
+            </div>
+          </div>
+
+          {monthSeances > 0 && monthPrice > 0 ? (
+            <p className="rounded-xl border border-line bg-surface p-2.5 text-[10px] leading-relaxed text-muted">
+              Un mois = <strong className="text-ink">{monthSeances} séances</strong> à{" "}
+              <strong className="text-ink">{formatDA(monthPrice)}</strong> →{" "}
+              <strong className="text-primary">{formatDA(pricePerSeance)} la séance</strong>. L&apos;école
+              garde <strong className="text-ink">{formatDA(Math.min(schoolShare, monthPrice))}</strong>,
+              l&apos;enseignant reçoit <strong className="text-success">{formatDA(teacherShare)}</strong>{" "}
+              soit <strong className="text-success">{formatDA(teacherPerSeance)}</strong> par séance
+              assurée.
+            </p>
+          ) : (
+            <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[10px] text-warning">
+              Sans nombre de séances ni prix du mois, l&apos;emploi du temps est créé sans tarif : aucun
+              élève ne pourra y être inscrit tant qu&apos;il n&apos;en a pas un.
+            </p>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-6 mt-4 border-t border-line">
@@ -1638,6 +1786,108 @@ export function PlannerPage() {
           </div>
         </div>
 
+
+        {/* ---- Tarif de l'emploi du temps -----------------------------------
+             Two figures are typed — the séances a month contains and what that
+             month costs — and the rest is derived: the price of one séance,
+             what the school keeps, what is left for the enseignant, and what he
+             earns per séance. That last figure is what every règlement pays. */}
+        <div className="mt-6 space-y-3 rounded-2xl border border-primary/25 bg-primary-50/25 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+              💰 Tarif de l&apos;emploi du temps
+            </span>
+            <span className="text-[10px] text-muted">
+              Le mois d&apos;un élève s&apos;ouvre à sa 1<sup>re</sup> présence et se ferme à la
+              dernière séance du pack.
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Nombre de séances du mois *
+              </label>
+              <Input
+                type="number"
+                min={0}
+                value={monthSeances || ""}
+                onChange={(e) => setMonthSeances(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="Ex: 8"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Prix total du mois (DA) *
+              </label>
+              <Input
+                type="number"
+                min={0}
+                value={monthPrice || ""}
+                onChange={(e) => setMonthPrice(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="Ex: 4000"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Prix d&apos;une séance (calculé)
+              </label>
+              <div className="flex h-10 items-center rounded-xl border border-primary/40 bg-primary-50/60 px-3 text-sm font-black text-primary">
+                {formatDA(pricePerSeance)}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Part de l&apos;école sur le mois (DA)
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={monthPrice || undefined}
+                value={schoolShare || ""}
+                onChange={(e) => setSchoolShare(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="Ex: 2200"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Reste pour l&apos;enseignant (calculé)
+              </label>
+              <div className="flex h-10 items-center rounded-xl border border-success/40 bg-success/10 px-3 text-sm font-black text-success">
+                {formatDA(teacherShare)}
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Séance payée à l&apos;enseignant (calculé)
+              </label>
+              <div className="flex h-10 items-center rounded-xl border border-success/40 bg-success/10 px-3 text-sm font-black text-success">
+                {formatDA(teacherPerSeance)}
+              </div>
+            </div>
+          </div>
+
+          {monthSeances > 0 && monthPrice > 0 ? (
+            <p className="rounded-xl border border-line bg-surface p-2.5 text-[10px] leading-relaxed text-muted">
+              Un mois = <strong className="text-ink">{monthSeances} séances</strong> à{" "}
+              <strong className="text-ink">{formatDA(monthPrice)}</strong> →{" "}
+              <strong className="text-primary">{formatDA(pricePerSeance)} la séance</strong>. L&apos;école
+              garde <strong className="text-ink">{formatDA(Math.min(schoolShare, monthPrice))}</strong>,
+              l&apos;enseignant reçoit <strong className="text-success">{formatDA(teacherShare)}</strong>{" "}
+              soit <strong className="text-success">{formatDA(teacherPerSeance)}</strong> par séance
+              assurée.
+            </p>
+          ) : (
+            <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[10px] text-warning">
+              Sans nombre de séances ni prix du mois, l&apos;emploi du temps est créé sans tarif : aucun
+              élève ne pourra y être inscrit tant qu&apos;il n&apos;en a pas un.
+            </p>
+          )}
+        </div>
+
         <div className="flex justify-end gap-2 pt-6 mt-4 border-t border-line">
           <Button variant="outline" onClick={() => setIsEditOpen(false)}>
             Annuler
@@ -1647,7 +1897,7 @@ export function PlannerPage() {
       </Modal>
 
       {/* Details Modal */}
-      <Modal open={isDetailsOpen} onClose={() => setIsDetailsOpen(false)} title="Détails de la Séance" wide>
+      <Modal open={isDetailsOpen} onClose={() => setIsDetailsOpen(false)} title="Détails de l'emploi du temps" wide>
         {selectedSession && (
           <div className="space-y-6">
             {selectedSession.isOpen && (
@@ -1722,6 +1972,51 @@ export function PlannerPage() {
               </div>
             </div>
 
+            {/* Tarif — what the emploi costs, and how it is split. */}
+            {(() => {
+              const sub = subscriptions.find((x) => x.sessionId === selectedSession.id);
+              if (!sub) {
+                return (
+                  <div className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-[11px] text-warning">
+                    Aucun tarif défini pour cet emploi du temps — modifiez-le pour en fixer un.
+                  </div>
+                );
+              }
+              return (
+                <div className="rounded-xl border border-primary/25 bg-primary-50/30 p-4">
+                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-primary">
+                    💰 Tarif de l&apos;emploi du temps
+                  </span>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                    <div>
+                      <span className="block text-[10px] uppercase text-muted">Séances / mois</span>
+                      <strong className="text-ink">{sub.monthlySeances ?? 0}</strong>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase text-muted">Prix du mois</span>
+                      <strong className="text-ink">{formatDA(monthlyPriceOf(sub))}</strong>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase text-muted">Prix / séance</span>
+                      <strong className="text-primary">{formatDA(sub.pricePerSession)}</strong>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase text-muted">Part école</span>
+                      <strong className="text-ink">{formatDA(schoolMonthShareOf(sub))}</strong>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase text-muted">
+                        Enseignant (mois / séance)
+                      </span>
+                      <strong className="text-success">
+                        {formatDA(teacherMonthShareOf(sub))} · {formatDA(teacherPerSeanceOf(sub))}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <h4 className="font-bold text-ink mb-2.5 flex items-center gap-1.5">
@@ -1755,7 +2050,7 @@ export function PlannerPage() {
                 </h4>
                 <div className="bg-surface border border-line p-3 rounded-xl max-h-48 overflow-y-auto space-y-2">
                   {getSessionStudents(selectedSession.id).length === 0 ? (
-                    <p className="text-xs text-muted italic p-4 text-center">Aucun étudiant inscrit à cette séance.</p>
+                    <p className="text-xs text-muted italic p-4 text-center">Aucun élève inscrit à cet emploi du temps.</p>
                   ) : (
                     getSessionStudents(selectedSession.id).map((stu) => (
                       <div key={stu.id} className="flex justify-between items-center text-xs bg-canvas/30 p-2.5 rounded-lg border border-line/50">
@@ -1763,9 +2058,18 @@ export function PlannerPage() {
                           <span className="font-bold text-ink block">{stu.firstName} {stu.lastName}</span>
                           <span className="text-[10px] text-muted">{stu.phone}</span>
                         </div>
-                        <Badge tone={stu.isFree ? "success" : totalRemainingSeances(db, stu.id) === 0 ? "danger" : "primary"} className="font-bold">
-                          {stu.isFree ? "Gratuit" : `${totalRemainingSeances(db, stu.id)} séance(s)`}
-                        </Badge>
+                        {(() => {
+                          const sub = subscriptions.find((x) => x.sessionId === selectedSession.id);
+                          const sold = sub ? soldFor(db, stu.id, sub.id) : 0;
+                          return (
+                            <Badge
+                              tone={stu.isFree ? "success" : sold < 0 ? "danger" : sold === 0 ? "warning" : "primary"}
+                              className="font-bold"
+                            >
+                              {stu.isFree ? "Gratuit" : `Solde ${formatDA(sold)}`}
+                            </Badge>
+                          );
+                        })()}
                       </div>
                     ))
                   )}
@@ -1787,7 +2091,7 @@ export function PlannerPage() {
                   <Edit className="h-4 w-4" /> Modifier
                 </Button>
                 <Button variant="outline" className="flex items-center gap-1 text-xs text-danger border-danger/20 hover:bg-danger/5" onClick={() => handleDelete(selectedSession.id)}>
-                  <Trash2 className="h-4 w-4 text-danger" /> Supprimer la Séance
+                  <Trash2 className="h-4 w-4 text-danger" /> Supprimer l&apos;emploi du temps
                 </Button>
               </div>
               <Button onClick={() => setIsDetailsOpen(false)}>Fermer</Button>

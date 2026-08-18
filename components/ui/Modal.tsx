@@ -27,6 +27,7 @@ export function Modal({
   children,
   footer,
   wide,
+  full,
 }: {
   open: boolean;
   onClose: () => void;
@@ -34,6 +35,9 @@ export function Modal({
   children: React.ReactNode;
   footer?: React.ReactNode;
   wide?: boolean;
+  /** near-fullscreen: for the dense screens (présence sheet) that need every
+   *  pixel on a desktop yet must still breathe on a phone */
+  full?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -45,7 +49,7 @@ export function Modal({
 
   return (
     <ModalPortal>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className={`fixed inset-0 z-50 flex items-center justify-center ${full ? "p-1 sm:p-4" : "p-4"}`}>
         <motion.div
           className="absolute inset-0 bg-black/50 backdrop-blur-sm"
           initial={{ opacity: 0 }}
@@ -53,7 +57,7 @@ export function Modal({
           onClick={onClose}
         />
         <motion.div
-          className={`relative z-10 w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[90vh] overflow-y-auto rounded-2xl border border-line bg-surface card-shadow-lg`}
+          className={`relative z-10 w-full ${full ? "max-w-[1600px] max-h-[97vh]" : wide ? "max-w-3xl max-h-[90vh]" : "max-w-lg max-h-[90vh]"} overflow-y-auto rounded-2xl border border-line bg-surface card-shadow-lg`}
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ type: "spring", stiffness: 320, damping: 28 }}
@@ -69,7 +73,7 @@ export function Modal({
               </button>
             </div>
           )}
-          <div className="p-5">{children}</div>
+          <div className={full ? "p-3 sm:p-5" : "p-5"}>{children}</div>
           {footer && (
             <div className="sticky bottom-0 flex justify-end gap-2 border-t border-line bg-surface px-5 py-3">
               {footer}

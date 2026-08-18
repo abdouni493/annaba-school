@@ -1,6 +1,7 @@
 import type { Database } from "@/lib/store/data";
 import { DAYS } from "@/lib/types";
 import type {
+  AttendanceRecord,
   CoursLevel,
   Day,
   Enrollment,
@@ -263,133 +264,292 @@ export function formatDateFr(dateStr?: string): string {
   return `${d}/${m}/${y}`;
 }
 
-// ---- School-year months: September = M1 … July = M11 -----------------------
+// ---- Emploi-du-temps months: M1, M2 … counted in SÉANCES, not in calendar --
 /**
- * The school year runs from September to July. Each month gets a code M1…M11
- * used everywhere presences, payments and debts are grouped by month. August is
- * outside the school year, so it maps to nothing.
- * `month` is the JS month index (0 = January).
+ * Months are NOT calendar months and they no longer start in September.
+ *
+ * Every emploi du temps counts its OWN months, and every student walks them at
+ * his own pace:
+ *  - the month M1 of an emploi opens on the student's FIRST présence on it,
+ *  - it closes on the séance that completes the pack (`monthlySeances`),
+ *  - the very next présence opens M2, and so on.
+ *
+ * So an emploi created in August whose pack is 4 séances, first attended in
+ * September, has its M1 running from that first présence to the 4th one —
+ * whatever the calendar says.
  */
 export interface SchoolMonth {
   code: string;
-  /** JS month index, 0 = January */
-  month: number;
+  /** 0-based position of the month (M1 -> 0) */
+  index: number;
   label: string;
   short: string;
 }
 
-export const SCHOOL_MONTHS: SchoolMonth[] = [
-  { code: "M1", month: 8, label: "Septembre", short: "Sep" },
-  { code: "M2", month: 9, label: "Octobre", short: "Oct" },
-  { code: "M3", month: 10, label: "Novembre", short: "Nov" },
-  { code: "M4", month: 11, label: "Décembre", short: "Déc" },
-  { code: "M5", month: 0, label: "Janvier", short: "Jan" },
-  { code: "M6", month: 1, label: "Février", short: "Fév" },
-  { code: "M7", month: 2, label: "Mars", short: "Mar" },
-  { code: "M8", month: 3, label: "Avril", short: "Avr" },
-  { code: "M9", month: 4, label: "Mai", short: "Mai" },
-  { code: "M10", month: 5, label: "Juin", short: "Jun" },
-  { code: "M11", month: 6, label: "Juillet", short: "Jul" },
-];
+/** Séances a month contains when the emploi has no monthly pack defined. */
+export const DEFAULT_CYCLE_SIZE = 4;
+/** How many months the month pickers offer. */
+export const MONTH_CYCLE_COUNT = 12;
 
-/** School month for a JS month index (0-11), or null for August (index 7). */
-export function schoolMonthByJsMonth(jsMonth: number): SchoolMonth | null {
-  return SCHOOL_MONTHS.find((m) => m.month === jsMonth) ?? null;
+export function monthCycleAt(index: number): SchoolMonth {
+  const i = Math.max(0, Math.round(index));
+  return { code: `M${i + 1}`, index: i, label: `Mois ${i + 1}`, short: `M${i + 1}` };
 }
 
+export const SCHOOL_MONTHS: SchoolMonth[] = Array.from({ length: MONTH_CYCLE_COUNT }, (_, i) =>
+  monthCycleAt(i),
+);
+
+/** "M3" -> its descriptor. Accepts any Mn, even beyond the picker's list. */
 export function schoolMonthByCode(code: string): SchoolMonth | null {
-  return SCHOOL_MONTHS.find((m) => m.code === code) ?? null;
+  const m = /^M(\d+)$/.exec(code || "");
+  return m ? monthCycleAt(Number(m[1]) - 1) : null;
 }
 
-/** "M3" for a YYYY-MM-DD / ISO date / Date. Null when the date falls in August. */
-export function monthCodeForDate(value?: string | Date): string | null {
-  if (!value) return null;
-  const d = typeof value === "string" ? new Date(value) : value;
-  if (Number.isNaN(d.getTime())) return null;
-  return schoolMonthByJsMonth(d.getMonth())?.code ?? null;
+/** Ordering index of a month code (M1 = 0, M2 = 1 …); -1 when unparsable. */
+export function monthOrder(code: string): number {
+  return schoolMonthByCode(code)?.index ?? -1;
 }
 
-/** "M3 · Novembre" — the human label of a month code. */
+/** "M3 · Mois 3" — the human label of a month code. */
 export function monthCodeLabel(code: string): string {
   const m = schoolMonthByCode(code);
   return m ? `${m.code} · ${m.label}` : code;
 }
 
-/** Current school month code. August (out of the school year) falls back to M1
- *  so the demo always lands on a valid month. */
-export function currentMonthCode(): string {
-  return schoolMonthByJsMonth(new Date().getMonth())?.code ?? "M1";
-}
-
-/** Ordering index of a month code in the school year (M1 = 0 … M11 = 10). */
-export function monthOrder(code: string): number {
-  return SCHOOL_MONTHS.findIndex((m) => m.code === code);
-}
-
-/** School months from M1 up to (and including) the given code — used to list
- *  the months a student may already owe on. */
+/** Months from M1 up to (and including) the given code. */
 export function schoolMonthsUpTo(code: string): SchoolMonth[] {
   const idx = monthOrder(code);
   return idx < 0 ? SCHOOL_MONTHS.slice() : SCHOOL_MONTHS.slice(0, idx + 1);
 }
 
-/** True when a date belongs to the given school month code. */
-export function isInMonth(dateStr: string | undefined, code: string): boolean {
-  return !!dateStr && monthCodeForDate(dateStr) === code;
+/** Séances one month of this emploi du temps contains. */
+export function cycleSizeOf(sub?: Subscription): number {
+  const n = Math.round(sub?.monthlySeances ?? 0);
+  return n > 0 ? n : DEFAULT_CYCLE_SIZE;
 }
 
-// ---- Month-based debt & presence (drives the dashboard, renewals, debts) ----
-/** Debt (unpaid remainders) a student carries for one school month — the sum of
- *  the `rest` of the payments he made that month. */
-export function monthDebt(db: Database, studentId: string, code: string): number {
-  return db.payments
-    .filter((p) => p.studentId === studentId && p.rest > 0 && monthCodeForDate(p.date) === code)
-    .reduce((s, p) => s + p.rest, 0);
+/**
+ * Does this attendance row move the student's month forward? A cancelled
+ * séance and a "courtesy" first absence cost nothing, so they do not.
+ */
+export function consumesSeance(a: AttendanceRecord): boolean {
+  return a.status !== "cancelled" && !a.noCharge;
 }
 
-export interface MonthDebt {
-  code: string;
-  label: string;
-  debt: number;
-}
-
-/** Every school month a student still owes on, ordered M1 → M11. */
-export function debtByMonth(db: Database, studentId: string): MonthDebt[] {
-  return SCHOOL_MONTHS.map((m) => ({
-    code: m.code,
-    label: `${m.code} · ${m.label}`,
-    debt: monthDebt(db, studentId, m.code),
-  })).filter((x) => x.debt > 0);
-}
-
-/** Debt carried in the current school month. */
-export function currentMonthDebt(db: Database, studentId: string): number {
-  return monthDebt(db, studentId, currentMonthCode());
-}
-
-/** Debt carried in every month BEFORE the current one. */
-export function previousMonthsDebt(db: Database, studentId: string): number {
-  const cur = monthOrder(currentMonthCode());
-  return debtByMonth(db, studentId)
-    .filter((m) => monthOrder(m.code) < cur)
-    .reduce((s, m) => s + m.debt, 0);
-}
-
-/** Séances a student actually attended (present/late) in a school month —
- *  optionally limited to one timing. */
-export function seancesPresentedInMonth(
+/** Every attendance row of ONE student on ONE emploi, oldest first. */
+export function sessionAttendance(
   db: Database,
   studentId: string,
+  sessionId: string,
+): AttendanceRecord[] {
+  return db.attendance
+    .filter((a) => a.studentId === studentId && a.sessionId === sessionId)
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
+/** …limited to the rows that actually burn a séance (they set the pace). */
+export function cycleRecords(
+  db: Database,
+  studentId: string,
+  sessionId: string,
+): AttendanceRecord[] {
+  return sessionAttendance(db, studentId, sessionId).filter(consumesSeance);
+}
+
+/** One month of one student on one emploi du temps. */
+export interface MonthCycle {
+  code: string;
+  index: number;
+  /** séances the month contains */
+  size: number;
+  /** the billable rows of that month, in order */
+  records: AttendanceRecord[];
+  /** how many of the `size` séances are already used */
+  done: number;
+  /** the month is over: its last séance has been recorded */
+  complete: boolean;
+  /** money the séances of that month took off the solde */
+  consumed: number;
+  /** money credited to that month */
+  credited: number;
+  /** credited − consumed. NEGATIVE = the student owes that much on that month. */
+  balance: number;
+  /** day the month opened (first billable séance) */
+  startDate?: string;
+  /** day it closed (only once complete) */
+  endDate?: string;
+}
+
+/** LOCAL YYYY-MM-DD of a stored timestamp — the store writes ISO/UTC, and an
+ *  evening séance would land on the wrong day if the string were just sliced. */
+export function dayKeyOf(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? (iso || "").slice(0, 10) : d.toLocaleDateString("fr-CA");
+}
+
+const dayOfIso = dayKeyOf;
+
+/**
+ * The whole month history of ONE student on ONE emploi du temps: the séances
+ * chunked `size` by `size`, with the money credited to each month.
+ */
+export function enrollmentCycles(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+): MonthCycle[] {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  const size = cycleSizeOf(sub);
+  const records = sub ? cycleRecords(db, studentId, sub.sessionId) : [];
+
+  // Money is attributed to the month reception credited it to.
+  const credits: Record<string, number> = {};
+  for (const p of db.payments) {
+    if (p.studentId !== studentId || p.subscriptionId !== subscriptionId) continue;
+    const code = p.monthCode || "M1";
+    credits[code] = (credits[code] ?? 0) + p.amountPaid;
+  }
+
+  const fromRecords = Math.ceil(records.length / size);
+  const fromCredits = Object.keys(credits).reduce((mx, c) => Math.max(mx, monthOrder(c) + 1), 0);
+  const count = Math.max(1, fromRecords, fromCredits);
+
+  const out: MonthCycle[] = [];
+  for (let i = 0; i < count; i++) {
+    const slice = records.slice(i * size, i * size + size);
+    const code = `M${i + 1}`;
+    const consumed = slice.reduce((t, a) => t + (a.amountDeducted || 0), 0);
+    const credited = credits[code] ?? 0;
+    const complete = slice.length >= size;
+    out.push({
+      code,
+      index: i,
+      size,
+      records: slice,
+      done: slice.length,
+      complete,
+      consumed,
+      credited,
+      balance: credited - consumed,
+      startDate: slice[0] ? dayOfIso(slice[0].timestamp) : undefined,
+      endDate: complete ? dayOfIso(slice[slice.length - 1].timestamp) : undefined,
+    });
+  }
+  return out;
+}
+
+/** The month a student is CURRENTLY on for one emploi (0-based index). A month
+ *  whose last séance has just been recorded is closed: the next one is open. */
+export function currentCycleIndex(db: Database, studentId: string, subscriptionId: string): number {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return 0;
+  const size = cycleSizeOf(sub);
+  return Math.floor(cycleRecords(db, studentId, sub.sessionId).length / size);
+}
+
+export function currentCycleCode(db: Database, studentId: string, subscriptionId: string): string {
+  return `M${currentCycleIndex(db, studentId, subscriptionId) + 1}`;
+}
+
+/** The month `code` of one student on one emploi — synthesised (empty) when he
+ *  has not reached it yet, so every screen can still render a row for it. */
+export function cycleOf(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
   code: string,
-  sessionId?: string,
-): number {
-  return db.attendance.filter(
-    (a) =>
-      a.studentId === studentId &&
-      a.status !== "absent" &&
-      monthCodeForDate(a.timestamp) === code &&
-      (!sessionId || a.sessionId === sessionId),
-  ).length;
+): MonthCycle {
+  const idx = Math.max(0, monthOrder(code));
+  const all = enrollmentCycles(db, studentId, subscriptionId);
+  if (all[idx]) return all[idx];
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  return {
+    code: `M${idx + 1}`,
+    index: idx,
+    size: cycleSizeOf(sub),
+    records: [],
+    done: 0,
+    complete: false,
+    consumed: 0,
+    credited: 0,
+    balance: 0,
+  };
+}
+
+/** The month code an attendance row falls in, for its own emploi du temps. */
+export function monthCodeOfAttendance(db: Database, record: AttendanceRecord): string | null {
+  const sub = db.subscriptions.find((s) => s.sessionId === record.sessionId);
+  if (!sub) return null;
+  const size = cycleSizeOf(sub);
+  const rows = cycleRecords(db, record.studentId, record.sessionId);
+  const pos = rows.findIndex((a) => a.id === record.id);
+  return pos < 0 ? null : `M${Math.floor(pos / size) + 1}`;
+}
+
+/** Current month of a whole GROUP: the month most of its students are on, so
+ *  the présence sheet opens where the work actually is. */
+export function sessionCurrentMonthCode(db: Database, sessionId: string): string {
+  const sub = db.subscriptions.find((s) => s.sessionId === sessionId);
+  if (!sub) return "M1";
+  const students = sessionEnrolledStudents(db, sessionId);
+  if (students.length === 0) return "M1";
+  const tally = new Map<number, number>();
+  for (const stu of students) {
+    const i = currentCycleIndex(db, stu.id, sub.id);
+    tally.set(i, (tally.get(i) ?? 0) + 1);
+  }
+  let best = 0;
+  let bestCount = -1;
+  for (const [i, n] of tally) {
+    if (n > bestCount || (n === bestCount && i < best)) {
+      best = i;
+      bestCount = n;
+    }
+  }
+  return `M${best + 1}`;
+}
+
+/** Neutral fallback for the few screens that group loose money by month. */
+export function currentMonthCode(): string {
+  return "M1";
+}
+
+// ---- Solde (money left on ONE emploi du temps) ------------------------------
+/** What is left on an inscription. Negative = the student owes that much. */
+export function enrollmentBalance(enrollment?: Enrollment): number {
+  return Math.round(enrollment?.balance ?? 0);
+}
+
+export function studentEnrollmentFor(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+): Enrollment | undefined {
+  return db.enrollments.find(
+    (e) => e.studentId === studentId && e.subscriptionId === subscriptionId,
+  );
+}
+
+/** Solde of ONE student on ONE emploi du temps. */
+export function soldFor(db: Database, studentId: string, subscriptionId: string): number {
+  return enrollmentBalance(studentEnrollmentFor(db, studentId, subscriptionId));
+}
+
+export type SoldStatus = "ok" | "low" | "empty" | "debt";
+/** How a solde reads on the cards: healthy, about to run out, empty, in debt. */
+export function soldStatus(balance: number, unitPrice: number): SoldStatus {
+  if (balance < 0) return "debt";
+  if (balance === 0) return "empty";
+  if (unitPrice > 0 && balance < unitPrice * 2) return "low";
+  return "ok";
+}
+
+/** Everything a student owes across his emplois du temps (soldes in the red). */
+export function studentSoldDebt(db: Database, studentId: string): number {
+  return db.enrollments
+    .filter((e) => e.studentId === studentId)
+    .reduce((t, e) => t + Math.max(0, -enrollmentBalance(e)), 0);
 }
 
 export const EXPIRY_WARNING_DAYS = 7;
@@ -449,12 +609,15 @@ export function studentPayments(db: Database, studentId: string): Payment[] {
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
-/** What the student still owes = the sum of every payment's unpaid remainder. */
+/**
+ * What the student still owes, all emplois du temps together: every solde in
+ * the red, plus whatever an old purchase left unpaid.
+ */
 export function studentDebt(db: Database, studentId: string): number {
-  return Math.max(
-    0,
-    db.payments.filter((p) => p.studentId === studentId).reduce((s, p) => s + p.rest, 0),
-  );
+  const rests = db.payments
+    .filter((p) => p.studentId === studentId)
+    .reduce((s, p) => s + p.rest, 0);
+  return Math.max(0, rests + studentSoldDebt(db, studentId));
 }
 
 /** Total debt of the school's students. */
@@ -462,18 +625,56 @@ export function totalStudentDebt(db: Database): number {
   return db.students.reduce((s, st) => s + studentDebt(db, st.id), 0);
 }
 
-// ---- Debt split by school month (M1…M11) -----------------------------------
+// ---- Debt split by month (each emploi counts its own M1, M2 …) --------------
 /** Payments that still carry an unpaid remainder. */
 export function studentUnpaidPayments(db: Database, studentId: string): Payment[] {
   return db.payments.filter((p) => p.studentId === studentId && p.rest > 0);
 }
 
-/** A student's outstanding debt grouped by the school month of each payment. */
+/** One emploi du temps a student is behind on, for ONE of its months. */
+export interface SoldDebtRow {
+  subscriptionId: string;
+  sessionId: string;
+  label: string;
+  code: string;
+  debt: number;
+}
+
+/**
+ * Every month, of every emploi, the student is in the red on. Because months
+ * are per-emploi, "M2" here means "the 2nd month OF THAT emploi" — two rows
+ * with the same code may well cover totally different dates.
+ */
+export function studentSoldDebtRows(db: Database, studentId: string): SoldDebtRow[] {
+  const student = db.students.find((s) => s.id === studentId);
+  if (!student) return [];
+  const out: SoldDebtRow[] = [];
+  for (const subId of student.subscriptionIds) {
+    const sub = db.subscriptions.find((s) => s.id === subId);
+    if (!sub) continue;
+    for (const cycle of enrollmentCycles(db, studentId, subId)) {
+      if (cycle.balance >= 0) continue;
+      out.push({
+        subscriptionId: subId,
+        sessionId: sub.sessionId,
+        label: subscriptionLabel(db, sub),
+        code: cycle.code,
+        debt: -cycle.balance,
+      });
+    }
+  }
+  return out;
+}
+
+/** A student's outstanding debt grouped by month code, emplois merged. */
 export function studentDebtByMonth(db: Database, studentId: string): Record<string, number> {
   const out: Record<string, number> = {};
   for (const p of studentUnpaidPayments(db, studentId)) {
-    const code = monthCodeForDate(p.date) ?? "M1";
+    const code = p.monthCode || "M1";
     out[code] = (out[code] ?? 0) + p.rest;
+  }
+  for (const row of studentSoldDebtRows(db, studentId)) {
+    out[row.code] = (out[row.code] ?? 0) + row.debt;
   }
   return out;
 }
@@ -490,20 +691,27 @@ export function studentPreviousMonthsDebt(db: Database, studentId: string, curre
     .reduce((s, [, amt]) => s + amt, 0);
 }
 
-/** Séances a student actually attended in ONE group during a school month. */
+/** Debt a student carries on OTHER emplois than the one being looked at. */
+export function studentOtherSoldDebt(
+  db: Database,
+  studentId: string,
+  exceptSubscriptionId: string,
+): number {
+  return studentSoldDebtRows(db, studentId)
+    .filter((r) => r.subscriptionId !== exceptSubscriptionId)
+    .reduce((s, r) => s + r.debt, 0);
+}
+
+/** Séances a student attended in ONE emploi during ONE of its months. */
 export function presentSeancesInMonth(
   db: Database,
   studentId: string,
   sessionId: string,
   code: string,
 ): number {
-  return db.attendance.filter(
-    (a) =>
-      a.studentId === studentId &&
-      a.sessionId === sessionId &&
-      a.status !== "absent" &&
-      monthCodeForDate(a.timestamp) === code,
-  ).length;
+  const sub = db.subscriptions.find((s) => s.sessionId === sessionId);
+  if (!sub) return 0;
+  return cycleOf(db, studentId, sub.id, code).records.filter((a) => a.status !== "absent").length;
 }
 
 export type EnrollmentExpiryStatus = "active" | "soon" | "expired";
@@ -612,4 +820,134 @@ export function totalRevenue(db: Database): number {
 
 export function totalExpenses(db: Database): number {
   return db.expenses.reduce((s, e) => s + e.amount, 0);
+}
+
+// ---- Student registration numbers ------------------------------------------
+/** "00001" — the number printed on the card and searched from every roster. */
+export function formatRegistrationNumber(n: number): string {
+  return String(Math.max(1, Math.round(n))).padStart(5, "0");
+}
+
+/** The number the NEXT student created will carry. Numbering starts at 00001. */
+export function nextRegistrationNumber(db: Database): string {
+  const max = db.students.reduce((top, s) => {
+    const n = Number.parseInt(s.registrationNumber ?? "", 10);
+    return Number.isFinite(n) && n > top ? n : top;
+  }, 0);
+  return formatRegistrationNumber(max + 1);
+}
+
+/** The number to show for a student — falls back on his rank in the list so a
+ *  seeded student without one still reads as a number. */
+export function registrationNumberOf(db: Database, student: Student): string {
+  if (student.registrationNumber) return student.registrationNumber;
+  const idx = db.students.findIndex((s) => s.id === student.id);
+  return formatRegistrationNumber(idx + 1);
+}
+
+/** One search box for the rosters: full name, phone, or registration number
+ *  (typing "12" finds 00012). */
+export function studentMatches(db: Database, student: Student, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const num = registrationNumberOf(db, student);
+  return (
+    `${student.firstName} ${student.lastName}`.toLowerCase().includes(q) ||
+    `${student.lastName} ${student.firstName}`.toLowerCase().includes(q) ||
+    (student.phone ?? "").includes(q) ||
+    num.includes(q) ||
+    num.replace(/^0+/, "").includes(q.replace(/^0+/, ""))
+  );
+}
+
+// ---- Student billing case labels -------------------------------------------
+/** Short label of a student's billing case, shown next to his solde. */
+export function studentCaseLabel(student: Student): string {
+  switch (student.studentCase) {
+    case "special":
+      return "Cas spécial · gratuit";
+    case "teacher_child":
+      return "Fils d'enseignant";
+    case "reduction":
+      return "Réduction";
+    case "school_only":
+      return "École seule";
+    default:
+      return "";
+  }
+}
+
+/** Tone the case badge takes on the présence sheet. */
+export function studentCaseTone(student: Student): "success" | "warning" | "primary" | "neutral" {
+  switch (student.studentCase) {
+    case "special":
+      return "success";
+    case "teacher_child":
+      return "primary";
+    case "reduction":
+      return "warning";
+    case "school_only":
+      return "warning";
+    default:
+      return "neutral";
+  }
+}
+
+// ---- Séance slots of one month ---------------------------------------------
+/**
+ * The séances the présence sheet prints as columns for ONE student, ONE emploi
+ * and ONE of its months: the billable rows of that month plus the annulées that
+ * happened inside its window, in the order they were recorded. The sheet then
+ * pads to `cycleSizeOf(sub)` so an untouched month still shows its N columns.
+ */
+export function cycleSlots(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+  code: string,
+): AttendanceRecord[] {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return [];
+  const cycles = enrollmentCycles(db, studentId, subscriptionId);
+  const idx = Math.max(0, monthOrder(code));
+  const cycle = cycles[idx];
+  const all = sessionAttendance(db, studentId, sub.sessionId);
+  const billable = new Set((cycle?.records ?? []).map((r) => r.id));
+
+  // Window: right after the last séance of the previous month, up to the last
+  // séance of this one (or the newest row while the month is still open).
+  const prev = cycles[idx - 1];
+  const prevLast = prev?.records[prev.records.length - 1]?.id;
+  const from = prevLast ? all.findIndex((a) => a.id === prevLast) + 1 : 0;
+  const lastId = cycle?.complete ? cycle.records[cycle.records.length - 1]?.id : undefined;
+  const to = lastId ? all.findIndex((a) => a.id === lastId) + 1 : all.length;
+
+  return all.slice(from, Math.max(from, to)).filter((a) => billable.has(a.id) || !consumesSeance(a));
+}
+
+/** How many séance columns a month of this emploi shows. */
+export function slotCountFor(
+  db: Database,
+  subscriptionId: string,
+  studentIds: string[],
+  code: string,
+): number {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  const base = cycleSizeOf(sub);
+  return studentIds.reduce(
+    (mx, id) => Math.max(mx, cycleSlots(db, id, subscriptionId, code).length),
+    base,
+  );
+}
+
+/** The row written for ONE student on ONE emploi on ONE day, if any. */
+export function attendanceOn(
+  db: Database,
+  studentId: string,
+  sessionId: string,
+  date: string,
+): AttendanceRecord | undefined {
+  return db.attendance.find(
+    (a) => a.studentId === studentId && a.sessionId === sessionId && dayKeyOf(a.timestamp) === date,
+  );
 }

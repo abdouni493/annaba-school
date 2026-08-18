@@ -315,6 +315,9 @@ export interface CaseReduction {
 
 export interface Student {
   id: string;
+  /** sequential registration number printed on the card and searchable from
+   *  every roster ("00001", "00002" …). Assigned once, at creation. */
+  registrationNumber?: string;
   firstName: string;
   lastName: string;
   birthDate: string;
@@ -367,6 +370,13 @@ export interface Enrollment {
    *  counters to it — the unused séances of the previous month are not carried
    *  over, they expired with it. */
   monthSeances?: number;
+  /**
+   * MONEY left on this emploi du temps — the "solde" reception recharges and
+   * every présence eats into. Credited by a payment, debited by the price of
+   * one séance each time a présence (or a billable absence) is written. It may
+   * go NEGATIVE: that is exactly the student's debt on this emploi.
+   */
+  balance?: number;
   createdAt: string;
 }
 
@@ -380,6 +390,14 @@ export interface Payment {
   id: string;
   studentId: string;
   enrollmentId?: string;
+  /** the emploi du temps (subscription) this movement credits */
+  subscriptionId?: string;
+  /**
+   * The emploi's OWN month cycle this movement belongs to ("M1", "M2" …).
+   * Months are no longer calendar months: each emploi du temps counts its own,
+   * opened by the first présence and closed by the last séance of the pack.
+   */
+  monthCode?: string;
   seancesPurchased: number;
   /** price of one séance at the time of the purchase */
   unitPrice: number;
@@ -428,7 +446,12 @@ export interface AbsencePenalty {
   createdAt: string;
 }
 
-export type AttendanceStatus = "present" | "late" | "absent";
+/**
+ * `cancelled` is the séance that did not happen for this student: it is written
+ * on the sheet like the others, but nothing is consumed and nothing is taken
+ * off his solde.
+ */
+export type AttendanceStatus = "present" | "late" | "absent" | "cancelled";
 export interface AttendanceRecord {
   id: string;
   studentId: string;
@@ -447,6 +470,13 @@ export interface AttendanceRecord {
   /** the price that was NOT charged (free period or pre-start séance) — 0 on
    *  every ordinary presence */
   waivedAmount?: number;
+  /**
+   * The row costs NOTHING: no séance consumed, no solde debited, and it does
+   * NOT advance the emploi's month cycle. Set on a cancelled séance and on the
+   * very first record of a student that happens to be an absence (he never
+   * attended this emploi yet, so his month has not started).
+   */
+  noCharge?: boolean;
 }
 
 export interface UnpaidTeacherSession {
