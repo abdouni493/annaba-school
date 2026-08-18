@@ -84,7 +84,8 @@ export interface TeacherPayslipData {
   lang: Language;
   paidAt: string;
   receiptNo?: string;
-  method: "fixed" | "percent";
+  /** "group" = the emplois du temps priced their own séances */
+  method: "fixed" | "percent" | "group";
   percentage?: number;
   emplois: PayslipEmploi[];
   expenses: TeacherPaymentDeduction[];
@@ -123,6 +124,8 @@ const LABELS = {
     method: "Mode de calcul :",
     methodFixed: "Montant fixe saisi",
     methodPercent: (p: number) => `Pourcentage — ${p}% du montant généré par élève`,
+    methodGroup: "Par groupe — tarif enseignant de chaque emploi du temps",
+    contractGroup: "Par groupe (tarif de chaque emploi du temps)",
     emploisTitle: "Détail par emploi du temps",
     noEmplois: "Aucun emploi du temps réglé sur cette période.",
     student: "Élève",
@@ -179,6 +182,8 @@ const LABELS = {
     method: "طريقة الحساب :",
     methodFixed: "مبلغ ثابت",
     methodPercent: (p: number) => `نسبة مئوية — ${p}٪ من المبلغ المحقق لكل تلميذ`,
+    methodGroup: "حسب الفوج — أجر الأستاذ المحدد في كل جدول توقيت",
+    contractGroup: "حسب الفوج (أجر كل جدول توقيت)",
     emploisTitle: "التفصيل حسب جدول التوقيت",
     noEmplois: "لا يوجد جدول توقيت مدفوع في هذه الفترة.",
     student: "التلميذ",
@@ -239,7 +244,9 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
     ? L.passager
     : teacher.paymentType === "monthly"
       ? `${da(teacher.monthlyAmount ?? 0)} / mois`
-      : `${teacher.percentage ?? 0}% par séance`;
+      : teacher.paymentType === "per_group"
+        ? L.contractGroup
+        : `${teacher.percentage ?? 0}% par séance`;
 
   // ---- 2. one table per emploi du temps -----------------------------------
   const emploisHtml = data.emplois.length
@@ -415,7 +422,7 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
           <td style="font-weight:bold;color:#5c567a;">${L.status}</td>
           <td><span class="badge ${teacher.isPassager ? "badge-warning" : "badge-primary"}">${teacher.isPassager ? L.passager : L.regular}</span></td>
           <td style="font-weight:bold;color:#5c567a;">${L.method}</td>
-          <td><span class="badge badge-success">${data.method === "percent" ? L.methodPercent(data.percentage ?? 0) : L.methodFixed}</span></td>
+          <td><span class="badge badge-success">${data.method === "percent" ? L.methodPercent(data.percentage ?? 0) : data.method === "group" ? L.methodGroup : L.methodFixed}</span></td>
         </tr>
       </table>
     </div>

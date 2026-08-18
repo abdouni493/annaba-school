@@ -40,6 +40,7 @@ const LABELS = {
     method: "Mode de calcul :",
     methodFixed: "Montant fixe saisi",
     methodPercent: (p: number) => `Pourcentage — ${p}% du montant généré`,
+    methodGroup: "Par groupe — tarif enseignant de chaque emploi du temps",
     timingsTitle: "Créneaux Réglés",
     date: "Date",
     timing: "Créneau",
@@ -72,6 +73,7 @@ const LABELS = {
     method: "طريقة الحساب :",
     methodFixed: "مبلغ ثابت",
     methodPercent: (p: number) => `نسبة مئوية — ${p}٪ من المبلغ المحقق`,
+    methodGroup: "حسب الفوج — أجر الأستاذ المحدد في كل جدول توقيت",
     timingsTitle: "الحصص المدفوعة",
     date: "التاريخ",
     timing: "الحصة",
@@ -99,7 +101,7 @@ export interface TeacherSettlementReceiptData {
   school: School;
   lang: Language;
   amount: number;
-  method: "fixed" | "percent";
+  method: "fixed" | "percent" | "group";
   percentage?: number;
   details: TeacherPaymentDetail[];
   paidAt: string;
@@ -141,7 +143,7 @@ export function buildTeacherSettlementReceipt(data: TeacherSettlementReceiptData
           <td style="font-weight:bold; color:#5c567a;">${L.method}</td>
           <td>
             <span class="badge badge-success">
-              ${data.method === "percent" ? L.methodPercent(data.percentage ?? 0) : L.methodFixed}
+              ${data.method === "percent" ? L.methodPercent(data.percentage ?? 0) : data.method === "group" ? L.methodGroup : L.methodFixed}
             </span>
           </td>
         </tr>

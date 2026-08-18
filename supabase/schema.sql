@@ -430,7 +430,10 @@ create table if not exists public.teachers (
   last_name      text not null default '',
   phone          text not null default '',
   email          text not null default '',
-  payment_type   text not null default 'percentage' check (payment_type in ('monthly','percentage')),
+  -- 'per_group' : la paie n'est PAS sur la fiche, chaque emploi du temps porte
+  -- son tarif (part de l'enseignant du mois ÷ séances) via subscriptions.
+  payment_type   text not null default 'percentage'
+                 check (payment_type in ('monthly','percentage','per_group')),
   monthly_amount numeric,
   start_date     text,
   percentage     numeric,
@@ -442,7 +445,9 @@ create table if not exists public.teacher_payments (
   id             text primary key,
   teacher_id     text not null references public.teachers (id) on delete cascade,
   amount         numeric not null default 0,   -- net réellement versé
-  method         text not null default 'percent' check (method in ('fixed','percent')),
+  -- 'group' : le règlement a simplement additionné les tarifs des emplois du temps
+  method         text not null default 'percent'
+                 check (method in ('fixed','percent','group')),
   percentage     numeric,
   students_count integer not null default 0,
   sessions_count integer not null default 0,

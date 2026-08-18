@@ -221,13 +221,11 @@ export function AdministrationPage() {
 
   // ---- CRUD -----------------------------------------------------------------
 
+  /** Only a name is required — téléphone, email, salaire et taux horaire
+   *  peuvent être complétés plus tard depuis « Modifier ». */
   const handleCreateStaff = async () => {
-    if (!firstName || !lastName || !phone) {
-      alert("Champs obligatoires manquants.");
-      return;
-    }
-    if (paymentType === "hourly" && hourlyRate <= 0) {
-      alert("Veuillez saisir le prix d'une heure de travail.");
+    if (!firstName.trim() && !lastName.trim()) {
+      alert("Indiquez au moins un nom ou un prénom.");
       return;
     }
 
@@ -261,7 +259,8 @@ export function AdministrationPage() {
           hourlyRate,
         });
         push("reception", {
-          id: staffId, firstName, lastName, phone, email,
+          id: staffId, firstName: firstName.trim(), lastName: lastName.trim(),
+          phone: phone.trim(), email: email.trim(),
           paymentType, startDate, salary, role, rfid: rfid.trim(), hourlyRate,
         });
       } catch (err) {
@@ -272,7 +271,8 @@ export function AdministrationPage() {
       // Worker without login: plain row, no account is created.
       const workerId = uid("wrk");
       push("reception", {
-        id: workerId, firstName, lastName, phone, email: email.trim(),
+        id: workerId, firstName: firstName.trim(), lastName: lastName.trim(),
+        phone: phone.trim(), email: email.trim(),
         paymentType, startDate, salary, role, rfid: rfid.trim(), hourlyRate,
       });
     }
@@ -785,24 +785,28 @@ export function AdministrationPage() {
 
       {/* Creation Modal */}
       <Modal open={isCreateOpen} onClose={() => setIsCreateOpen(false)} title="Créer un travailleur" wide>
+        <p className="text-[11px] leading-relaxed text-muted bg-canvas border border-line rounded-xl p-3 mb-4">
+          Seul le <strong className="text-ink">nom</strong> est demandé. Téléphone, salaire, badge et
+          identifiants sont facultatifs et peuvent être complétés plus tard depuis « Modifier ».
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom *</label>
+            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom</label>
             <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Prénom" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Nom *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Nom</label>
             <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Nom de famille" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Téléphone *</label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+213 XXXXXXXXX" />
+            <label className="block text-xs font-semibold text-muted mb-1">Téléphone</label>
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+213 XXXXXXXXX (facultatif)" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Rôle *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Rôle</label>
             <Select value={role} onChange={(e) => setRole(e.target.value as WorkerRole)} className="w-full">
               <option value="reception">Réception</option>
               <option value="security">Agent de sécurité</option>
@@ -861,7 +865,7 @@ export function AdministrationPage() {
 
           {paymentType === "hourly" ? (
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Prix d&apos;une heure (DA) *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Prix d&apos;une heure (DA)</label>
               <Input
                 type="number"
                 min={0}

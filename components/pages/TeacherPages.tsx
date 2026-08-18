@@ -191,7 +191,9 @@ function TeacherDashboardView({
               <strong className="text-2xl font-extrabold block mt-1">
                 {teacher.paymentType === "monthly"
                   ? `${teacher.monthlyAmount} DA / mois`
-                  : `${teacher.percentage}% par élève`}
+                  : teacher.paymentType === "per_group"
+                    ? "Par groupe"
+                    : `${teacher.percentage}% par élève`}
               </strong>
             </div>
             <div className="h-11 w-11 bg-white/10 rounded-xl flex items-center justify-center">
@@ -200,7 +202,7 @@ function TeacherDashboardView({
           </CardBody>
         </Card>
 
-        {teacher.paymentType === "percentage" ? (
+        {teacher.paymentType === "percentage" || teacher.paymentType === "per_group" ? (
           <Card className="h-28">
             <CardBody className="flex justify-between items-center h-full">
               <div>

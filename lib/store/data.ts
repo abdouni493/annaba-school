@@ -363,7 +363,8 @@ interface DataActions {
     amount: number;
     /** what the séances earned him before the deductions */
     gross?: number;
-    method: "fixed" | "percent";
+    /** "group" = each emploi du temps priced its own séances */
+    method: "fixed" | "percent" | "group";
     percentage?: number;
     details?: unknown[];
     description?: string;
@@ -554,6 +555,10 @@ function activeFreePeriod(
  * emploi carries a monthly split (month price -> school share -> teacher
  * remainder / séances), that fixed per-séance price wins; otherwise the
  * teacher's own percentage contract applies.
+ *
+ * A teacher paid "par groupe" is priced by the emplois du temps ONLY: if the
+ * one he just taught carries no split yet, the séance simply owes him nothing
+ * until the abonnement is given one — his fiche has no rate of its own.
  */
 function teacherDueFor(
   db: Database,
@@ -569,6 +574,8 @@ function teacherDueFor(
 function teacherShare(db: Database, teacherId: string | undefined, base: number): number {
   if (!teacherId) return 0;
   const teacher = db.teachers.find((t) => t.id === teacherId);
+  // "monthly" is paid by contract and "per_group" by the emploi du temps —
+  // neither earns a percentage of what the student paid.
   if (!teacher || teacher.paymentType !== "percentage") return 0;
   return Math.round((base * (teacher.percentage ?? 0)) / 100);
 }
@@ -800,8 +807,8 @@ export const useData = create<DataStore>((set, get) => ({
 
     // Net price: his OWN tariff (with his reduction) even on a sibling group.
     // It is no longer charged to anybody — it only sizes the teacher's share.
-    const fallbackPrice =
-      db.subscriptions.find((s) => s.sessionId === matched.id)?.pricePerSession ?? 0;
+    const scannedSub = db.subscriptions.find((s) => s.sessionId === matched.id);
+    const fallbackPrice = scannedSub?.pricePerSession ?? 0;
     const price = enrollment?.price ?? fallbackPrice;
 
     const enrollmentStart = enrollment?.startDate;
@@ -826,7 +833,7 @@ export const useData = create<DataStore>((set, get) => ({
     // The teacher taught the séance: an offered one still pays.
     const teacherBase =
       (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
-    const teacherDue = teacherShare(db, matched.teacherId, teacherBase);
+    const teacherDue = teacherDueFor(db, matched, scannedSub, teacherBase);
 
     // Burn ONE séance and take its price off the SOLDE of that emploi — exactly
     // what the présence sheet does, so a badge and a click can never disagree.
@@ -989,14 +996,14 @@ export const useData = create<DataStore>((set, get) => ({
     }
 
     const enrollment = enrollmentFor(db, student, session, date);
+    // The emploi's own subscription: it is what carries the per-groupe teacher
+    // share, so it is looked up whether or not the price falls back on it.
+    const markedSub = db.subscriptions.find((s) => s.sessionId === sessionId);
     let price = enrollment?.price;
     let enrollmentStart = enrollment?.startDate;
     if (price === undefined) {
       if (!session.isOpen) return { ok: false, messageKey: "attendance.notEnrolled" };
-      price =
-        db.subscriptions.find((s) => s.sessionId === sessionId)?.pricePerSession ??
-        session.openPrice ??
-        0;
+      price = markedSub?.pricePerSession ?? session.openPrice ?? 0;
       enrollmentStart = undefined;
     }
 
@@ -1014,7 +1021,7 @@ export const useData = create<DataStore>((set, get) => ({
 
     const teacherBase =
       (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
-    const teacherDue = opts?.skipTeacherDue ? 0 : teacherShare(db, session.teacherId, teacherBase);
+    const teacherDue = opts?.skipTeacherDue ? 0 : teacherDueFor(db, session, markedSub, teacherBase);
 
     const occurred =
       date === dateKey(new Date())
