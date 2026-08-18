@@ -74,8 +74,10 @@ export function AnnouncementsPage() {
     setTargetGroupIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const handleCreateAnnouncement = () => {
-    if (!title || !description) {
-      alert("Titre et description obligatoires.");
+    // Only the title is required — an annonce can be posted first and detailed
+    // afterwards from "Modifier".
+    if (!title.trim()) {
+      alert("Indiquez au moins un titre pour l'annonce.");
       return;
     }
 
@@ -418,11 +420,11 @@ export function AnnouncementsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Titre de l&apos;annonce *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Titre de l&apos;annonce</label>
               <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titre descriptif" />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Date d&apos;expiration *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Date d&apos;expiration</label>
               <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
             </div>
             <div>

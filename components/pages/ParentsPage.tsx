@@ -72,40 +72,61 @@ export function ParentsPage() {
     });
   };
 
+  /**
+   * Only a name is required. A parent typed without email and password is
+   * created WITHOUT a portal login — the desk often registers him from the
+   * child's file long before he asks for an access.
+   */
   const handleCreateParent = async () => {
-    if (!firstName || !lastName || !phone || !email) {
-      alert("Veuillez remplir les champs obligatoires.");
+    if (!firstName.trim() && !lastName.trim()) {
+      alert("Indiquez au moins un nom ou un prénom.");
       return;
     }
-    if (password.length < 6) {
-      alert("Le mot de passe doit contenir au moins 6 caractères.");
+
+    const wantsAccount = email.trim() !== "" || password !== "";
+    if (wantsAccount) {
+      if (!email.trim()) {
+        alert("Saisissez un email de connexion, ou laissez email et mot de passe vides pour créer le parent sans compte.");
+        return;
+      }
+      if (password.length < 6) {
+        alert("Le mot de passe doit contenir au moins 6 caractères.");
+        return;
+      }
+    }
+
+    const linkChildren = (parentId: string) =>
+      selectedChildIds.forEach((sid) => updateItem("students", sid, { parentId }));
+
+    const base = {
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      childIds: selectedChildIds,
+    };
+
+    if (!wantsAccount) {
+      const parentId = uid("par");
+      push("parents", { id: parentId, ...base } as Parent);
+      linkChildren(parentId);
+      setIsCreateOpen(false);
+      resetForm();
       return;
     }
 
     try {
       const { id: parentId } = await createRoleUser({
         role: "parent",
-        email,
+        email: email.trim(),
         password,
-        firstName,
-        lastName,
-        phone,
+        firstName: base.firstName,
+        lastName: base.lastName,
+        phone: base.phone,
       });
 
-      const newParent: Parent = {
-        id: parentId,
-        firstName,
-        lastName,
-        phone,
-        email,
-        childIds: selectedChildIds,
-      };
-      push("parents", newParent);
-
-      // Update parentId in selected students
-      selectedChildIds.forEach((sid) => {
-        updateItem("students", sid, { parentId });
-      });
+      push("parents", { id: parentId, ...base } as Parent);
+      linkChildren(parentId);
 
       setIsCreateOpen(false);
       resetForm();
@@ -392,33 +413,33 @@ export function ParentsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom *</label>
+              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom</label>
               <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Prénom" />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Nom *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Nom</label>
               <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Nom" />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Téléphone *</label>
+              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Téléphone</label>
               <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+213 XXXXXXXXX" />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Email (Identifiant) *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Email (Identifiant)</label>
               <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="parent@ecole.com" />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Mot de passe *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Mot de passe</label>
               <Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6 caractères min." />
             </div>
           </div>
 
           <div className="space-y-3">
-            <label className="block text-xs font-semibold text-muted">Sélectionner les enfants *</label>
+            <label className="block text-xs font-semibold text-muted">Sélectionner les enfants</label>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
               <Input
@@ -587,12 +608,12 @@ export function ParentsPage() {
       <Modal open={isMessageOpen} onClose={() => setIsMessageOpen(false)} title="Notification dans l'application">
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Titre de la notification *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Titre de la notification</label>
             <Input value={msgTitle} onChange={(e) => setMsgTitle(e.target.value)} placeholder="Ex: Alerte solde débiteur" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Message *</label>
+            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Message</label>
             <textarea
               value={msgDescription}
               onChange={(e) => setMsgDescription(e.target.value)}

@@ -32,7 +32,9 @@ export function ExpensesPage() {
   const [newCatName, setNewCatName] = useState("");
   const [showAddCat, setShowAddCat] = useState(false);
 
-  const getCategoryName = (cid: string) => categories.find((c) => c.id === cid)?.name ?? "-";
+  /** "Non classée" when the dépense carries no category yet. */
+  const getCategoryName = (cid?: string) =>
+    cid ? categories.find((c) => c.id === cid)?.name ?? "-" : "Non classée";
 
   const handleCreateCategory = () => {
     if (!newCatName.trim()) return;
@@ -44,16 +46,20 @@ export function ExpensesPage() {
   };
 
   const handleCreateExpense = () => {
-    if (!name || !categoryId || amount <= 0) {
-      alert("Veuillez remplir tous les champs obligatoires.");
+    // Only the désignation is required — a dépense is often noted the moment it
+    // happens and priced or classified once the receipt arrives.
+    if (!name.trim()) {
+      alert("Indiquez au moins la désignation de la dépense.");
       return;
     }
 
     const expenseId = uid("exp");
     const newExpense: Expense = {
       id: expenseId,
-      name,
-      categoryId,
+      name: name.trim(),
+      // The column is a foreign key on the categories: an unclassified dépense
+      // must leave it EMPTY, never "" — that would point at no category at all.
+      categoryId: categoryId || undefined,
       amount,
       date,
     };
@@ -61,12 +67,13 @@ export function ExpensesPage() {
     push("expenses", newExpense);
 
     // Record directly in cash register as withdraw/expense
+    const categoryLabel = categoryId ? ` (${getCategoryName(categoryId)})` : "";
     push("cash", {
       id: uid("csh"),
       type: "expense",
       amount: -amount,
       date: new Date().toISOString(),
-      description: `Dépense : ${name} (${getCategoryName(categoryId)})`,
+      description: `Dépense : ${name.trim()}${categoryLabel}`,
     });
 
     setIsCreateOpen(false);
@@ -94,7 +101,7 @@ export function ExpensesPage() {
   const openEdit = (exp: Expense) => {
     setSelectedExpense(exp);
     setName(exp.name);
-    setCategoryId(exp.categoryId);
+    setCategoryId(exp.categoryId ?? "");
     setAmount(exp.amount);
     setDate(exp.date);
     setIsEditOpen(true);
@@ -195,13 +202,13 @@ export function ExpensesPage() {
       <Modal open={isCreateOpen} onClose={() => setIsCreateOpen(false)} title="Enregistrer une dépense">
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Désignation / Nom *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Désignation / Nom</label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Facture électricité" />
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-semibold text-muted font-sans">Catégorie *</label>
+              <label className="block text-xs font-semibold text-muted font-sans">Catégorie</label>
               <button onClick={() => setShowAddCat(!showAddCat)} className="text-xs text-primary hover:underline">
                 + Nouvelle catégorie
               </button>
@@ -232,7 +239,7 @@ export function ExpensesPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Montant (DA) *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Montant (DA)</label>
               <Input
                 type="number"
                 value={amount || ""}
@@ -242,7 +249,7 @@ export function ExpensesPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Date *</label>
+              <label className="block text-xs font-semibold text-muted mb-1">Date</label>
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
           </div>

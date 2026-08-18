@@ -30,13 +30,18 @@ Le script est idempotent (relançable sans risque) et crée :
 | 3–4 | les 32 tables métier, leurs clés étrangères et leurs index |
 | 5 | la RLS : lecture pour tout compte connecté, écriture pour le personnel, présences pour les enseignants, sa propre fiche pour chacun |
 | 6 | les buckets Storage `logos` et `subjects` |
-
-> **Base déjà en place ?** Exécuter en plus **`supabase/update-2026-08-19-teacher-per-group.sql`**,
-> qui ouvre la formule « par groupe » (`teachers.payment_type = 'per_group'`, règlements
-> `teacher_payments.method = 'group'`) et garantit qu'une fiche créée avec le seul nom s'enregistre.
 | 7–8 | la ligne unique de configuration de l'école, et les droits PostgREST |
 
 Aucune donnée de démonstration n'est insérée.
+
+> **Base déjà en place ?** Exécuter en plus, **dans cet ordre** :
+>
+> 1. **`supabase/update-2026-08-19-teacher-per-group.sql`** — ouvre la formule « par groupe »
+>    (`teachers.payment_type = 'per_group'`, règlements `teacher_payments.method = 'group'`).
+> 2. **`supabase/update-2026-08-19-emploi-horaires-par-jour.sql`** — ajoute
+>    `schedule_sessions.day_times`, les horaires jour par jour d'un emploi du temps.
+>
+> Les deux garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans erreur.
 
 ### 2. Lancer l'application
 
@@ -165,6 +170,20 @@ Scan RFID et feuille de présence manuelle appliquent la même règle :
   restaient sur l'inscription ne sont plus décomptables : elles sont perdues.
 
 Annuler une présence ou marquer un élève absent **rend** la séance et retire la part enseignant.
+
+### Emploi du temps
+
+- un emploi du temps se crée avec les seuls **jours** : classe, module, groupe, salle et enseignant
+  se complètent plus tard ;
+- dès qu'il tourne sur **plusieurs jours**, chaque jour porte son propre **début** et sa propre
+  **fin** — Samedi 08:00–10:00 et Mardi 14:00–16:00 sont le même emploi, pas deux ;
+- la **salle se choisit en dernier** : elle reste verrouillée tant que les jours et leurs horaires
+  ne sont pas fixés, puis chaque salle indique si elle est **disponible** sur ces créneaux ou
+  **occupée**, avec l'emploi du temps qui la retient déjà. Deux créneaux qui se touchent
+  (fin 10:00 / début 10:00) ne sont pas un conflit.
+
+Le badge, la feuille de présence et le tableau de la semaine lisent tous l'horaire **du jour** :
+un créneau déplacé un seul jour de la semaine est accepté à sa nouvelle heure, pas à l'ancienne.
 
 ### Alertes
 

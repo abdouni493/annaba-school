@@ -534,8 +534,9 @@ create table if not exists public.schedule_sessions (
   salle_id     text not null default '',
   teacher_id   text not null default '',
   days         jsonb not null default '[]'::jsonb,
-  start_time   text not null default '',
+  start_time   text not null default '',        -- horaire par défaut de l'emploi
   end_time     text not null default '',
+  day_times    jsonb,                            -- horaires jour par jour : {"saturday":{"startTime":"08:00","endTime":"10:00"}}
   is_open      boolean,                          -- séance libre
   title        text,
   period_start text,
