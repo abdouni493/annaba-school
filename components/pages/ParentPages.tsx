@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useData } from "@/lib/store/data";
 import { useSession } from "@/lib/store/session";
-import { changeOwnPassword } from "@/lib/demo/users";
+import { changeOwnPassword } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -61,7 +61,7 @@ interface ChildSeanceInfo {
 }
 
 export function ParentPages({ slug }: PageProps) {
-  const { user, login } = useSession();
+  const { user, updateUser } = useSession();
   const db = useData();
   const {
     parents,
@@ -141,7 +141,7 @@ export function ParentPages({ slug }: PageProps) {
     case "announcements":
       return <ParentAnnouncementsView announcements={announcements} />;
     case "account":
-      return <ParentProfileView parent={parent} updateItem={updateItem} login={login} user={user} />;
+      return <ParentProfileView parent={parent} updateItem={updateItem} updateUser={updateUser} user={user} />;
     default:
       return <div className="p-4 text-xs text-muted">Page non trouvée</div>;
   }
@@ -1217,12 +1217,12 @@ function ParentAnnouncementsView({ announcements }: { announcements: any[] }) {
 function ParentProfileView({
   parent,
   updateItem,
-  login,
+  updateUser,
   user,
 }: {
   parent: Parent;
   updateItem: any;
-  login: any;
+  updateUser: (fields: { name?: string }) => void;
   user: any;
 }) {
   const [firstName, setFirstName] = useState(parent.firstName);
@@ -1246,7 +1246,7 @@ function ParentProfileView({
 
       updateItem("parents", parent.id, { firstName, lastName, phone });
 
-      login({ ...user, name: `${firstName} ${lastName}` });
+      updateUser({ name: `${firstName} ${lastName}` });
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erreur lors de l'enregistrement.");
     } finally {

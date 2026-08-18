@@ -1,4 +1,4 @@
-# ALTECH SCHOOL — Gestion d'école privée (démo)
+# ALTECH SCHOOL — Gestion d'école privée
 
 Application de gestion d'école privée (Next.js App Router + TypeScript + Tailwind) :
 abonnements (cours & formations) **facturés à la séance ou au mois**, présence par carte RFID,
@@ -6,39 +6,102 @@ achats de séances et règlement des restes à payer, paie des enseignants, cais
 financiers, annonces, 5 rôles (admin / réception / enseignant / étudiant / parent), thèmes
 clair (par défaut) / sombre et FR/AR (RTL).
 
-> **Mode démo — 100 % en mémoire.** Aucun backend, aucune base de données, aucun appel réseau.
-> Toutes les données viennent d'un jeu de constantes (`lib/store/seed.ts`) chargé au démarrage ;
-> les modifications vivent dans le store Zustand et disparaissent au rechargement de la page.
+> **Toutes les données vivent dans Supabase.** Aucune donnée constante n'est embarquée :
+> l'application démarre sur une base vide et tout ce qui est créé depuis les écrans
+> (élèves, enseignants, présences, paiements…) est écrit dans PostgreSQL et rechargé au démarrage.
 
 ## Stack
 
 - **Next.js 16** (App Router) — pages dans `app/`, contenu des modules dans `components/pages/`
-- **Zustand** — le store `lib/store/data.ts` est **toute** la couche données + règles métier
+- **Supabase** — PostgreSQL (32 tables métier), Auth (email + mot de passe), Storage (logo, images)
+- **Zustand** — le store `lib/store/data.ts` porte les règles métier et sert de cache de la base
 - **Tailwind v4**, **framer-motion**, **lucide-react**
 
-## Démarrage
+## Installation
+
+### 1. Créer le schéma
+
+Ouvrir le **SQL Editor** du projet Supabase et exécuter **`supabase/schema.sql`** en entier.
+Le script est idempotent (relançable sans risque) et crée :
+
+| Section | Contenu |
+| ------- | ------- |
+| 1–2 | extensions, `profiles`, et les fonctions de comptes (`admin_exists`, `bootstrap_admin`, `admin_create_user`, `admin_set_password`, `admin_set_email`, `admin_delete_user`) |
+| 3–4 | les 32 tables métier, leurs clés étrangères et leurs index |
+| 5 | la RLS : lecture pour tout compte connecté, écriture pour le personnel, présences pour les enseignants, sa propre fiche pour chacun |
+| 6 | les buckets Storage `logos` et `subjects` |
+| 7–8 | la ligne unique de configuration de l'école, et les droits PostgREST |
+
+Aucune donnée de démonstration n'est insérée.
+
+### 2. Lancer l'application
 
 ```bash
 npm install
-npm run dev     # http://localhost:3000 — aucune variable d'environnement requise
+npm run dev     # http://localhost:3000
 ```
 
-Autres scripts : `npm run build` (build de production), `npm run test` (vitest), `npm run lint`.
+La connexion Supabase est déjà câblée. Pour viser un autre projet, renseigner `.env.local` :
 
-## Connexion — 5 boutons de démo
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+```
 
-L'application démarre déconnectée sur `/login`. Un bouton par rôle connecte instantanément à un
-compte pré-rempli du jeu de données et redirige vers l'accueil correspondant :
+Autres scripts : `npm run build`, `npm run test` (vitest), `npm run lint`.
 
-| Bouton                    | Rôle        | Compte démo                                       |
-| ------------------------- | ----------- | ------------------------------------------------- |
-| Administrateur            | `admin`     | Direction Altech School                           |
-| Réception (Travailleurs)  | `reception` | Amina Haddad                                      |
-| Enseignant                | `teacher`   | Karim Bensalah (payé au pourcentage)              |
-| Étudiant                  | `student`   | Yacine Meziane                                    |
-| Parent                    | `parent`    | Nadia Meziane (parent de 2 élèves)                |
+## Comptes et connexion
 
-Le formulaire email/mot de passe accepte n'importe quel mot de passe pour l'une de ces adresses.
+L'application démarre déconnectée sur `/login`, avec un simple formulaire **email + mot de passe**.
+
+### Le premier administrateur
+
+Tant qu'aucun administrateur n'existe, la page de connexion affiche le bouton
+**« Créer un compte administrateur »** (nom, nom d'utilisateur, email, mot de passe). Il appelle
+`bootstrap_admin()`, qui crée le compte dans la table d'authentification et connecte
+immédiatement la personne. **Dès que ce compte existe, le bouton disparaît définitivement** :
+`admin_exists()` ne répond `false` que sur une base neuve.
+
+### Les autres comptes
+
+Ils sont créés depuis l'application, et chacun est un vrai compte d'authentification Supabase
+qui se connecte directement, sans email de confirmation :
+
+| Écran | Rôle créé |
+| ----- | --------- |
+| Enseignants → *Nouvel enseignant* | `teacher` (un « passager » n'a volontairement pas de compte) |
+| Travailleurs → *Nouveau travailleur* | `reception` (le ménage peut être créé sans compte) |
+| Élèves → *Nouvel élève* | `student` (identifiants générés à partir du nom) |
+| Parents → *Nouveau parent* | `parent` |
+
+La création passe par la fonction SQL `admin_create_user()`, exécutée côté serveur avec les droits
+de l'appelant : **la personne connectée reste connectée** — créer un compte ne vole jamais sa
+session. L'identifiant du compte devient la clé primaire de la fiche, ce qui relie une session à
+ses données.
+
+Modifier une fiche met aussi à jour l'email de connexion, changer le mot de passe passe par
+`admin_set_password()`, et supprimer une fiche supprime le compte.
+
+## Comment les écrans écrivent dans la base
+
+Les écrans continuent de travailler sur le store Zustand. `lib/supabase/sync.ts` observe ce store et
+**réplique dans Supabase tout ce qui change** : les ajouts, les modifications et les suppressions,
+qu'ils viennent d'un simple bouton ou d'une action qui réécrit six collections d'un coup (règlement
+d'un enseignant, feuille de présence, achat de séances…).
+
+Aucune action ne peut donc être oubliée, et l'ordre d'écriture respecte les clés étrangères :
+suppressions des tables les plus profondes d'abord, insertions des tables parentes d'abord.
+
+| Fichier | Rôle |
+| ------- | ---- |
+| `lib/supabase/client.ts` | la connexion (URL, clé anon, messages d'erreur lisibles) |
+| `lib/supabase/tables.ts` | la carte collection → table → colonnes, en ordre de dépendance |
+| `lib/supabase/load.ts` | lecture de toute la base au démarrage (pagination incluse) |
+| `lib/supabase/sync.ts` | réplication des changements du store vers PostgreSQL |
+| `lib/accounts/users.ts` | création / mot de passe / email / suppression des comptes |
+| `lib/accounts/uploadImage.ts` | téléversement du logo et des images de matières |
+
+`tests/schemaMapping.test.ts` vérifie que cette carte correspond colonne par colonne au SQL.
 
 ## Le système de séances
 
@@ -107,8 +170,10 @@ scan, sur la carte élève, dans le détail de la fiche, et dans les espaces ét
 
 | Domaine                          | Fichiers                                                              |
 | -------------------------------- | --------------------------------------------------------------------- |
-| Données + règles métier          | `lib/store/data.ts`, jeu de données `lib/store/seed.ts`                |
-| Session / comptes démo           | `lib/store/session.ts`, `lib/demoAccounts.ts`, `app/(auth)/login/`     |
+| Schéma de la base                | `supabase/schema.sql`                                                  |
+| Accès Supabase                   | `lib/supabase/`, `lib/accounts/`                                       |
+| Règles métier + cache            | `lib/store/data.ts`                                                    |
+| Session / connexion              | `lib/store/session.ts`, `app/(auth)/login/`                            |
 | Types & sélecteurs               | `lib/types.ts`, `lib/helpers.ts`                                       |
 | Élèves (achat, dette, détail)    | `components/pages/StudentsPage.tsx`                                    |
 | Présence / scan                  | `components/pages/AttendancePage.tsx`, `lib/useScanProcessor.ts`       |

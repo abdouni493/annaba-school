@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useData } from "@/lib/store/data";
 import { useSession } from "@/lib/store/session";
-import { uploadImage } from "@/lib/demo/uploadImage";
-import { changeOwnPassword } from "@/lib/demo/users";
+import { uploadImage } from "@/lib/accounts/uploadImage";
+import { changeOwnPassword } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/SearchInput";
@@ -35,7 +35,7 @@ export function SettingsPage() {
   const dataStore = useData();
   const { school, modules, moduleAbsenceRules, setModuleAbsenceRule, updateSchool, restoreState } = dataStore;
   const sessionUser = useSession((s) => s.user);
-  const loginSession = useSession((s) => s.login);
+  const updateUser = useSession((s) => s.updateUser);
   const [logoUploading, setLogoUploading] = useState(false);
 
   // Tabs navigation state
@@ -138,7 +138,7 @@ export function SettingsPage() {
     setSavingAdmin(true);
     try {
       if (adminName.trim() !== sessionUser.name) {
-        loginSession({ ...sessionUser, name: adminName.trim() });
+        updateUser({ name: adminName.trim() });
       }
       if (adminPassword) {
         await changeOwnPassword(adminPassword);

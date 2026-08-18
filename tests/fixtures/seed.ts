@@ -1,12 +1,15 @@
 /**
- * Constant demo data — the ONLY source of truth of the app now that Supabase is
- * gone. `buildSeed()` returns a brand-new `Database` on every call so the store
- * can be reset without leaking mutations between runs.
+ * Test fixture — a complete, self-consistent `Database` used by the unit tests
+ * only. The application itself ships NO constant data: it reads everything from
+ * Supabase (`supabase/schema.sql`).
  *
- * Ids are stable, readable strings (`stu-1`, `ses-3`, …): they are referenced by
- * `DEMO_ACCOUNTS` and make the seeded relations easy to follow. Dates and
- * weekdays are computed relative to *today* so the planner, the attendance sheet
- * and the scanner always have live séances to work with.
+ * `buildSeed()` returns a brand-new `Database` on every call so a test can
+ * reset the store without leaking mutations into the next one.
+ *
+ * Ids are stable, readable strings (`stu-1`, `ses-3`, …) so the seeded relations
+ * are easy to follow. Dates and weekdays are computed relative to *today*, which
+ * guarantees the planner, the attendance sheet and the scanner always have live
+ * séances to work with.
  */
 import { monthlyExpiry } from "@/lib/helpers";
 import type { Database } from "@/lib/store/data";

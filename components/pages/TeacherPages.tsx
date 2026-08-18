@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useData } from "@/lib/store/data";
 import { dayKeyOf } from "@/lib/helpers";
 import { useSession } from "@/lib/store/session";
-import { changeOwnPassword } from "@/lib/demo/users";
+import { changeOwnPassword } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -39,7 +39,7 @@ interface PageProps {
 }
 
 export function TeacherPages({ slug }: PageProps) {
-  const { user, login } = useSession();
+  const { user, updateUser } = useSession();
   const {
     teachers,
     sessions,
@@ -139,7 +139,7 @@ export function TeacherPages({ slug }: PageProps) {
     case "announcements":
       return <TeacherAnnouncementsView announcements={announcements} />;
     case "profile":
-      return <TeacherProfileView teacher={teacher} updateItem={updateItem} login={login} user={user} />;
+      return <TeacherProfileView teacher={teacher} updateItem={updateItem} updateUser={updateUser} user={user} />;
     default:
       return <div className="p-4 text-xs text-muted">Page non trouvée</div>;
   }
@@ -1426,12 +1426,12 @@ function TeacherAnnouncementsView({ announcements }: { announcements: any[] }) {
 function TeacherProfileView({
   teacher,
   updateItem,
-  login,
+  updateUser,
   user,
 }: {
   teacher: Teacher;
   updateItem: any;
-  login: any;
+  updateUser: (fields: { name?: string }) => void;
   user: any;
 }) {
   const [firstName, setFirstName] = useState(teacher.firstName);
@@ -1455,7 +1455,7 @@ function TeacherProfileView({
 
       updateItem("teachers", teacher.id, { firstName, lastName, phone });
 
-      login({ ...user, name: `${firstName} ${lastName}` });
+      updateUser({ name: `${firstName} ${lastName}` });
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erreur lors de l'enregistrement.");
     } finally {

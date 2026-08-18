@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useData } from "@/lib/store/data";
-import { buildSeed } from "@/lib/store/seed";
+import { buildSeed } from "@/tests/fixtures/seed";
 import {
   monthlyExpiry,
   monthlyPriceOf,

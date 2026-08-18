@@ -44,12 +44,14 @@ fix the interface of seance libre on the side bare make itwhen user comes to cre
 apply this updates then push all updates to repo 
 
 
+remove the quick access button on the login page and create on the login page button for create admin account with name and username and email and password and make sure to make the button of create new admin account hide when user create the admin account correctly 
 
-create new interface on the side bare make it under the dashboard name it emplois de temps make this interface for display all the exisiting emploi du temps on the week with possibility of filtering by classe and by year and by filier and by module exactly like the interface of create new students and make sure to make it detailed and organized display the timings on table organized with possibility of click on the timings to see the details and make the cards display all the informations about that timings and the teacher and organize the table by the times and days on the week 
+analyse the application a deep analyse and give me the full sql code for this application make sure to remove all the constant data  to connect it with this supabase data base connection :
+project url : https://jehpfbupmhbnbbkzhiwr.supabase.co
 
-fix the interface of view details interface button action onthe interface of teacher make it display for each assigned emploi du temps for that teacher make it display the days of each emploi du temps also 
+anon key : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplaHBmYnVwbWhibmJia3poaXdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNzk5NzIsImV4cCI6MjEwMjY1NTk3Mn0.WkEp9gUnjPiztMPha5xUmvkP5lD17mt9eBXk9RrwBqI
 
-fix the interface of seance libre on the side bare make itwhen user comes to create seance libre make it can seach about existing student or can type the full name for this sudent passager or can let it empty to save the seance as seance libre for student passager and make sure to let the user seach about the emploi du temps  that student studyed on it with name of emploi and make it display the price for one seance then let user validate the payment and create the seance libre and ask him for print the invoice and make it smal ans strealined 
-and make sure to create new option on the interface of create new seance libre make when user choose the cours then make option user can check it make it for make this seance libre for free that teacher will not payed on it and the same for the school and make sure to make this new information of free seance libre display on the genrale reports also with value of them
+make sure to make on the sql code all the table for all the interfaces and all the relations between the interfaces and make sure to make them contains all the button actions and make on the sql code the creation of the admin account from the login page and the creation of workers account and the creation of teachers account will create on the supabase authentification table and make sure to let all of them login to his session disrectly without problems 
 
-apply this updates and push all updates to repo
+make sure to connect all the interfaces and all the button action to make them use only the supabase data base connection 
+

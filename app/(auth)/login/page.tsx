@@ -11,13 +11,13 @@ import { useTranslation } from "@/lib/i18n/useTranslation";
 import { useData } from "@/lib/store/data";
 import { useSession } from "@/lib/store/session";
 import { roleHome } from "@/lib/nav";
-import { DEMO_ACCOUNTS, DEMO_ROLES, findDemoAccount } from "@/lib/demoAccounts";
+import { adminExists, bootstrapAdmin } from "@/lib/accounts/users";
 
 export default function LoginPage() {
   const { t } = useTranslation();
   const router = useRouter();
   const school = useData((s) => s.school);
-  const login = useSession((s) => s.login);
+  const signIn = useSession((s) => s.signIn);
   const sessionUser = useSession((s) => s.user);
   const hydrated = useSession((s) => s.hydrated);
 
@@ -28,24 +28,102 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  /** Manual form: matches one of the demo accounts, any password. */
-  const handleManual = (e: React.FormEvent) => {
+  // ---- "Créer un compte administrateur" -----------------------------------
+  // The button only exists while the school has no administrator at all. Once
+  // one is created it disappears for good — `admin_exists()` answers false only
+  // on a brand-new database.
+  const [hasAdmin, setHasAdmin] = useState<boolean | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [adminName, setAdminName] = useState("");
+  const [adminUsername, setAdminUsername] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [createdMessage, setCreatedMessage] = useState("");
+  /** The database has not had `supabase/schema.sql` run against it yet. */
+  const [setupError, setSetupError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    adminExists()
+      .then((exists) => {
+        if (cancelled) return;
+        setHasAdmin(exists);
+        setSetupError("");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Nothing to create an admin against: say so plainly rather than
+        // hiding the button and leaving the visitor with a dead screen.
+        setHasAdmin(true);
+        setSetupError(t("auth.databaseNotReady"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [t]);
+
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const account = findDemoAccount(email);
-    if (!account) {
-      setError(t("auth.invalidCredentials"));
-      return;
+    setBusy(true);
+    try {
+      const user = await signIn(email, password);
+      router.replace(roleHome(user.role));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("auth.invalidCredentials"));
+    } finally {
+      setBusy(false);
     }
-    login(account);
-    router.replace(roleHome(account.role));
   };
 
-  const signInAs = (role: keyof typeof DEMO_ACCOUNTS) => {
-    const account = DEMO_ACCOUNTS[role];
-    login(account);
-    router.replace(roleHome(account.role));
+  const handleCreateAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateError("");
+
+    if (!adminName.trim() || !adminUsername.trim() || !adminEmail.trim()) {
+      setCreateError(t("auth.allFieldsRequired"));
+      return;
+    }
+    if (adminPassword.length < 6) {
+      setCreateError(t("auth.passwordTooShort"));
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await bootstrapAdmin({
+        fullName: adminName,
+        username: adminUsername,
+        email: adminEmail,
+        password: adminPassword,
+      });
+
+      // Created: the button is gone for good, whatever happens next.
+      setHasAdmin(true);
+      setShowCreate(false);
+      setCreatedMessage(t("auth.adminCreated"));
+
+      // Sign the new administrator straight in.
+      try {
+        const user = await signIn(adminEmail, adminPassword);
+        router.replace(roleHome(user.role));
+      } catch {
+        // Account is there but the sign-in did not go through: hand the form
+        // back with the email already filled in.
+        setEmail(adminEmail.trim().toLowerCase());
+      }
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : t("auth.createAdminFailed"));
+      // A concurrent creation is the usual cause — re-check and hide the button.
+      adminExists()
+        .then(setHasAdmin)
+        .catch(() => {});
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -87,62 +165,132 @@ export default function LoginPage() {
             </div>
           </div>
           <h1 className="mt-4 text-2xl font-extrabold login-name-gradient">{school.name}</h1>
-          <p className="mt-1 text-sm text-muted">{t("auth.signInSubtitle")}</p>
+          <p className="mt-1 text-sm text-muted">
+            {showCreate ? t("auth.createAdminSubtitle") : t("auth.signInSubtitle")}
+          </p>
         </div>
 
-        {/* Manual sign-in — any password works on a demo email */}
-        <form onSubmit={handleManual} className="mt-7 space-y-3">
-          <Input
-            type="email"
-            placeholder={t("auth.email")}
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              setError("");
-            }}
-          />
-          <Input
-            type="password"
-            placeholder={t("auth.password")}
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              setError("");
-            }}
-          />
-          {error && <p className="text-sm font-medium text-danger">{error}</p>}
-          <Button type="submit" size="lg" className="w-full">
-            {t("auth.signIn")}
-          </Button>
-        </form>
-
-        {/* Separator */}
-        <div className="my-6 flex items-center gap-3">
-          <span className="h-px flex-1 bg-line" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-            {t("auth.or")}
-          </span>
-          <span className="h-px flex-1 bg-line" />
-        </div>
-
-        {/* One-tap demo logins */}
-        <div className="space-y-2">
-          <p className="text-center text-sm font-semibold text-ink">{t("auth.demoLogin")}</p>
-          <p className="text-center text-xs text-muted">{t("auth.chooseDemo")}</p>
-          <div className="grid gap-2 pt-2">
-            {DEMO_ROLES.map(({ role, label, emoji }) => (
-              <Button
-                key={role}
-                variant="outline"
-                className="w-full justify-center gap-2"
-                onClick={() => signInAs(role)}
-              >
-                <span aria-hidden>{emoji}</span>
-                {label}
+        {!showCreate ? (
+          <>
+            {/* Sign in */}
+            <form onSubmit={handleSignIn} className="mt-7 space-y-3">
+              <Input
+                type="email"
+                autoComplete="email"
+                placeholder={t("auth.email")}
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setError("");
+                }}
+              />
+              <Input
+                type="password"
+                autoComplete="current-password"
+                placeholder={t("auth.password")}
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError("");
+                }}
+              />
+              {error && <p className="text-sm font-medium text-danger">{error}</p>}
+              {setupError && (
+                <p className="rounded-xl bg-danger/10 p-3 text-xs font-medium text-danger">
+                  {setupError}
+                </p>
+              )}
+              {createdMessage && (
+                <p className="text-sm font-medium text-success">{createdMessage}</p>
+              )}
+              <Button type="submit" size="lg" className="w-full" disabled={busy}>
+                {busy ? t("auth.signingIn") : t("auth.signIn")}
               </Button>
-            ))}
-          </div>
-        </div>
+            </form>
+
+            {/* Shown only while the school has no administrator yet. */}
+            {hasAdmin === false && (
+              <>
+                <div className="my-6 flex items-center gap-3">
+                  <span className="h-px flex-1 bg-line" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+                    {t("auth.or")}
+                  </span>
+                  <span className="h-px flex-1 bg-line" />
+                </div>
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="w-full justify-center gap-2"
+                  onClick={() => {
+                    setCreateError("");
+                    setShowCreate(true);
+                  }}
+                >
+                  <span aria-hidden>🛡️</span>
+                  {t("auth.createAdmin")}
+                </Button>
+                <p className="mt-2 text-center text-xs text-muted">
+                  {t("auth.createAdminHint")}
+                </p>
+              </>
+            )}
+          </>
+        ) : (
+          /* Create the first administrator */
+          <form onSubmit={handleCreateAdmin} className="mt-7 space-y-3">
+            <Input
+              placeholder={t("auth.fullName")}
+              autoComplete="name"
+              value={adminName}
+              onChange={(e) => {
+                setAdminName(e.target.value);
+                setCreateError("");
+              }}
+            />
+            <Input
+              placeholder={t("auth.adminUsername")}
+              autoComplete="username"
+              value={adminUsername}
+              onChange={(e) => {
+                setAdminUsername(e.target.value);
+                setCreateError("");
+              }}
+            />
+            <Input
+              type="email"
+              placeholder={t("auth.email")}
+              autoComplete="email"
+              value={adminEmail}
+              onChange={(e) => {
+                setAdminEmail(e.target.value);
+                setCreateError("");
+              }}
+            />
+            <Input
+              type="password"
+              placeholder={t("auth.password")}
+              autoComplete="new-password"
+              value={adminPassword}
+              onChange={(e) => {
+                setAdminPassword(e.target.value);
+                setCreateError("");
+              }}
+            />
+            {createError && <p className="text-sm font-medium text-danger">{createError}</p>}
+            <Button type="submit" size="lg" className="w-full" disabled={busy}>
+              {busy ? t("auth.creating") : t("auth.createAccount")}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full"
+              onClick={() => setShowCreate(false)}
+            >
+              {t("auth.backToLogin")}
+            </Button>
+          </form>
+        )}
       </motion.div>
     </div>
   );

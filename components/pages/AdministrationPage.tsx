@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useData, uid } from "@/lib/store/data";
-import { createRoleUser, resetUserPassword } from "@/lib/demo/users";
+import {
+  createRoleUser,
+  deleteRoleUser,
+  resetUserPassword,
+  updateUserEmail,
+} from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -293,6 +298,15 @@ export function AdministrationPage() {
       }
     }
 
+    if (email && role !== "menage" && email !== selectedStaff.email) {
+      try {
+        await updateUserEmail(selectedStaff.id, email);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "Erreur lors du changement d'email.");
+        return;
+      }
+    }
+
     updateItem("reception", selectedStaff.id, {
       firstName, lastName, phone, email, role, paymentType, startDate, salary,
       rfid: rfid.trim() || undefined,
@@ -305,6 +319,7 @@ export function AdministrationPage() {
   const handleDelete = (id: string) => {
     if (confirm("Êtes-vous sûr de vouloir supprimer ce travailleur ?")) {
       deleteFrom("reception", id);
+      void deleteRoleUser(id);
       setActiveMenuId(null);
     }
   };

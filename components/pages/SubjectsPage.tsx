@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useData, uid } from "@/lib/store/data";
-import { uploadImage } from "@/lib/demo/uploadImage";
+import { uploadImage } from "@/lib/accounts/uploadImage";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";

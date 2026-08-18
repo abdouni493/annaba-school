@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useData, uid } from "@/lib/store/data";
-import { resetUserPassword } from "@/lib/demo/users";
+import { deleteRoleUser, resetUserPassword } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -425,6 +425,7 @@ export function StudentsPage() {
   const handleDelete = (id: string) => {
     if (confirm("Êtes-vous sûr de vouloir supprimer cet étudiant ?")) {
       deleteFrom("students", id);
+      void deleteRoleUser(id);
       setOverlayStudentId(null);
     }
   };

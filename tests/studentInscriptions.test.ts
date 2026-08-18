@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { toggleTimingSelection } from "@/components/students/ClassTimingPicker";
 import { useData } from "@/lib/store/data";
-import { buildSeed } from "@/lib/store/seed";
+import { buildSeed } from "@/tests/fixtures/seed";
 import {
   attendedSeances,
   courseKeyOf,

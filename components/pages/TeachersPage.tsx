@@ -2,7 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { useData, uid } from "@/lib/store/data";
-import { createRoleUser, resetUserPassword } from "@/lib/demo/users";
+import {
+  createRoleUser,
+  deleteRoleUser,
+  resetUserPassword,
+  updateUserEmail,
+} from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -827,6 +832,15 @@ export function TeachersPage() {
       }
     }
 
+    if (email && email !== selectedTeacher.email) {
+      try {
+        await updateUserEmail(selectedTeacher.id, email);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "Erreur lors du changement d'email.");
+        return;
+      }
+    }
+
     updateItem("teachers", selectedTeacher.id, {
       firstName,
       lastName,
@@ -844,6 +858,7 @@ export function TeachersPage() {
   const handleDelete = (id: string) => {
     if (confirm("Êtes-vous sûr de vouloir supprimer cet enseignant ?")) {
       deleteFrom("teachers", id);
+      void deleteRoleUser(id);
       setActiveMenuId(null);
     }
   };

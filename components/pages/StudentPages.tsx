@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useData } from "@/lib/store/data";
 import { useSession } from "@/lib/store/session";
-import { changeOwnPassword } from "@/lib/demo/users";
+import { changeOwnPassword } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -57,7 +57,7 @@ interface PageProps {
 }
 
 export function StudentPages({ slug }: PageProps) {
-  const { user, login } = useSession();
+  const { user, updateUser } = useSession();
   const db = useData();
   const {
     students,
@@ -155,7 +155,7 @@ export function StudentPages({ slug }: PageProps) {
     case "announcements":
       return <StudentAnnouncementsView announcements={announcements} />;
     case "profile":
-      return <StudentProfileView student={student} updateItem={updateItem} login={login} user={user} />;
+      return <StudentProfileView student={student} updateItem={updateItem} updateUser={updateUser} user={user} />;
     default:
       return <div className="p-4 text-xs text-muted">Page non trouvée</div>;
   }
@@ -1368,12 +1368,12 @@ function StudentAnnouncementsView({ announcements }: { announcements: any[] }) {
 function StudentProfileView({
   student,
   updateItem,
-  login,
+  updateUser,
   user,
 }: {
   student: Student;
   updateItem: any;
-  login: any;
+  updateUser: (fields: { name?: string }) => void;
   user: any;
 }) {
   const [firstName, setFirstName] = useState(student.firstName);
@@ -1398,7 +1398,7 @@ function StudentProfileView({
       updateItem("students", student.id, { firstName, lastName, phone });
 
       // Also update logged-in session state
-      login({ ...user, name: `${firstName} ${lastName}` });
+      updateUser({ name: `${firstName} ${lastName}` });
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erreur lors de l'enregistrement.");
     } finally {

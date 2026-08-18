@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { useData, uid } from "@/lib/store/data";
-import { createRoleUser, resetUserPassword } from "@/lib/demo/users";
+import {
+  createRoleUser,
+  deleteRoleUser,
+  resetUserPassword,
+  updateUserEmail,
+} from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -121,6 +126,15 @@ export function ParentsPage() {
       }
     }
 
+    if (email && email !== selectedParent.email) {
+      try {
+        await updateUserEmail(selectedParent.id, email);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "Erreur lors du changement d'email.");
+        return;
+      }
+    }
+
     // Reset parentId in old students
     selectedParent.childIds.forEach((sid) => {
       updateItem("students", sid, { parentId: undefined });
@@ -146,6 +160,7 @@ export function ParentsPage() {
   const handleDelete = (id: string) => {
     if (confirm("Supprimer ce parent ?")) {
       deleteFrom("parents", id);
+      void deleteRoleUser(id);
       // Reset parentId in children
       students
         .filter((s) => s.parentId === id)

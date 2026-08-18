@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { buildSeed } from "@/lib/store/seed";
+import { emptyDatabase, loadDatabase, loadSchool } from "@/lib/supabase/load";
 import { cycleSizeOf, currentCycleCode, netPriceFor, studentHasDebt } from "@/lib/helpers";
 import type {
   AbsencePenalty,
@@ -586,16 +586,32 @@ const SCAN_COOLDOWN_MIN = 30; // min before the SAME timing accepts a new swipe
 const SCAN_DOUBLE_SWIPE_SEC = 60; // reader sometimes sends two frames
 
 export const useData = create<DataStore>((set, get) => ({
-  ...buildSeed(),
-  loaded: true,
+  ...emptyDatabase(),
+  loaded: false,
 
-  // Data lives in memory: nothing to fetch, but the callers stay unchanged.
-  fetchSchool: async () => {},
-  fetchAll: async () => {
-    set({ loaded: true });
+  /** The establishment alone — the login screen needs its name and logo before
+   *  anyone is signed in, and that row is readable without an account. */
+  fetchSchool: async () => {
+    try {
+      set({ school: await loadSchool() });
+    } catch (err) {
+      console.error("[supabase] fetchSchool", err);
+    }
   },
 
-  clear: () => set({ loaded: true }),
+  /** Reads the whole database in one pass. Every screen then works off this
+   *  snapshot, and `lib/supabase/sync.ts` mirrors back whatever they change. */
+  fetchAll: async () => {
+    try {
+      const db = await loadDatabase();
+      set({ ...db, loaded: true });
+    } catch (err) {
+      console.error("[supabase] fetchAll", err);
+      set({ loaded: true });
+    }
+  },
+
+  clear: () => set({ ...emptyDatabase(), loaded: false }),
 
   // ---------------------------------------------------------------------------
   // Check-in — schedule matching, cross-group rattrapage, free periods,
@@ -2503,8 +2519,10 @@ export const useData = create<DataStore>((set, get) => ({
 
   restoreState: (dump) => set(() => ({ ...dump })),
 
+  /** Empties the local snapshot. The database is untouched — the next
+   *  `fetchAll()` simply reads it again. */
   reset: () => {
     lastAbsenceRun = null;
-    set({ ...buildSeed(), loaded: true });
+    set({ ...emptyDatabase(), loaded: false });
   },
 }));

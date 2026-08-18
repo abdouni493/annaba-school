@@ -21,7 +21,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
 import { BookOpen, Check, Trash2, Wallet } from "lucide-react";
-import { createRoleUser } from "@/lib/demo/users";
+import { createRoleUser } from "@/lib/accounts/users";
 import { formatDA } from "@/lib/utils";
 import { inscriptionVoucherHtml } from "@/lib/reports/documents";
 import { PrintAsk } from "@/components/attendance/PresenceSheet";
