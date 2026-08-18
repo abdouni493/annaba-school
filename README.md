@@ -30,6 +30,10 @@ Le script est idempotent (relançable sans risque) et crée :
 | 3–4 | les 32 tables métier, leurs clés étrangères et leurs index |
 | 5 | la RLS : lecture pour tout compte connecté, écriture pour le personnel, présences pour les enseignants, sa propre fiche pour chacun |
 | 6 | les buckets Storage `logos` et `subjects` |
+
+> **Base déjà en place ?** Exécuter en plus **`supabase/update-2026-08-19-teacher-per-group.sql`**,
+> qui ouvre la formule « par groupe » (`teachers.payment_type = 'per_group'`, règlements
+> `teacher_payments.method = 'group'`) et garantit qu'une fiche créée avec le seul nom s'enregistre.
 | 7–8 | la ligne unique de configuration de l'école, et les droits PostgREST |
 
 Aucune donnée de démonstration n'est insérée.
@@ -152,7 +156,9 @@ Scan RFID et feuille de présence manuelle appliquent la même règle :
 - élève gratuit, période gratuite ou abonnement pas encore commencé → présence enregistrée,
   **aucune séance décomptée** ;
 - sinon → **séances restantes − 1**, jamais d'argent ;
-- l'enseignant payé au pourcentage touche sa part du prix net de la séance, comme avant ;
+- l'enseignant payé au **pourcentage** touche sa part du prix net de la séance, comme avant ;
+- l'enseignant payé **par groupe** touche le tarif fixé sur l'emploi du temps lui-même
+  (part enseignant du mois ÷ séances du mois), quel que soit le nombre d'élèves présents ;
 - plus aucune séance restante → l'élève est **quand même accepté**, la présence est signalée comme
   « à régulariser » ;
 - abonnement **expiré** (mois écoulé ou formation terminée) → carte refusée, et les séances qui

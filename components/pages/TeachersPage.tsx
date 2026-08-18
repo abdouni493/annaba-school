@@ -34,6 +34,7 @@ import type {
   TeacherChildCharge,
   TeacherPaymentDeduction,
   TeacherPaymentDetail,
+  TeacherPaymentType,
 } from "@/lib/types";
 import { printHtmlDocument } from "@/lib/print";
 import { formatDA } from "@/lib/utils";
@@ -138,7 +139,7 @@ export function TeachersPage() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [paymentType, setPaymentType] = useState<"monthly" | "percentage">("percentage");
+  const [paymentType, setPaymentType] = useState<TeacherPaymentType>("percentage");
   const [monthlyAmount, setMonthlyAmount] = useState<number>(0);
   const [startDate, setStartDate] = useState(new Date().toISOString().split("T")[0]);
   const [percentage, setPercentage] = useState<number>(50);
@@ -169,7 +170,7 @@ export function TeachersPage() {
   // ---- Per-timing settlement (séance libre + enseignant passager) ----------
   const [isTimingPayOpen, setIsTimingPayOpen] = useState(false);
   const [selectedTimingKeys, setSelectedTimingKeys] = useState<string[]>([]);
-  const [payMethod, setPayMethod] = useState<"fixed" | "percent">("fixed");
+  const [payMethod, setPayMethod] = useState<"fixed" | "percent" | "group">("fixed");
   const [payFixedAmount, setPayFixedAmount] = useState<number>(0);
   const [payPercentage, setPayPercentage] = useState<number>(50);
   const [expandedTimingKey, setExpandedTimingKey] = useState<string | null>(null);
@@ -232,6 +233,131 @@ export function TeachersPage() {
 
   const getTeacherAbsences = (tid: string) => {
     return absences.filter((a) => a.teacherId === tid);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Rémunération "par groupe"
+  //
+  // Le tarif de l'enseignant n'est PAS sur sa fiche : il est fixé emploi du
+  // temps par emploi du temps, sur l'abonnement (prix du mois -> part de
+  // l'école -> le reste pour l'enseignant, divisé par le nombre de séances).
+  // Cette liste est ce que sa fiche affiche : un groupe non tarifé se voit
+  // tout de suite, avant qu'une séance ne lui rapporte 0 DA.
+  // ---------------------------------------------------------------------------
+  interface GroupRate {
+    sessionId: string;
+    title: string;
+    className: string;
+    groupName: string;
+    monthPrice: number;
+    schoolShare: number;
+    teacherShare: number;
+    perSeance: number;
+    /** l'abonnement porte bien un partage école / enseignant */
+    configured: boolean;
+  }
+
+  const groupRatesOf = (tid: string): GroupRate[] =>
+    sessions
+      .filter((sess) => sess.teacherId === tid)
+      .map((sess) => {
+        const sub = subscriptions.find((x) => x.sessionId === sess.id);
+        const moduleName = modules.find((m) => m.id === sess.moduleId)?.name ?? "Séance";
+        return {
+          sessionId: sess.id,
+          title: sess.isOpen ? sess.title || `Séance libre — ${moduleName}` : moduleName,
+          className: classes.find((c) => c.id === sess.classId)?.name ?? "-",
+          groupName: sess.isOpen
+            ? (sess.groupIds?.length ? sess.groupIds : [sess.groupId])
+                .map((id) => groups.find((g) => g.id === id)?.name ?? "-")
+                .join(" · ")
+            : groups.find((g) => g.id === sess.groupId)?.name ?? "-",
+          monthPrice: monthlyPriceOf(sub),
+          schoolShare: schoolMonthShareOf(sub),
+          teacherShare: teacherMonthShareOf(sub),
+          perSeance: teacherPerSeanceOf(sub),
+          configured: teacherPerSeanceOf(sub) > 0,
+        };
+      })
+      .sort((a, b) => a.title.localeCompare(b.title));
+
+  /** The panel both the création and the modification modals show under the
+   *  "Par groupe" formula. Before the teacher exists there is nothing to list,
+   *  so it explains where the tarif is typed instead. */
+  const renderGroupRates = (tid?: string) => {
+    const rows = tid ? groupRatesOf(tid) : [];
+    const missing = rows.filter((r) => !r.configured).length;
+    return (
+      <div className="md:col-span-2 rounded-2xl border border-primary/25 bg-primary-50/40 p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+            Tarif par groupe — fixé sur l&apos;emploi du temps
+          </span>
+          {rows.length > 0 && (
+            <Badge tone={missing > 0 ? "warning" : "success"} className="text-[9px] font-bold">
+              {missing > 0 ? `${missing} groupe(s) sans tarif` : `${rows.length} groupe(s) tarifé(s)`}
+            </Badge>
+          )}
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted">
+          Avec cette formule l&apos;enseignant n&apos;a pas de taux sur sa fiche : chaque emploi du
+          temps le rémunère au tarif défini dans son <strong className="text-ink">abonnement</strong>{" "}
+          (prix du mois → part de l&apos;école → le reste revient à l&apos;enseignant, divisé par le
+          nombre de séances). Une séance lui rapporte exactement ce tarif, quel que soit le nombre
+          d&apos;élèves présents.
+        </p>
+
+        {!tid ? (
+          <p className="text-[11px] leading-relaxed text-muted bg-surface border border-line rounded-xl p-3">
+            Créez d&apos;abord l&apos;enseignant, affectez-le à ses emplois du temps, puis réglez la
+            part école / enseignant depuis <strong className="text-ink">Emploi du temps</strong> ou{" "}
+            <strong className="text-ink">Abonnements</strong>. Ses tarifs apparaîtront ici.
+          </p>
+        ) : rows.length === 0 ? (
+          <p className="text-[11px] leading-relaxed text-muted bg-surface border border-line rounded-xl p-3">
+            Cet enseignant n&apos;est encore affecté à aucun emploi du temps.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase text-muted font-bold text-left">
+                  <th className="py-2 px-2">Emploi du temps</th>
+                  <th className="py-2 px-2">Groupe</th>
+                  <th className="py-2 px-2 text-right">Prix du mois</th>
+                  <th className="py-2 px-2 text-right">Part école</th>
+                  <th className="py-2 px-2 text-right">Part enseignant</th>
+                  <th className="py-2 px-2 text-right">Par séance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.sessionId} className="border-t border-line/60">
+                    <td className="py-1.5 px-2 font-semibold text-ink">
+                      {r.title}
+                      <span className="block text-[10px] font-normal text-muted">{r.className}</span>
+                    </td>
+                    <td className="py-1.5 px-2 text-muted">{r.groupName}</td>
+                    <td className="py-1.5 px-2 text-right font-mono">{formatDA(r.monthPrice)}</td>
+                    <td className="py-1.5 px-2 text-right font-mono">{formatDA(r.schoolShare)}</td>
+                    <td className="py-1.5 px-2 text-right font-mono text-success">
+                      {formatDA(r.teacherShare)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right font-mono font-bold text-primary">
+                      {r.configured ? (
+                        formatDA(r.perSeance)
+                      ) : (
+                        <Badge tone="warning" className="text-[9px]">Non tarifé</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
   };
 
 
@@ -389,6 +515,9 @@ export function TeachersPage() {
    */
   const computedPayout = useMemo(() => {
     if (payMethod === "fixed") return Math.max(0, Math.round(payFixedAmount || 0));
+    // "group": each présence already carries the tarif of its emploi du temps
+    // (part enseignant ÷ séances du mois) — the payout is simply their sum.
+    if (payMethod === "group") return chosenTimings.reduce((s, t) => s + t.payableShare, 0);
     const pct = Math.min(Math.max(payPercentage || 0, 0), 100);
     // Only students who have paid are counted — a student in debt is withheld.
     return chosenTimings.reduce(
@@ -425,6 +554,8 @@ export function TeachersPage() {
    *  over paid students only. */
   const shareForTiming = (t: UnpaidTiming) => {
     const payableFees = t.students.filter((st) => !st.withheld).reduce((s, st) => s + st.fee, 0);
+    // Priced by the emploi du temps: the timing's own share, nothing to spread.
+    if (payMethod === "group") return t.payableShare;
     if (payMethod === "percent") {
       const pct = Math.min(Math.max(payPercentage || 0, 0), 100);
       return t.students
@@ -496,11 +627,13 @@ export function TeachersPage() {
         // still printed, flagged, so the count matches the sheet.
         if (!st.withheld) {
           row.total +=
-            payMethod === "percent"
-              ? Math.round((st.fee * Math.min(Math.max(payPercentage || 0, 0), 100)) / 100)
-              : payableFees > 0
-                ? Math.round((share * st.fee) / payableFees)
-                : 0;
+            payMethod === "group"
+              ? st.share
+              : payMethod === "percent"
+                ? Math.round((st.fee * Math.min(Math.max(payPercentage || 0, 0), 100)) / 100)
+                : payableFees > 0
+                  ? Math.round((share * st.fee) / payableFees)
+                  : 0;
         }
         // Once a présence is withheld, the row stays flagged.
         row.withheld = row.withheld || st.withheld;
@@ -520,10 +653,12 @@ export function TeachersPage() {
     setSelectedTeacher(t);
     const timings = buildUnpaidTimings(t.id);
     setSelectedTimingKeys(timings.map((x) => x.key));
-    // A salaried teacher opens on his contract amount; everyone else on the
-    // percentage his présences earn.
+    // Each contract opens on its own formula: a salaried teacher on his fixed
+    // amount, a "par groupe" one on the tarifs his emplois du temps already
+    // wrote per présence, everyone else on the percentage they earn.
     const monthly = t.paymentType === "monthly";
-    setPayMethod(t.isPassager || monthly ? "fixed" : "percent");
+    const perGroup = t.paymentType === "per_group";
+    setPayMethod(perGroup ? "group" : t.isPassager || monthly ? "fixed" : "percent");
     setPayFixedAmount(monthly ? t.monthlyAmount ?? 0 : 0);
     setPayPercentage(t.percentage ?? 50);
     setExpandedTimingKey(null);
@@ -780,38 +915,71 @@ export function TeachersPage() {
   };
 
 
+  /** What the fiche stores for the chosen formula. "Par groupe" carries no
+   *  rate at all — the emplois du temps hold it. */
+  const payFields = () =>
+    paymentType === "monthly"
+      ? { monthlyAmount, startDate }
+      : paymentType === "percentage"
+        ? { percentage }
+        : {};
+
+  /**
+   * Only a name is required. Everything else is optional: an enseignant typed
+   * without email / mot de passe is simply created WITHOUT a login — exactly
+   * like a travailleur — and the desk can add his credentials later from
+   * "Modifier".
+   */
   const handleCreateTeacher = async () => {
-    if (!firstName || !lastName || !phone || !email) {
-      alert("Veuillez remplir tous les champs obligatoires.");
+    if (!firstName.trim() && !lastName.trim()) {
+      alert("Indiquez au moins un nom ou un prénom.");
       return;
     }
-    if (password.length < 6) {
-      alert("Le mot de passe doit contenir au moins 6 caractères.");
+
+    // Credentials are optional, but half of them is not: an email without a
+    // usable password (or the reverse) cannot open an account.
+    const wantsAccount = email.trim() !== "" || password !== "";
+    if (wantsAccount) {
+      if (!email.trim()) {
+        alert("Saisissez un email de connexion, ou laissez email et mot de passe vides pour créer l'enseignant sans compte.");
+        return;
+      }
+      if (password.length < 6) {
+        alert("Le mot de passe doit contenir au moins 6 caractères.");
+        return;
+      }
+    }
+
+    const base = {
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      paymentType,
+      ...payFields(),
+    };
+
+    if (!wantsAccount) {
+      // No login: the row is simply added, like an enseignant passager.
+      push("teachers", { id: uid("tch"), ...base } as Teacher);
+      setIsCreateOpen(false);
+      resetForm();
       return;
     }
 
     try {
       const { id: teacherId } = await createRoleUser({
         role: "teacher",
-        email,
+        email: email.trim(),
         password,
-        firstName,
-        lastName,
-        phone,
+        firstName: base.firstName,
+        lastName: base.lastName,
+        phone: base.phone,
         paymentType,
-        ...(paymentType === "monthly" ? { monthlyAmount, startDate } : { percentage }),
+        ...payFields(),
       });
 
-      const newTeacher: Teacher = {
-        id: teacherId,
-        firstName,
-        lastName,
-        phone,
-        email,
-        paymentType,
-        ...(paymentType === "monthly" ? { monthlyAmount, startDate } : { percentage }),
-      };
-      push("teachers", newTeacher);
+      push("teachers", { id: teacherId, ...base } as Teacher);
 
       setIsCreateOpen(false);
       resetForm();
@@ -849,6 +1017,7 @@ export function TeachersPage() {
       paymentType,
       monthlyAmount: paymentType === "monthly" ? monthlyAmount : undefined,
       startDate: paymentType === "monthly" ? startDate : undefined,
+      // "Par groupe" keeps no rate on the fiche: the emplois du temps do.
       percentage: paymentType === "percentage" ? percentage : undefined,
     });
     setIsEditOpen(false);
@@ -1166,7 +1335,13 @@ export function TeachersPage() {
                       <div>
                         <span className="text-[10px] text-muted block uppercase font-semibold">Contrat</span>
                         <span className="font-semibold text-ink">
-                          {t.isPassager ? "À la séance" : t.paymentType === "monthly" ? "Fixe Mensuel" : "Pourcentage"}
+                          {t.isPassager
+                            ? "À la séance"
+                            : t.paymentType === "monthly"
+                              ? "Fixe Mensuel"
+                              : t.paymentType === "per_group"
+                                ? "Par groupe"
+                                : "Pourcentage"}
                         </span>
                       </div>
                       <div className="text-right">
@@ -1176,7 +1351,9 @@ export function TeachersPage() {
                             ? "Montant / %"
                             : t.paymentType === "monthly"
                               ? `${t.monthlyAmount} DA/m`
-                              : `${t.percentage}% / élève`}
+                              : t.paymentType === "per_group"
+                                ? "Tarif emploi du temps"
+                                : `${t.percentage}% / élève`}
                         </span>
                       </div>
                     </div>
@@ -1246,41 +1423,48 @@ export function TeachersPage() {
 
       {/* Creation Modal */}
       <Modal open={isCreateOpen} onClose={() => setIsCreateOpen(false)} title="Créer un enseignant" wide>
+        <p className="text-[11px] leading-relaxed text-muted bg-canvas border border-line rounded-xl p-3 mb-4">
+          Seul le <strong className="text-ink">nom</strong> est demandé. Le téléphone, l&apos;email et
+          le mot de passe sont facultatifs : laissez l&apos;email et le mot de passe vides pour créer
+          l&apos;enseignant <strong className="text-ink">sans compte de connexion</strong> — vous
+          pourrez les ajouter plus tard depuis « Modifier ».
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom *</label>
+            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Prénom</label>
             <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Prénom" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Nom *</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Nom</label>
             <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Nom" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Téléphone *</label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+213 5XX XX XX XX" />
+            <label className="block text-xs font-semibold text-muted mb-1">Téléphone</label>
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+213 5XX XX XX XX (facultatif)" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Email (Login) *</label>
-            <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@ecole.com" />
+            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Email (Login)</label>
+            <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@ecole.com (facultatif)" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Mot de passe *</label>
-            <Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6 caractères min." />
+            <label className="block text-xs font-semibold text-muted mb-1">Mot de passe</label>
+            <Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6 caractères min. (facultatif)" />
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-muted mb-1">Type de rémunération</label>
             <Select
               value={paymentType}
-              onChange={(e) => setPaymentType(e.target.value as "monthly" | "percentage")}
+              onChange={(e) => setPaymentType(e.target.value as TeacherPaymentType)}
               className="w-full"
             >
               <option value="percentage">Pourcentage par élève/présence</option>
               <option value="monthly">Fixe mensuel</option>
+              <option value="per_group">Par groupe — tarif de l&apos;emploi du temps</option>
             </Select>
           </div>
 
@@ -1301,7 +1485,7 @@ export function TeachersPage() {
                 <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </div>
             </>
-          ) : (
+          ) : paymentType === "percentage" ? (
             <div>
               <label className="block text-xs font-semibold text-muted mb-1">Pourcentage par séance (%)</label>
               <Input
@@ -1311,6 +1495,8 @@ export function TeachersPage() {
                 placeholder="Ex: 55"
               />
             </div>
+          ) : (
+            renderGroupRates()
           )}
         </div>
 
@@ -1349,11 +1535,12 @@ export function TeachersPage() {
             <label className="block text-xs font-semibold text-muted mb-1">Type de rémunération</label>
             <Select
               value={paymentType}
-              onChange={(e) => setPaymentType(e.target.value as "monthly" | "percentage")}
+              onChange={(e) => setPaymentType(e.target.value as TeacherPaymentType)}
               className="w-full"
             >
               <option value="percentage">Pourcentage</option>
               <option value="monthly">Fixe mensuel</option>
+              <option value="per_group">Par groupe — tarif de l&apos;emploi du temps</option>
             </Select>
           </div>
           {paymentType === "monthly" ? (
@@ -1371,7 +1558,7 @@ export function TeachersPage() {
                 <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </div>
             </>
-          ) : (
+          ) : paymentType === "percentage" ? (
             <div>
               <label className="block text-xs font-semibold text-muted mb-1">Pourcentage (%)</label>
               <Input
@@ -1380,6 +1567,8 @@ export function TeachersPage() {
                 onChange={(e) => setPercentage(Number(e.target.value))}
               />
             </div>
+          ) : (
+            renderGroupRates(selectedTeacher?.id)
           )}
         </div>
 
@@ -1415,7 +1604,9 @@ export function TeachersPage() {
                     ? "Réglé à la séance"
                     : selectedTeacher.paymentType === "monthly"
                       ? `Salaire Fixe: ${selectedTeacher.monthlyAmount} DA / mois`
-                      : `Rémunération: ${selectedTeacher.percentage}% / séance`}
+                      : selectedTeacher.paymentType === "per_group"
+                        ? "Rémunération: par groupe (tarif de chaque emploi du temps)"
+                        : `Rémunération: ${selectedTeacher.percentage}% / séance`}
                 </Badge>
               </div>
             </div>
@@ -2289,7 +2480,7 @@ export function TeachersPage() {
                   <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
                     Mode de rémunération
                   </span>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <button
                       type="button"
                       onClick={() => setPayMethod("fixed")}
@@ -2320,9 +2511,36 @@ export function TeachersPage() {
                         % appliqué au tarif de chaque élève présent — calcul automatique.
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayMethod("group")}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        payMethod === "group" ? "border-primary bg-primary/10 ring-2 ring-primary/25" : "border-line bg-surface"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <Users className={`h-4 w-4 ${payMethod === "group" ? "text-primary" : "text-muted"}`} />
+                        <span className="font-bold text-xs text-ink">Par groupe</span>
+                      </div>
+                      <span className="text-[10px] text-muted block leading-normal">
+                        Tarif enseignant défini sur chaque emploi du temps — calcul automatique.
+                      </span>
+                    </button>
                   </div>
 
-                  {payMethod === "fixed" ? (
+                  {payMethod === "group" ? (
+                    <div className="rounded-xl border border-line bg-surface p-3 text-[11px] leading-relaxed text-muted">
+                      Chaque présence a déjà été valorisée au tarif de son emploi du temps (part de
+                      l&apos;enseignant ÷ séances du mois, réglée sur l&apos;abonnement). Le montant
+                      ci-dessous est la somme de ces tarifs pour les créneaux cochés — rien à saisir.
+                      {chosenTimings.some((t) => t.payableShare === 0 && t.students.length > 0) && (
+                        <span className="block mt-2 text-warning font-semibold">
+                          Certains créneaux cochés ne rapportent rien : leur abonnement n&apos;a pas
+                          encore de part enseignant.
+                        </span>
+                      )}
+                    </div>
+                  ) : payMethod === "fixed" ? (
                     <div>
                       <label className="block text-[10px] font-semibold text-muted mb-1">Montant à verser (DA) *</label>
                       <Input
@@ -2444,7 +2662,12 @@ export function TeachersPage() {
                                   <th className="py-1">Statut</th>
                                   <th className="py-1 text-right">Tarif élève</th>
                                   <th className="py-1 text-right">
-                                    Part prof {payMethod === "percent" ? `(${payPercentage}%)` : ""}
+                                    Part prof{" "}
+                                    {payMethod === "percent"
+                                      ? `(${payPercentage}%)`
+                                      : payMethod === "group"
+                                        ? "(tarif du groupe)"
+                                        : ""}
                                   </th>
                                 </tr>
                               </thead>
@@ -2473,7 +2696,9 @@ export function TeachersPage() {
                                         ? "— (dette)"
                                         : payMethod === "percent"
                                           ? `${Math.round((st.fee * payPercentage) / 100)} DA`
-                                          : "—"}
+                                          : payMethod === "group"
+                                            ? `${st.share} DA`
+                                            : "—"}
                                     </td>
                                   </tr>
                                 ))}

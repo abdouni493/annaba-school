@@ -1001,11 +1001,30 @@ export function ReportsPage() {
             columns: [
               { label: "Enseignant", render: (r) => <span className="font-bold text-ink">{r.firstName} {r.lastName}</span> },
               { label: "Téléphone", render: (r) => <span className="font-mono text-muted">{r.phone}</span> },
-              { label: "Rémunération", render: (r) => <Badge tone={r.paymentType === "monthly" ? "primary" : "warning"}>{r.paymentType === "monthly" ? "Mensuel" : "Pourcentage"}</Badge> },
+              {
+                label: "Rémunération",
+                render: (r) => (
+                  <Badge tone={r.paymentType === "monthly" ? "primary" : "warning"}>
+                    {r.paymentType === "monthly"
+                      ? "Mensuel"
+                      : r.paymentType === "per_group"
+                        ? "Par groupe"
+                        : "Pourcentage"}
+                  </Badge>
+                ),
+              },
               {
                 label: "Base",
                 align: "right",
-                render: (r) => <span className="text-ink">{r.paymentType === "monthly" ? formatDA(r.monthlyAmount || 0) : `${r.percentage || 0} %`}</span>,
+                render: (r) => (
+                  <span className="text-ink">
+                    {r.paymentType === "monthly"
+                      ? formatDA(r.monthlyAmount || 0)
+                      : r.paymentType === "per_group"
+                        ? "Tarif emploi du temps"
+                        : `${r.percentage || 0} %`}
+                  </span>
+                ),
               },
             ],
             rows: teachers,
@@ -1602,7 +1621,13 @@ export function ReportsPage() {
           id: t.id,
           name: `${t.firstName} ${t.lastName}`,
           isPassager: !!t.isPassager,
-          contract: t.isPassager ? "À la séance" : t.paymentType === "monthly" ? "Mensuel" : `${t.percentage ?? 0} %`,
+          contract: t.isPassager
+            ? "À la séance"
+            : t.paymentType === "monthly"
+              ? "Mensuel"
+              : t.paymentType === "per_group"
+                ? "Par groupe"
+                : `${t.percentage ?? 0} %`,
           presences,
           generated,
           earned,

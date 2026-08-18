@@ -85,7 +85,15 @@ export interface Salle {
   name: string;
 }
 
-export type TeacherPaymentType = "monthly" | "percentage";
+/**
+ * How a teacher is paid:
+ *  - `monthly`: a fixed salary, independent of the séances,
+ *  - `percentage`: a % of what each présent student generated,
+ *  - `per_group`: the pay is defined GROUPE PAR GROUPE on the emploi du temps
+ *    itself (abonnement -> part de l'école / part de l'enseignant), so each
+ *    séance earns him that emploi's `teacherPerSeance` and nothing else.
+ */
+export type TeacherPaymentType = "monthly" | "percentage" | "per_group";
 export interface Teacher {
   id: string;
   firstName: string;
@@ -107,7 +115,8 @@ export interface TeacherPayment {
   teacherId: string;
   /** what he actually took home: gross − dépenses − acomptes − frais des enfants */
   amount: number;
-  method: "fixed" | "percent";
+  /** "group" = the emplois du temps priced the séances themselves */
+  method: "fixed" | "percent" | "group";
   percentage?: number;
   studentsCount: number;
   sessionsCount: number;

@@ -1222,7 +1222,11 @@ export function PlannerPage() {
                             {t.isPassager && <span className="ml-1 opacity-70">(passager)</span>}
                           </span>
                           <span className={openTeacherId === t.id ? "text-white/80" : "text-muted"}>
-                            {t.paymentType === "monthly" ? "Mensuel" : `${t.percentage ?? 0}%`}
+                            {t.paymentType === "monthly"
+                              ? "Mensuel"
+                              : t.paymentType === "per_group"
+                                ? "Par groupe"
+                                : `${t.percentage ?? 0}%`}
                           </span>
                         </button>
                       ))}

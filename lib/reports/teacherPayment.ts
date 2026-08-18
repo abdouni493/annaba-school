@@ -48,6 +48,8 @@ const LABELS = {
     monthlyContract: (a: number) => `Fixe Mensuel (${a} DA/mois)`,
     percentContract: (p: number) => `Pourcentage — ${p}% par élève présent`,
     passagerContract: "Enseignant passager (réglé à la séance)",
+    groupContract: "Par groupe — tarif enseignant de chaque emploi du temps",
+    groupTotal: "Total des tarifs par groupe :",
     tableTitle: "Récapitulatif par Groupe",
     group: "Groupe",
     module: "Module",
@@ -78,6 +80,8 @@ const LABELS = {
     monthlyContract: (a: number) => `أجر شهري ثابت (${a} دج/شهر)`,
     percentContract: (p: number) => `نسبة مئوية — ${p}٪ عن كل تلميذ حاضر`,
     passagerContract: "أستاذ عابر (يُدفع له بالحصة)",
+    groupContract: "حسب الفوج — أجر الأستاذ المحدد في كل جدول توقيت",
+    groupTotal: "مجموع أجور الأفواج :",
     tableTitle: "ملخص حسب الفوج",
     group: "الفوج",
     module: "المادة",
@@ -148,6 +152,11 @@ export function buildTeacherPaymentReport(data: TeacherReportData): string {
   const sessionById = new Map(teacherSessions.map((s) => [s.id, s]));
 
   const isPercentage = teacher.paymentType === "percentage";
+  /** Paid groupe par groupe: the emplois du temps carry the rate, his fiche
+   *  carries none — so his pay is simply the sum of the dues written. */
+  const isPerGroup = teacher.paymentType === "per_group";
+  /** Both formulas earn séance by séance: the slip pays what the dues total. */
+  const earnsPerSeance = isPercentage || isPerGroup;
   const pct = teacher.percentage ?? 0;
 
   // ---- One row per group: presences + revenue over the period ---------------
@@ -194,13 +203,15 @@ export function buildTeacherPaymentReport(data: TeacherReportData): string {
   const totalPresents = rows.reduce((s, r) => s + r.presents, 0);
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
   const totalShare = rows.reduce((s, r) => s + r.share, 0);
-  const amountToPay = isPercentage ? totalShare : teacher.monthlyAmount ?? 0;
+  const amountToPay = earnsPerSeance ? totalShare : teacher.monthlyAmount ?? 0;
 
   const contractLabel = teacher.isPassager
     ? L.passagerContract
     : isPercentage
       ? L.percentContract(pct)
-      : L.monthlyContract(teacher.monthlyAmount ?? 0);
+      : isPerGroup
+        ? L.groupContract
+        : L.monthlyContract(teacher.monthlyAmount ?? 0);
 
   const bodyHtml = `
     ${letterheadHtml(school)}
@@ -220,7 +231,7 @@ export function buildTeacherPaymentReport(data: TeacherReportData): string {
           <td>${teacher.email || "-"}</td>
           <td style="font-weight:bold; color:#5c567a;">${L.contract}</td>
           <td>
-            <span class="badge ${isPercentage ? "badge-success" : "badge-warning"}">${contractLabel}</span>
+            <span class="badge ${earnsPerSeance ? "badge-success" : "badge-warning"}">${contractLabel}</span>
           </td>
         </tr>
       </table>
@@ -280,7 +291,9 @@ export function buildTeacherPaymentReport(data: TeacherReportData): string {
       ${
         isPercentage
           ? `<div class="summary-line"><span>${L.rate}</span><strong>${pct} %</strong></div>`
-          : `<div class="summary-line"><span>${L.monthlySalary}</span><strong>${teacher.monthlyAmount ?? 0} ${L.da}</strong></div>`
+          : isPerGroup
+            ? `<div class="summary-line"><span>${L.groupTotal}</span><strong>${totalShare} ${L.da}</strong></div>`
+            : `<div class="summary-line"><span>${L.monthlySalary}</span><strong>${teacher.monthlyAmount ?? 0} ${L.da}</strong></div>`
       }
       <div class="net-pay-box${amountToPay < 0 ? " negative" : ""}">
         <span>${L.net}</span>

@@ -529,6 +529,43 @@ export function SubscriptionsPage() {
               </div>
             )}
           </div>
+
+          {/* Which enseignant this split actually pays, and how his fiche is
+              set up — the two screens have to agree for the money to move. */}
+          {(() => {
+            const sess = sessions.find((x) => x.id === selectedSessionId);
+            const teacher = sess ? teachers.find((t) => t.id === sess.teacherId) : undefined;
+            if (!teacher) return null;
+            const perGroup = teacher.paymentType === "per_group";
+            return (
+              <div
+                className={`rounded-xl border p-3 text-[11px] leading-relaxed ${
+                  perGroup ? "border-success/30 bg-success/5" : "border-warning/30 bg-warning/5"
+                }`}
+              >
+                <strong className="text-ink">
+                  {teacher.firstName} {teacher.lastName}
+                </strong>{" "}
+                {perGroup ? (
+                  <>
+                    est rémunéré <strong className="text-success">par groupe</strong> : cette part
+                    est exactement ce que chaque séance de cet emploi du temps lui rapportera.
+                  </>
+                ) : (
+                  <>
+                    est rémunéré{" "}
+                    <strong className="text-warning">
+                      {teacher.paymentType === "monthly"
+                        ? "au fixe mensuel"
+                        : `au pourcentage (${teacher.percentage ?? 0}%)`}
+                    </strong>{" "}
+                    sur sa fiche. Le tarif défini ici reste prioritaire sur cet emploi du temps —
+                    passez sa fiche en « Par groupe » pour que ce soit sa seule règle de paie.
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </>
       )}
     </div>

@@ -137,11 +137,13 @@ export function CreateStudentModal({
   };
 
   const submit = async () => {
-    if (!firstName.trim() || !lastName.trim() || !phone.trim()) {
+    // Only a name is required — the desk often registers a child before it has
+    // his phone or his birth date, and both can be filled in later.
+    if (!firstName.trim() && !lastName.trim()) {
       addToast({
         type: "danger",
-        title: "Champs manquants",
-        message: "Prénom, nom et téléphone sont obligatoires.",
+        title: "Nom manquant",
+        message: "Indiquez au moins un nom ou un prénom.",
       });
       return;
     }
@@ -162,9 +164,16 @@ export function CreateStudentModal({
       return;
     }
 
-    // Credentials and badge are minted silently — the desk types name + phone.
-    const base = `${firstName}${lastName}`.toLowerCase().replace(/\s+/g, "");
-    const suffix = birthDate.replace(/-/g, "") || phone.replace(/\D/g, "").slice(-4) || "0000";
+    // Credentials and badge are minted silently — the desk types a name and
+    // nothing else is needed. The registration number closes the login, so two
+    // namesakes without phone nor birth date never collide on the same email.
+    const base =
+      `${firstName}${lastName}`
+        .normalize("NFD") // "Aménée" -> "Amenee" once the marks are filtered out
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "") || "eleve";
+    const suffix =
+      birthDate.replace(/-/g, "") || phone.replace(/\D/g, "").slice(-4) || nextNumber;
     const email = `${base}${suffix}@elilm.com`;
     const password = `${base}${suffix}`;
     const rfid = uid("rfid");
@@ -291,15 +300,17 @@ export function CreateStudentModal({
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs font-semibold text-muted">Prénom *</label>
+                <label className="mb-1 block text-xs font-semibold text-muted">Prénom</label>
                 <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Amine" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-semibold text-muted">Nom *</label>
+                <label className="mb-1 block text-xs font-semibold text-muted">Nom</label>
                 <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Benali" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-semibold text-muted">Téléphone *</label>
+                <label className="mb-1 block text-xs font-semibold text-muted">
+                  Téléphone (optionnel)
+                </label>
                 <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0555 12 34 56" />
               </div>
               <div>
