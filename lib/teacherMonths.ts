@@ -28,6 +28,7 @@ import {
   cycleSizeOf,
   dayKeyOf,
   enrollmentCycles,
+  enrollmentStart,
   formatDays,
   groupName,
   moduleName,
@@ -208,10 +209,18 @@ const byDate = (a: AttendanceRecord, b: AttendanceRecord) => a.timestamp.localeC
  * Les lignes qui ne coûtent rien (séance annulée, première absence de
  * courtoisie) n'avancent pas le compteur : elles sont simplement rattachées au
  * mois en cours, exactement comme la feuille de présence les affiche.
+ *
+ * `offset` est le point d'entrée de l'élève : inscrit en M2 sur la 3e séance,
+ * ses présences sont comptées à partir de là — sa première séance appartient à
+ * M2, pas à M1.
  */
-function recordMonths(records: AttendanceRecord[], size: number): Map<string, number> {
+function recordMonths(
+  records: AttendanceRecord[],
+  size: number,
+  offset = 0,
+): Map<string, number> {
   const out = new Map<string, number>();
-  let billable = 0;
+  let billable = offset;
   for (const rec of records) {
     out.set(rec.id, Math.floor(billable / Math.max(1, size)));
     if (consumesSeance(rec)) billable += 1;
@@ -296,10 +305,26 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
   }
   const monthOfRecord = new Map<string, number>();
   const currentIndexOf = new Map<string, number>();
+  // Où chaque élève est ENTRÉ sur l'emploi : celui qui a été inscrit en cours
+  // de mois ne commence pas à la séance 1 du M1.
+  const startOf = new Map<string, number>();
+  for (const st of roster) {
+    startOf.set(st.id, sub ? enrollmentStart(db, st.id, sub.id).offset : 0);
+  }
   for (const [studentId, rows] of recordsByStudent) {
     rows.sort(byDate);
-    for (const [id, idx] of recordMonths(rows, size)) monthOfRecord.set(id, idx);
-    currentIndexOf.set(studentId, Math.floor(rows.filter(consumesSeance).length / size));
+    const offset = startOf.get(studentId) ?? (sub ? enrollmentStart(db, studentId, sub.id).offset : 0);
+    for (const [id, idx] of recordMonths(rows, size, offset)) monthOfRecord.set(id, idx);
+    currentIndexOf.set(
+      studentId,
+      Math.floor((offset + rows.filter(consumesSeance).length) / size),
+    );
+  }
+  // Un élève inscrit et pas encore pointé vit déjà le mois de son entrée.
+  for (const st of roster) {
+    if (!currentIndexOf.has(st.id)) {
+      currentIndexOf.set(st.id, Math.floor((startOf.get(st.id) ?? 0) / size));
+    }
   }
 
   // ---- ce que l'enseignant a gagné, présence par présence ------------------
@@ -333,10 +358,12 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
 
   // ---- combien de mois faut-il rendre ? ------------------------------------
   const cyclesOf = new Map<string, ReturnType<typeof enrollmentCycles>>();
+  const startIndexOf = new Map<string, number>();
   let maxIndex = 0;
   for (const st of roster) {
     const cycles = sub ? enrollmentCycles(db, st.id, sub.id) : [];
     cyclesOf.set(st.id, cycles);
+    startIndexOf.set(st.id, Math.floor((startOf.get(st.id) ?? 0) / size));
     maxIndex = Math.max(maxIndex, cycles.length - 1, currentIndexOf.get(st.id) ?? 0);
   }
   for (const idx of duesByMonth.keys()) maxIndex = Math.max(maxIndex, idx);
@@ -379,6 +406,7 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
         roster,
         cyclesOf,
         currentIndexOf,
+        startIndexOf,
         monthOfRecord,
         recordsByStudent,
         dues: duesByMonth.get(i) ?? [],
@@ -467,6 +495,8 @@ interface MonthInput {
   roster: Student[];
   cyclesOf: Map<string, ReturnType<typeof enrollmentCycles>>;
   currentIndexOf: Map<string, number>;
+  /** le mois d'ENTRÉE de chaque élève sur l'emploi (0 = M1) */
+  startIndexOf: Map<string, number>;
   monthOfRecord: Map<string, number>;
   recordsByStudent: Map<string, AttendanceRecord[]>;
   dues: TeacherDue[];
@@ -493,6 +523,9 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     // L'élève n'est listé que s'il a atteint ce mois : celui qui n'y est pas
     // encore n'a rien à y payer, et l'afficher « impayé » serait faux.
     if (index > cursor && !cycles[index]) continue;
+    // Ni s'il est arrivé APRÈS : les séances de ce mois-là ne sont pas les
+    // siennes, l'enseignant n'a rien gagné sur lui.
+    if (index < (input.startIndexOf.get(st.id) ?? 0)) continue;
 
     const enrollment = sub
       ? db.enrollments.find((e) => e.studentId === st.id && e.subscriptionId === sub.id)

@@ -195,7 +195,40 @@ Le tableau de bord n'est plus figé sur aujourd'hui : **jour précédent / jour 
 sélecteur de date et un bouton **Aujourd'hui**. Il liste alors les emplois du temps **de ce
 jour-là**, à l'horaire de ce jour-là, avec l'avancement du pointage (`3/12`), et chaque ligne
 ouvre la **feuille de présence de cette date** : une séance oubliée hier se pointe encore, et
-demain se prépare la veille.
+demain se prépare la veille. Un élève créé depuis cette feuille entre sur le créneau **à la date
+affichée**, pas à celle du jour.
+
+### Un élève entre là où en est le groupe
+
+Un enfant inscrit en cours de route ne commence pas l'emploi du temps à sa séance 1 : il arrive
+**là où en est le groupe**. La fiche de création (tableau de bord, feuille de présence ou écran
+Élèves) lit le mois que vit le groupe et la séance tenue ce jour-là, puis l'écrit sur son
+inscription :
+
+```
+Groupe sur M2, 2 séances déjà tenues, on crée un élève aujourd'hui
+   -> il entre en M2 · séance 3
+   -> son solde d'inscription est versé sur M2 (jamais sur M1)
+   -> sa première présence tombe sur M2 · séance 3
+   -> S1 et S2 de M2 restent vides sur sa ligne (elles ne sont pas les siennes)
+   -> M1 ne le liste pas du tout
+```
+
+Son mois se ferme **avec celui du groupe** : deux séances lui suffisent alors à clore un pack de
+quatre, et la suivante ouvre M3 pour lui comme pour les autres. La paie de l'enseignant lit la
+même horloge — aucune part n'est due sur les mois d'avant son arrivée.
+
+Le point d'entrée est stocké sur l'inscription (`joinMonthCode`, `joinSlotIndex` dans
+`students.subscription_dates`). Une inscription qui ne le porte pas — toutes celles d'avant — se
+lit comme avant : **M1 · séance 1**.
+
+### Désinscrire un élève d'un groupe
+
+La feuille de présence porte, sur chaque ligne, un bouton **Désinscrire** : l'élève sort de la
+liste du groupe et n'y est plus pointé. Son **historique reste intact** — présences, paiements et
+solde — et l'écran prévient avant d'écrire si son solde est dans le rouge ou s'il lui reste de
+l'argent dessus. Le réinscrire plus tard le fait entrer **là où en sera le groupe à ce
+moment-là**.
 
 ### Paie de l'enseignant — mois par mois
 

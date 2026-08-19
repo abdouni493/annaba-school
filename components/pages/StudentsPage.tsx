@@ -109,6 +109,7 @@ export function StudentsPage() {
     updateAttendance,
     deleteAbsencePenalty,
     setStudentPassword,
+    unsubscribeStudent,
   } = db;
 
   const { language, autoSendWhatsapp, autoSendEmail, setAutoSendWhatsapp, setAutoSendEmail } = useSettings();
@@ -2172,11 +2173,10 @@ export function StudentsPage() {
                                 variant="ghost"
                                 onClick={() => {
                                   if (confirm("Retirer cet emploi du temps de sa fiche ?")) {
-                                    updateItem("students", selectedStudent.id, {
-                                      subscriptionIds: selectedStudent.subscriptionIds.filter(
-                                        (id) => id !== subId,
-                                      ),
-                                    });
+                                    // Son historique et son solde restent : le
+                                    // réinscrire plus tard le remet là où en
+                                    // sera le groupe à ce moment-là.
+                                    void unsubscribeStudent(selectedStudent.id, subId);
                                   }
                                 }}
                                 className="text-danger"

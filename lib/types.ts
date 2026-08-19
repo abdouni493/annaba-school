@@ -316,6 +316,20 @@ export interface SubscriptionDates {
   expiryDate?: string;
   /** how the module was sold to this student ("seance" when absent) */
   plan?: SubscriptionPlan;
+  /**
+   * WHERE on the emploi du temps the student came in. A child registered while
+   * the group is living its 2nd month, on its 3rd séance, starts there and not
+   * on M1 · séance 1: `joinMonthCode` is that month ("M2") and `joinSlotIndex`
+   * that séance, 0-based (séance 3 -> 2).
+   *
+   * Every month calculation offsets his séances by that point, so his first
+   * présence lands on M2 · séance 3, the séances held before him stay blank on
+   * the sheet, and the months he was not part of never list him at all.
+   *
+   * Absent = M1 · séance 1, exactly how every inscription read before.
+   */
+  joinMonthCode?: string;
+  joinSlotIndex?: number;
 }
 
 /** Reduction granted to ONE student on ONE module, applied by every price

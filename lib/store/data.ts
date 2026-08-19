@@ -5,8 +5,10 @@ import { emptyDatabase, loadDatabase, loadSchool } from "@/lib/supabase/load";
 import {
   cycleSizeOf,
   currentCycleCode,
+  joinPointFor,
   netPriceFor,
   sessionTimesOn,
+  soldFor,
   studentHasDebt,
 } from "@/lib/helpers";
 import type {
@@ -452,6 +454,28 @@ interface DataActions {
     amount: number,
     description?: string,
   ) => Promise<{ ok: boolean; settled?: number; remainingDebt?: number }>;
+  /**
+   * Registers a student on ONE emploi du temps, exactly where the group stands:
+   * the month it is living and the séance being held on `date` (the next one
+   * when nothing has been pointed that day). The séances that ran before him
+   * are never his — they stay blank on the sheet, and the months he was not
+   * part of do not list him.
+   */
+  subscribeStudent: (args: {
+    studentId: string;
+    subscriptionId: string;
+    /** the day he comes in on (defaults to today) */
+    date?: string;
+  }) => Promise<{ ok: boolean; monthCode?: string; slotIndex?: number }>;
+  /**
+   * Takes a student OFF one emploi du temps. His history stays untouched —
+   * présences, paiements and solde are kept, so re-registering him later finds
+   * his money exactly where he left it; only his place on the roster goes.
+   */
+  unsubscribeStudent: (
+    studentId: string,
+    subscriptionId: string,
+  ) => Promise<{ ok: boolean; balance?: number }>;
   /** Uses up one séance of an inscription (attendance). */
   consumeSeance: (
     enrollmentId: string,
@@ -2529,6 +2553,65 @@ export const useData = create<DataStore>((set, get) => ({
       // regularising at the desk.
       exhausted: before <= 0,
     };
+  },
+
+  subscribeStudent: async ({ studentId, subscriptionId, date }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+    if (!student || !sub) return { ok: false };
+
+    const day = date || dateKey(new Date());
+    const point = joinPointFor(db, subscriptionId, day, studentId);
+
+    set((state) => ({
+      students: state.students.map((st) =>
+        st.id === studentId
+          ? {
+              ...st,
+              subscriptionIds: st.subscriptionIds.includes(subscriptionId)
+                ? st.subscriptionIds
+                : [...st.subscriptionIds, subscriptionId],
+              subscriptionDates: {
+                ...st.subscriptionDates,
+                [subscriptionId]: {
+                  ...st.subscriptionDates?.[subscriptionId],
+                  subscribedAt: st.subscriptionDates?.[subscriptionId]?.subscribedAt ?? day,
+                  startDate: st.subscriptionDates?.[subscriptionId]?.startDate ?? day,
+                  joinMonthCode: point.monthCode,
+                  joinSlotIndex: point.slotIndex,
+                },
+              },
+            }
+          : st,
+      ),
+    }));
+
+    return { ok: true, monthCode: point.monthCode, slotIndex: point.slotIndex };
+  },
+
+  unsubscribeStudent: async (studentId, subscriptionId) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    if (!student || !student.subscriptionIds.includes(subscriptionId)) return { ok: false };
+    const balance = soldFor(db, studentId, subscriptionId);
+
+    set((state) => ({
+      students: state.students.map((st) => {
+        if (st.id !== studentId) return st;
+        // The arrival point goes with the inscription: re-registering him later
+        // must land him where the group stands THEN, not where it stood before.
+        const dates = { ...(st.subscriptionDates ?? {}) };
+        delete dates[subscriptionId];
+        return {
+          ...st,
+          subscriptionIds: st.subscriptionIds.filter((id) => id !== subscriptionId),
+          subscriptionDates: dates,
+        };
+      }),
+    }));
+
+    return { ok: true, balance };
   },
 
   setStudentPassword: async (studentId, password) => {
