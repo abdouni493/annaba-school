@@ -4,6 +4,11 @@
  * THE présence sheet. One single component, used identically by the dashboard
  * (when a créneau of the day is opened) and by the Présences screen.
  *
+ * Only the students the month actually concerns are listed: a child registered
+ * while the group lived its M2 is on M2 and on nothing before it, and the
+ * séances of M2 held before he arrived stay blank on his row rather than
+ * reading "pas encore pointé".
+ *
  * One row per student of the emploi du temps, and per row:
  *  - his number, name and phone,
  *  - one column per séance of the month, each showing présent / absent /
@@ -13,7 +18,8 @@
  *  - the state of the PREVIOUS month: ✔ when settled, the amount owed otherwise
  *    (clickable, payable on the spot),
  *  - what he owes on his OTHER emplois du temps, same treatment,
- *  - the présence buttons for the day: présent / absent / annulée / retour.
+ *  - the présence buttons for the day: présent / absent / annulée / retour,
+ *  - and the button that takes him OFF the group, his history kept.
  *
  * Every button writes straight away — no confirmation dialog anywhere — and
  * "Retour" undoes a mis-click, giving the solde back.
@@ -39,6 +45,7 @@ import {
   RotateCcw,
   Search,
   Slash,
+  UserMinus,
   UserPlus,
   Wallet,
   X,
@@ -47,9 +54,11 @@ import type { AttendanceRecord, AttendanceStatus, ScheduleSession, Student } fro
 import {
   DAY_LABELS_FR,
   attendanceOn,
+  cycleLead,
   cycleOf,
   cycleSizeOf,
   cycleSlots,
+  enrolledInMonth,
   enrollmentCycles,
   formatDateFr,
   groupName,
@@ -98,7 +107,7 @@ export function PresenceSheet({
   onCreateStudent,
 }: PresenceSheetProps) {
   const db = useData();
-  const { setPresence, addSold } = db;
+  const { setPresence, addSold, unsubscribeStudent } = db;
   const { language } = useSettings();
   const { addToast } = useToast();
 
@@ -107,18 +116,29 @@ export function PresenceSheet({
   const [pay, setPay] = useState<PayTarget | null>(null);
   const [drill, setDrill] = useState<{ student: Student; kind: "previous" | "other" } | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
+  /** the student the desk is about to take off the group */
+  const [leaving, setLeaving] = useState<Student | null>(null);
 
   const sub = db.subscriptions.find((s) => s.sessionId === session.id);
   const unitPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
   const monthIndex = Math.max(0, monthOrder(monthCode));
 
-  /** Students enrolled on THIS emploi du temps. */
+  /**
+   * Students enrolled on THIS emploi du temps — and on the month being read.
+   * A child registered during M2 is simply not part of M1: showing him there
+   * would invent séances he was never offered.
+   */
   const roster = useMemo(() => {
     if (!sub) return [] as Student[];
     return db.students
       .filter((st) => st.subscriptionIds.includes(sub.id))
+      .filter((st) => enrolledInMonth(db, st.id, sub.id, monthCode))
       .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
-  }, [db.students, sub]);
+  }, [db, sub, monthCode]);
+
+  /** Enrolled on the emploi, month aside — what the month filter hides. */
+  const fullRoster = sub ? db.students.filter((st) => st.subscriptionIds.includes(sub.id)) : [];
+  const notYetHere = fullRoster.length - roster.length;
 
   const shown = roster.filter((st) => studentMatches(db, st, search));
 
@@ -159,6 +179,33 @@ export function PresenceSheet({
           ? "Pointage annulé"
           : `${STATUS_STYLE[status].label} enregistré`,
       message: `${bits.join(" · ") || "Aucun mouvement"} — solde : ${formatDA(res.balance ?? 0)}`,
+      studentName: studentName(student),
+    });
+  };
+
+  // ---- taking a student off the group -------------------------------------
+  const confirmLeave = async () => {
+    if (!leaving || !sub) return;
+    const student = leaving;
+    setBusyId(student.id);
+    const res = await unsubscribeStudent(student.id, sub.id);
+    setBusyId(null);
+    setLeaving(null);
+    if (!res.ok) {
+      addToast({
+        type: "danger",
+        title: "Désinscription refusée",
+        message: "Cet élève n'est pas inscrit sur cet emploi du temps.",
+        studentName: studentName(student),
+      });
+      return;
+    }
+    addToast({
+      type: "success",
+      title: "Élève désinscrit",
+      message: `Retiré de ${title}. Son historique et son solde de ${formatDA(
+        res.balance ?? 0,
+      )} sont conservés.`,
       studentName: studentName(student),
     });
   };
@@ -220,13 +267,16 @@ export function PresenceSheet({
         language,
         rows: shown.map((st) => {
           const slots = cycleSlots(db, st.id, sub.id, monthCode);
+          const lead = cycleLead(db, st.id, sub.id, monthCode);
           const prevDebt =
             monthIndex > 0 ? Math.max(0, -cycleOf(db, st.id, sub.id, `M${monthIndex}`).balance) : 0;
           return {
             number: registrationNumberOf(db, st),
             name: studentName(st),
             phone: st.phone,
-            slots: Array.from({ length: slotCount }, (_, i) => slots[i]?.status ?? null),
+            slots: Array.from({ length: slotCount }, (_, i) =>
+              i < lead ? null : (slots[i - lead]?.status ?? null),
+            ),
             sold: soldFor(db, st.id, sub.id),
             caseLabel: studentCaseLabel(st),
             previousDebt: prevDebt,
@@ -314,6 +364,11 @@ export function PresenceSheet({
           {DAY_LABELS_FR[JS_DAYS[new Date(`${date}T12:00:00`).getDay()]]} {formatDateFr(date)}
         </Badge>
         <Badge tone="neutral">{shown.length} élève(s)</Badge>
+        {notYetHere > 0 && (
+          <Badge tone="warning" title="Inscrits après ce mois-là — ils apparaissent sur le leur">
+            {notYetHere} pas encore inscrit(s) en {monthCode}
+          </Badge>
+        )}
       </div>
 
       {!scheduledDay && (
@@ -325,7 +380,7 @@ export function PresenceSheet({
 
       {/* ---- the table ----------------------------------------------------- */}
       <div className="overflow-x-auto rounded-2xl border border-line">
-        <table className="w-full min-w-[900px] text-xs">
+        <table className="w-full min-w-[1000px] text-xs">
           <thead className="bg-canvas/60">
             <tr className="text-left text-[10px] uppercase tracking-wide text-muted">
               <th className="px-2 py-2.5">N°</th>
@@ -340,14 +395,17 @@ export function PresenceSheet({
               <th className="px-2 py-2.5">Mois préc.</th>
               <th className="px-2 py-2.5">Autres dettes</th>
               <th className="px-2 py-2.5 text-center">Pointage du jour</th>
+              <th className="px-2 py-2.5 text-center">Groupe</th>
             </tr>
           </thead>
           <tbody>
             {shown.length === 0 ? (
               <tr>
-                <td colSpan={slotCount + 7} className="px-3 py-10 text-center text-xs italic text-muted">
+                <td colSpan={slotCount + 8} className="px-3 py-10 text-center text-xs italic text-muted">
                   {roster.length === 0
-                    ? "Aucun élève inscrit sur cet emploi du temps."
+                    ? notYetHere > 0
+                      ? `Aucun élève sur ${monthCode} — les ${notYetHere} inscrit(s) de cet emploi sont arrivés plus tard.`
+                      : "Aucun élève inscrit sur cet emploi du temps."
                     : "Aucun élève ne correspond à la recherche."}
                 </td>
               </tr>
@@ -366,6 +424,7 @@ export function PresenceSheet({
                   onWrite={write}
                   onPay={setPay}
                   onDrill={(kind) => setDrill({ student: st, kind })}
+                  onLeave={() => setLeaving(st)}
                 />
               ))
             )}
@@ -385,6 +444,10 @@ export function PresenceSheet({
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block h-3 w-3 rounded border border-line bg-canvas" /> Pas encore pointé
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-3 w-3 rounded border border-dashed border-line bg-canvas/40" />{" "}
+          Séance tenue avant son inscription
         </span>
         <span>· Une absence marquée avant toute présence sur cet emploi ne coûte rien.</span>
       </div>
@@ -472,6 +535,57 @@ export function PresenceSheet({
         </Modal>
       )}
 
+      {/* ---- taking a student off the group --------------------------------- */}
+      {leaving && (
+        <Modal open onClose={() => setLeaving(null)} title="Désinscrire de ce groupe">
+          <div className="space-y-3">
+            <div className="rounded-xl bg-primary-50/60 p-3">
+              <strong className="block text-sm text-ink">{studentName(leaving)}</strong>
+              <span className="text-[11px] text-muted">
+                N° {registrationNumberOf(db, leaving)} · {title} — groupe{" "}
+                {groupName(db, session.groupId)}
+              </span>
+            </div>
+            <p className="text-xs text-ink">
+              Il sort de la liste de ce groupe et n&apos;y sera plus pointé. Ses présences, ses
+              paiements et son solde sont conservés — le réinscrire plus tard le remet là où en
+              sera le groupe à ce moment-là.
+            </p>
+            {(() => {
+              const balance = soldFor(db, leaving.id, sub.id);
+              if (balance < 0)
+                return (
+                  <p className="rounded-xl border border-danger/40 bg-danger/10 p-2.5 text-[11px] font-semibold text-danger">
+                    Attention : il doit encore {formatDA(-balance)} sur cet emploi du temps. Une
+                    fois désinscrit, cette dette ne sera plus lue sur ses fiches.
+                  </p>
+                );
+              if (balance > 0)
+                return (
+                  <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] text-warning">
+                    Il lui reste {formatDA(balance)} de solde sur cet emploi du temps : cet argent
+                    est gardé et le retrouvera s&apos;il y revient.
+                  </p>
+                );
+              return null;
+            })()}
+            <div className="flex justify-end gap-2 border-t border-line pt-3">
+              <Button variant="outline" onClick={() => setLeaving(null)}>
+                Annuler
+              </Button>
+              <Button
+                variant="danger"
+                onClick={confirmLeave}
+                disabled={busyId === leaving.id}
+                className="gap-1.5"
+              >
+                <UserMinus className="h-4 w-4" /> Désinscrire
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {receipt && <PrintAsk html={receipt} onClose={() => setReceipt(null)} />}
     </div>
   );
@@ -535,6 +649,7 @@ function StudentRow({
   onWrite,
   onPay,
   onDrill,
+  onLeave,
 }: {
   student: Student;
   session: ScheduleSession;
@@ -547,12 +662,15 @@ function StudentRow({
   onWrite: (student: Student, status: AttendanceStatus | null) => void;
   onPay: (t: PayTarget) => void;
   onDrill: (kind: "previous" | "other") => void;
+  onLeave: () => void;
 }) {
   const db = useData();
   const sub = db.subscriptions.find((s) => s.id === subscriptionId)!;
   const label = session.title || moduleNameOf(db, session.moduleId);
 
   const slots = cycleSlots(db, student.id, subscriptionId, monthCode);
+  /** séances of this month held before he was registered — never his */
+  const lead = cycleLead(db, student.id, subscriptionId, monthCode);
   const cycle = cycleOf(db, student.id, subscriptionId, monthCode);
   const sold = soldFor(db, student.id, subscriptionId);
   const unit = sub.pricePerSession;
@@ -586,20 +704,29 @@ function StudentRow({
       <td className="px-2 py-2 text-muted">{student.phone || "—"}</td>
 
       {Array.from({ length: slotCount }, (_, i) => {
-        const rec: AttendanceRecord | undefined = slots[i];
+        // Before his arrival the séance simply is not his: the box stays empty
+        // instead of reading like a pointage still to do.
+        const before = i < lead;
+        const rec: AttendanceRecord | undefined = before ? undefined : slots[i - lead];
         return (
           <td key={i} className="px-1 py-2 text-center">
             <span
               title={
-                rec
-                  ? `${STATUS_STYLE[rec.status].label} — ${formatDateFr(rec.timestamp.slice(0, 10))}`
-                  : "Pas encore pointé"
+                before
+                  ? `Séance tenue avant son inscription (inscrit à la séance ${lead + 1})`
+                  : rec
+                    ? `${STATUS_STYLE[rec.status].label} — ${formatDateFr(rec.timestamp.slice(0, 10))}`
+                    : "Pas encore pointé"
               }
               className={`inline-flex h-6 w-6 items-center justify-center rounded-lg border text-[11px] font-black ${
-                rec ? STATUS_STYLE[rec.status].cls : "border-line bg-canvas text-muted/50"
+                before
+                  ? "border-dashed border-line bg-canvas/40 text-muted/40"
+                  : rec
+                    ? STATUS_STYLE[rec.status].cls
+                    : "border-line bg-canvas text-muted/50"
               }`}
             >
-              {rec ? STATUS_STYLE[rec.status].short : "–"}
+              {before ? "" : rec ? STATUS_STYLE[rec.status].short : "–"}
             </span>
           </td>
         );
@@ -629,7 +756,9 @@ function StudentRow({
           </button>
         </div>
         <span className="mt-0.5 block text-[9px] text-muted">
-          {cycle.done}/{cycle.size} séance(s){cycle.complete ? " · mois clos" : ""}
+          {cycle.done}/{Math.max(0, cycle.size - cycle.lead)} séance(s)
+          {cycle.complete ? " · mois clos" : ""}
+          {cycle.lead > 0 ? ` · entré à la séance ${cycle.lead + 1}` : ""}
         </span>
       </td>
 
@@ -706,6 +835,20 @@ function StudentRow({
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </MarkButton>
+        </div>
+      </td>
+
+      {/* off the group — his présences, ses paiements et son solde restent */}
+      <td className="px-2 py-2">
+        <div className="flex items-center justify-center">
+          <button
+            disabled={busy}
+            onClick={onLeave}
+            title="Désinscrire cet élève de ce groupe"
+            className="flex h-7 items-center gap-1 rounded-lg border border-line px-2 text-[10px] font-bold text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <UserMinus className="h-3.5 w-3.5" /> Désinscrire
+          </button>
         </div>
       </td>
     </tr>

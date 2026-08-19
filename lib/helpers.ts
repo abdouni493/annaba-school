@@ -432,6 +432,13 @@ export interface MonthCycle {
   index: number;
   /** séances the month contains */
   size: number;
+  /**
+   * Séances of that month the student was NOT part of — he was registered
+   * after they had been held. 0 on an ordinary month, `startSlot` on the month
+   * he arrived on, and the whole `size` on a month that ran before him.
+   * What he can still attend is therefore `size - lead`.
+   */
+  lead: number;
   /** the billable rows of that month, in order */
   records: AttendanceRecord[];
   /** how many of the `size` séances are already used */
@@ -460,8 +467,44 @@ export function dayKeyOf(iso: string): string {
 const dayOfIso = dayKeyOf;
 
 /**
+ * Where ONE student's history starts on ONE emploi du temps.
+ *
+ * A child registered while the group is on its 2nd month, 3rd séance, does not
+ * start the emploi at M1 · séance 1: the séances held before him were never
+ * his. `subscriptionDates` carries that arrival point, and every month
+ * calculation offsets his séances by it.
+ */
+export interface EnrollmentStart {
+  /** 0-based month he came in on (M2 -> 1) */
+  monthIndex: number;
+  /** 0-based séance of that month he came in on (séance 3 -> 2) */
+  slotIndex: number;
+  /** séances of the emploi that ran before him: monthIndex × size + slotIndex */
+  offset: number;
+}
+
+/** The arrival point of a student on an emploi — M1 · séance 1 when unmarked. */
+export function enrollmentStart(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+): EnrollmentStart {
+  const size = cycleSizeOf(db.subscriptions.find((s) => s.id === subscriptionId));
+  const dates = db.students.find((s) => s.id === studentId)?.subscriptionDates?.[subscriptionId];
+  const month = Math.max(0, monthOrder(dates?.joinMonthCode || "M1"));
+  const slot = Math.max(0, Math.round(dates?.joinSlotIndex ?? 0));
+  // A slot spilling past the pack simply belongs to the month after it.
+  const offset = month * size + slot;
+  return { monthIndex: Math.floor(offset / size), slotIndex: offset % size, offset };
+}
+
+/**
  * The whole month history of ONE student on ONE emploi du temps: the séances
  * chunked `size` by `size`, with the money credited to each month.
+ *
+ * The chunking starts at his arrival point, not at séance 1: a student who came
+ * in on M2 · séance 3 has his very first présence recorded there, and the two
+ * séances that opened M2 are marked as never his (`lead`).
  */
 export function enrollmentCycles(
   db: Database,
@@ -471,6 +514,7 @@ export function enrollmentCycles(
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   const size = cycleSizeOf(sub);
   const records = sub ? cycleRecords(db, studentId, sub.sessionId) : [];
+  const start = enrollmentStart(db, studentId, subscriptionId);
 
   // Money is attributed to the month reception credited it to.
   const credits: Record<string, number> = {};
@@ -480,21 +524,26 @@ export function enrollmentCycles(
     credits[code] = (credits[code] ?? 0) + p.amountPaid;
   }
 
-  const fromRecords = Math.ceil(records.length / size);
+  const fromRecords = Math.ceil((start.offset + records.length) / size);
   const fromCredits = Object.keys(credits).reduce((mx, c) => Math.max(mx, monthOrder(c) + 1), 0);
-  const count = Math.max(1, fromRecords, fromCredits);
+  const count = Math.max(1, start.monthIndex + 1, fromRecords, fromCredits);
 
+  const clamp = (n: number) => Math.min(Math.max(n, 0), records.length);
   const out: MonthCycle[] = [];
   for (let i = 0; i < count; i++) {
-    const slice = records.slice(i * size, i * size + size);
+    // What the month holds for HIM: the whole pack, minus the séances that ran
+    // before he arrived (all of them on a month he was not there for).
+    const lead = i < start.monthIndex ? size : i === start.monthIndex ? start.slotIndex : 0;
+    const slice = records.slice(clamp(i * size - start.offset), clamp((i + 1) * size - start.offset));
     const code = `M${i + 1}`;
     const consumed = slice.reduce((t, a) => t + (a.amountDeducted || 0), 0);
     const credited = credits[code] ?? 0;
-    const complete = slice.length >= size;
+    const complete = size - lead > 0 && slice.length >= size - lead;
     out.push({
       code,
       index: i,
       size,
+      lead,
       records: slice,
       done: slice.length,
       complete,
@@ -509,12 +558,15 @@ export function enrollmentCycles(
 }
 
 /** The month a student is CURRENTLY on for one emploi (0-based index). A month
- *  whose last séance has just been recorded is closed: the next one is open. */
+ *  whose last séance has just been recorded is closed: the next one is open.
+ *  A student registered mid-course starts on the month he came in on, even
+ *  before his first présence. */
 export function currentCycleIndex(db: Database, studentId: string, subscriptionId: string): number {
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   if (!sub) return 0;
   const size = cycleSizeOf(sub);
-  return Math.floor(cycleRecords(db, studentId, sub.sessionId).length / size);
+  const { offset } = enrollmentStart(db, studentId, subscriptionId);
+  return Math.floor((offset + cycleRecords(db, studentId, sub.sessionId).length) / size);
 }
 
 export function currentCycleCode(db: Database, studentId: string, subscriptionId: string): string {
@@ -537,6 +589,7 @@ export function cycleOf(
     code: `M${idx + 1}`,
     index: idx,
     size: cycleSizeOf(sub),
+    lead: 0,
     records: [],
     done: 0,
     complete: false,
@@ -557,11 +610,19 @@ export function monthCodeOfAttendance(db: Database, record: AttendanceRecord): s
 }
 
 /** Current month of a whole GROUP: the month most of its students are on, so
- *  the présence sheet opens where the work actually is. */
-export function sessionCurrentMonthCode(db: Database, sessionId: string): string {
+ *  the présence sheet opens where the work actually is. `exceptStudentId` is
+ *  left out of the vote — the one being registered must not decide where the
+ *  group stands. */
+export function sessionCurrentMonthCode(
+  db: Database,
+  sessionId: string,
+  exceptStudentId?: string,
+): string {
   const sub = db.subscriptions.find((s) => s.sessionId === sessionId);
   if (!sub) return "M1";
-  const students = sessionEnrolledStudents(db, sessionId);
+  const students = sessionEnrolledStudents(db, sessionId).filter(
+    (s) => s.id !== exceptStudentId,
+  );
   if (students.length === 0) return "M1";
   const tally = new Map<number, number>();
   for (const stu of students) {
@@ -979,6 +1040,8 @@ export function cycleSlots(
   if (!sub) return [];
   const cycles = enrollmentCycles(db, studentId, subscriptionId);
   const idx = Math.max(0, monthOrder(code));
+  // A month that ran before he was registered holds nothing of his.
+  if (idx < enrollmentStart(db, studentId, subscriptionId).monthIndex) return [];
   const cycle = cycles[idx];
   const all = sessionAttendance(db, studentId, sub.sessionId);
   const billable = new Set((cycle?.records ?? []).map((r) => r.id));
@@ -994,6 +1057,35 @@ export function cycleSlots(
   return all.slice(from, Math.max(from, to)).filter((a) => billable.has(a.id) || !consumesSeance(a));
 }
 
+/**
+ * Columns of that month a student was not there for — they are printed blank
+ * and never count as "pas encore pointé": the séances simply are not his.
+ */
+export function cycleLead(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+  code: string,
+): number {
+  const idx = Math.max(0, monthOrder(code));
+  const { monthIndex, slotIndex } = enrollmentStart(db, studentId, subscriptionId);
+  if (idx < monthIndex) return cycleSizeOf(db.subscriptions.find((s) => s.id === subscriptionId));
+  return idx === monthIndex ? slotIndex : 0;
+}
+
+/** Is the student part of that month of the emploi? A child registered on M2
+ *  never appears on M1 — he was not there. */
+export function enrolledInMonth(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+  code: string,
+): boolean {
+  return (
+    Math.max(0, monthOrder(code)) >= enrollmentStart(db, studentId, subscriptionId).monthIndex
+  );
+}
+
 /** How many séance columns a month of this emploi shows. */
 export function slotCountFor(
   db: Database,
@@ -1004,9 +1096,58 @@ export function slotCountFor(
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   const base = cycleSizeOf(sub);
   return studentIds.reduce(
-    (mx, id) => Math.max(mx, cycleSlots(db, id, subscriptionId, code).length),
+    (mx, id) =>
+      Math.max(
+        mx,
+        cycleLead(db, id, subscriptionId, code) + cycleSlots(db, id, subscriptionId, code).length,
+      ),
     base,
   );
+}
+
+/** The days a GROUP actually held a séance during one of its months, oldest
+ *  first — the séances the sheet numbers S1, S2, S3 … */
+export function sessionMonthDays(
+  db: Database,
+  subscriptionId: string,
+  code: string,
+  exceptStudentId?: string,
+): string[] {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return [];
+  const days = new Set<string>();
+  for (const student of sessionEnrolledStudents(db, sub.sessionId)) {
+    if (student.id === exceptStudentId) continue;
+    for (const rec of cycleSlots(db, student.id, subscriptionId, code)) {
+      days.add(dayKeyOf(rec.timestamp));
+    }
+  }
+  return [...days].sort();
+}
+
+/**
+ * Where a student registered on `date` comes into an emploi du temps: the month
+ * the GROUP is living, and the séance of that month held that day — the next
+ * one when nothing has been pointed yet. Registering during M2 · séance 3 gives
+ * exactly `{ monthCode: "M2", slotIndex: 2 }`.
+ */
+export function joinPointFor(
+  db: Database,
+  subscriptionId: string,
+  date: string,
+  /** the student being registered — his own (empty) history must not count */
+  exceptStudentId?: string,
+): { monthCode: string; slotIndex: number } {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return { monthCode: "M1", slotIndex: 0 };
+  const size = cycleSizeOf(sub);
+  const code = sessionCurrentMonthCode(db, sub.sessionId, exceptStudentId);
+  const days = sessionMonthDays(db, subscriptionId, code, exceptStudentId);
+  const held = days.indexOf(date);
+  // Already pointed today: he joins THAT séance. Otherwise the next one.
+  const slot = held >= 0 ? held : days.length;
+  const offset = Math.max(0, monthOrder(code)) * size + slot;
+  return { monthCode: `M${Math.floor(offset / size) + 1}`, slotIndex: offset % size };
 }
 
 /** The row written for ONE student on ONE emploi on ONE day, if any. */

@@ -10,6 +10,11 @@
  * temps the student follows and — for EACH of them — how much the family pays
  * now: that money becomes the opening SOLDE of that emploi. Saving offers the
  * bon d'inscription, which prints the identity, the emplois and every solde.
+ *
+ * A child never starts an emploi at its séance 1: he comes in WHERE THE GROUP
+ * STANDS. Registered while the group lives its 2nd month on its 3rd séance, he
+ * is written on M2 · séance 3 — his solde is credited to M2, the two séances
+ * that opened that month stay blank on his row, and M1 never lists him.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -33,6 +38,7 @@ import {
 } from "@/components/students/ClassTimingPicker";
 import {
   cycleSizeOf,
+  joinPointFor,
   monthlyPriceOf,
   nextRegistrationNumber,
   todayIso,
@@ -60,11 +66,15 @@ export function CreateStudentModal({
   /** emplois du temps ticked as soon as the screen opens (the group it was
    *  opened from, typically) */
   defaultSubIds = [],
+  /** the day he comes in on — the séance of THAT day is the one he joins on
+   *  (the présence sheet passes the journée it is working; today otherwise) */
+  joinDate,
   onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   defaultSubIds?: string[];
+  joinDate?: string;
   onCreated?: (student: Student) => void;
 }) {
   const db = useData();
@@ -102,6 +112,26 @@ export function CreateStudentModal({
   const nextNumber = useMemo(() => nextRegistrationNumber(db), [db.students]);
   const isFree = studentCase === "special";
   const totalSold = subIds.reduce((s, id) => s + (solds[id] || 0), 0);
+
+  /** The day he comes in on — what the sheet was showing, or today. */
+  const arrivalDay = joinDate || todayIso();
+
+  /**
+   * WHERE he lands on each ticked emploi: the month the group is living and the
+   * séance of it held that day. Recomputed on every tick, so the recap under
+   * each emploi always tells the desk what it is about to write.
+   */
+  const subKey = subIds.join("|");
+  const joinPoints = useMemo(() => {
+    const out: Record<string, { monthCode: string; slotIndex: number }> = {};
+    for (const subId of subKey ? subKey.split("|") : []) {
+      out[subId] = joinPointFor(db, subId, arrivalDay);
+    }
+    return out;
+  }, [db, subKey, arrivalDay]);
+
+  const joinPointOf = (subId: string) =>
+    joinPoints[subId] ?? { monthCode: "M1", slotIndex: 0 };
 
   const reset = () => {
     setFirstName("");
@@ -181,7 +211,13 @@ export function CreateStudentModal({
     const subscriptionDates: Record<string, SubscriptionDates> = {};
     for (const subId of subIds) {
       if (!subscriptions.some((s) => s.id === subId)) continue;
-      subscriptionDates[subId] = { subscribedAt: todayIso(), startDate: todayIso() };
+      const point = joinPointOf(subId);
+      subscriptionDates[subId] = {
+        subscribedAt: todayIso(),
+        startDate: arrivalDay,
+        joinMonthCode: point.monthCode,
+        joinSlotIndex: point.slotIndex,
+      };
     }
     const registrationDue = subIds.length > 0 && !isFree ? school?.registrationFee || 0 : 0;
 
@@ -229,7 +265,8 @@ export function CreateStudentModal({
       push("students", student);
       await setStudentPassword(studentId, password);
 
-      // Each solde is credited on its own emploi, on its month M1.
+      // Each solde is credited on its own emploi, on the month he COMES IN on:
+      // a child registered during M2 pays for M2, never for a month he missed.
       for (const subId of subIds) {
         const amount = Math.max(0, Math.round(solds[subId] || 0));
         if (amount <= 0) continue;
@@ -237,7 +274,7 @@ export function CreateStudentModal({
           studentId,
           subscriptionId: subId,
           amount,
-          monthCode: "M1",
+          monthCode: joinPointOf(subId).monthCode,
           description: `Inscription — solde initial (${subLabel(subId)})`,
         });
       }
@@ -247,7 +284,9 @@ export function CreateStudentModal({
         title: `Élève créé — N° ${nextNumber}`,
         message:
           subIds.length > 0
-            ? `${subIds.length} emploi(s) du temps · ${formatDA(totalSold)} versés.`
+            ? `${subIds.length} emploi(s) du temps · ${formatDA(totalSold)} versés · inscrit à partir de ${
+                joinPointOf(subIds[0]).monthCode
+              } · séance ${joinPointOf(subIds[0]).slotIndex + 1}.`
             : "Aucun emploi du temps pour le moment.",
         studentName: `${firstName} ${lastName}`,
       });
@@ -264,7 +303,7 @@ export function CreateStudentModal({
               monthSeances: cycleSizeOf(sub),
               unitPrice: sub?.pricePerSession ?? 0,
               sold: Math.max(0, Math.round(solds[subId] || 0)),
-              monthCode: "M1",
+              monthCode: joinPointOf(subId).monthCode,
             };
           }),
         }),
@@ -474,6 +513,7 @@ export function CreateStudentModal({
                   const unit = sub?.pricePerSession ?? 0;
                   const paid = solds[subId] || 0;
                   const seances = unit > 0 ? Math.floor(paid / unit) : 0;
+                  const point = joinPointOf(subId);
                   return (
                     <div key={subId} className="rounded-xl border border-line bg-surface p-2.5">
                       <div className="flex items-start justify-between gap-2">
@@ -483,6 +523,9 @@ export function CreateStudentModal({
                             {cycleSizeOf(sub)} séances / mois · séance à {formatDA(unit)}
                             {suggestion > 0 ? ` · mois à ${formatDA(suggestion)}` : ""}
                           </span>
+                          <Badge tone="primary" className="mt-1 text-[9px]">
+                            Entre en {point.monthCode} · séance {point.slotIndex + 1}
+                          </Badge>
                         </div>
                         <button
                           onClick={() => setSubIds(subIds.filter((id) => id !== subId))}
@@ -528,6 +571,12 @@ export function CreateStudentModal({
                   <span className="text-xs font-semibold text-muted">Total versé à l&apos;inscription</span>
                   <strong className="text-sm text-primary">{formatDA(totalSold)}</strong>
                 </div>
+
+                <p className="text-[10px] text-muted">
+                  ℹ️ L&apos;élève entre sur chaque emploi du temps LÀ OÙ EN EST LE GROUPE : son
+                  solde est versé sur ce mois-là, les séances déjà tenues avant lui restent vides
+                  sur sa ligne et les mois précédents ne le comptent pas.
+                </p>
 
                 {!isFree && (school?.registrationFee ?? 0) > 0 && (
                   <p className="text-[10px] text-muted">

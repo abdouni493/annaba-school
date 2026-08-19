@@ -381,6 +381,7 @@ export function AttendancePage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         defaultSubIds={createSubIds}
+        joinDate={sheetDate}
       />
     </div>
   );

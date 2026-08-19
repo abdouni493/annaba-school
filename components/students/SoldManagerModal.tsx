@@ -67,7 +67,7 @@ export function SoldManagerModal({
   onClose: () => void;
 }) {
   const db = useData();
-  const { addSold, subscriptions, sessions, updateItem } = db;
+  const { addSold, subscriptions, sessions, subscribeStudent, unsubscribeStudent } = db;
   const { language } = useSettings();
   const { addToast } = useToast();
 
@@ -330,27 +330,40 @@ export function SoldManagerModal({
               <div className="mt-3 space-y-3">
                 <ClassTimingPicker
                   selectedSubIds={student.subscriptionIds}
-                  onToggle={(opt) => {
+                  onToggle={async (opt) => {
+                    // The tick may swap one group of a course for another, so
+                    // what LEAVES is unsubscribed and what ARRIVES is written
+                    // where the group stands today.
                     const next = toggleTimingSelection(student.subscriptionIds, opt);
-                    updateItem("students", student.id, {
-                      subscriptionIds: next,
-                      subscriptionDates: {
-                        ...student.subscriptionDates,
-                        [opt.subId]: {
-                          ...student.subscriptionDates?.[opt.subId],
-                          subscribedAt:
-                            student.subscriptionDates?.[opt.subId]?.subscribedAt ?? todayIso(),
-                          startDate:
-                            student.subscriptionDates?.[opt.subId]?.startDate ?? todayIso(),
-                        },
-                      },
-                    });
+                    for (const subId of student.subscriptionIds) {
+                      if (!next.includes(subId)) await unsubscribeStudent(student.id, subId);
+                    }
+                    for (const subId of next) {
+                      if (!student.subscriptionIds.includes(subId)) {
+                        const res = await subscribeStudent({
+                          studentId: student.id,
+                          subscriptionId: subId,
+                          date: todayIso(),
+                        });
+                        if (res.ok) {
+                          addToast({
+                            type: "success",
+                            title: "Inscrit sur l'emploi du temps",
+                            message: `Il entre en ${res.monthCode} · séance ${
+                              (res.slotIndex ?? 0) + 1
+                            } — là où en est le groupe.`,
+                            studentName: studentName(student),
+                          });
+                        }
+                      }
+                    }
                   }}
                   showTotal={false}
                 />
                 <p className="text-[10px] text-muted">
-                  Cochez un créneau pour l&apos;ajouter à sa fiche : son solde s&apos;ouvre à 0 et se
-                  recharge ci-dessus.
+                  Cochez un créneau pour l&apos;ajouter à sa fiche : il entre LÀ OÙ EN EST LE
+                  GROUPE (mois et séance en cours), son solde s&apos;ouvre à 0 et se recharge
+                  ci-dessus.
                 </p>
               </div>
             )}

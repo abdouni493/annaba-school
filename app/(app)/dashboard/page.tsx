@@ -9,8 +9,12 @@
  * et le lendemain se prépare la veille.
  *
  * Each créneau opens the shared présence sheet (the very same one the Présences
- * screen runs on), where the roster is pointed, the soldes are cashed in and the
- * feuille de présence is printed — always on the day shown above it.
+ * screen runs on), where the roster is pointed, the soldes are cashed in, an
+ * élève est désinscrit du groupe, and the feuille de présence is printed —
+ * always on the day shown above it.
+ *
+ * A student created from here comes in ON THAT DAY: the month the group is
+ * living and the séance being held, never at the emploi's séance 1.
  */
 
 import { useMemo, useState } from "react";
@@ -306,6 +310,7 @@ function AdminDashboard() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         defaultSubIds={createSubIds}
+        joinDate={date}
       />
     </div>
   );
