@@ -58,6 +58,7 @@ import {
   monthOrder,
   registrationNumberOf,
   salleName,
+  sessionTimesOn,
   slotCountFor,
   soldFor,
   soldStatus,
@@ -257,7 +258,8 @@ export function PresenceSheet({
           <h3 className="text-base font-black text-ink sm:text-lg">{title}</h3>
           <p className="text-[11px] text-muted sm:text-xs">
             Groupe {groupName(db, session.groupId)} · Salle {salleName(db, session.salleId)} ·{" "}
-            {session.startTime}–{session.endTime}
+            {sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).startTime}–
+            {sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).endTime}
           </p>
           <p className="text-[10px] text-muted sm:text-[11px]">
             Enseignant : {teacherName(db, session.teacherId)} · {cycleSizeOf(sub)} séances / mois ·

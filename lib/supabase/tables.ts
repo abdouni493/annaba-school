@@ -152,7 +152,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "teacher_payments", pk: "id", pkField: "id",
     fields: ["id", "teacherId", "amount", "method", "percentage", "studentsCount",
              "sessionsCount", "description", "details", "gross", "expenses", "acomptes",
-             "childCharges", "paidAt"],
+             "childCharges", "months", "paidAt"],
   },
   acomptes: {
     table: "teacher_acomptes", pk: "id", pkField: "id",

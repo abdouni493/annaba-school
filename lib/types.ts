@@ -131,7 +131,25 @@ export interface TeacherPayment {
   acomptes?: TeacherPaymentDeduction[];
   /** his children's inscriptions, settled out of his pay */
   childCharges?: TeacherChildCharge[];
+  /** the emploi-du-temps MONTHS this settlement closed (M1, M2 …) — frozen so
+   *  the payslip and the month table still read right once the dues are paid */
+  months?: TeacherPaymentMonth[];
   paidAt: string;
+}
+
+/** One emploi-du-temps month closed by a settlement. */
+export interface TeacherPaymentMonth {
+  sessionId: string;
+  title: string;
+  groupName: string;
+  /** the emploi's own month code — "M2" means "the 2nd month OF THAT emploi" */
+  monthCode: string;
+  /** séances the month held */
+  seances: number;
+  presents: number;
+  students: number;
+  /** what those séances earned him */
+  gross: number;
 }
 
 /** One line taken off a settlement: a dépense or an acompte. */
