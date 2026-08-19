@@ -40,8 +40,12 @@ Aucune donnée de démonstration n'est insérée.
 >    (`teachers.payment_type = 'per_group'`, règlements `teacher_payments.method = 'group'`).
 > 2. **`supabase/update-2026-08-19-emploi-horaires-par-jour.sql`** — ajoute
 >    `schedule_sessions.day_times`, les horaires jour par jour d'un emploi du temps.
+> 3. **`supabase/update-2026-08-20-paie-enseignant-par-mois.sql`** — ajoute
+>    `teacher_payments.months` (les mois d'emploi du temps soldés par un règlement) et les
+>    index qui font tourner la paie mois par mois.
 >
-> Les deux garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans erreur.
+> Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
+> erreur.
 
 ### 2. Lancer l'application
 
@@ -185,6 +189,41 @@ Annuler une présence ou marquer un élève absent **rend** la séance et retire
 Le badge, la feuille de présence et le tableau de la semaine lisent tous l'horaire **du jour** :
 un créneau déplacé un seul jour de la semaine est accepté à sa nouvelle heure, pas à l'ancienne.
 
+### Tableau de bord — n'importe quelle journée
+
+Le tableau de bord n'est plus figé sur aujourd'hui : **jour précédent / jour suivant**, un
+sélecteur de date et un bouton **Aujourd'hui**. Il liste alors les emplois du temps **de ce
+jour-là**, à l'horaire de ce jour-là, avec l'avancement du pointage (`3/12`), et chaque ligne
+ouvre la **feuille de présence de cette date** : une séance oubliée hier se pointe encore, et
+demain se prépare la veille.
+
+### Paie de l'enseignant — mois par mois
+
+L'enseignant est réglé sur la **même horloge que les élèves** : le mois d'un emploi du temps
+s'ouvre à la première présence et se ferme sur la séance qui complète le pack (`M1`, `M2` …,
+jamais un mois du calendrier). La part qu'une présence lui rapporte appartient donc au mois où
+cette présence tombe.
+
+Deux écrans, sur sa fiche :
+
+- **Mois & emplois du temps** — pour chaque emploi : le **mois en cours** et la **séance en
+  cours** de ce mois (`M2 · séance 3/4`), puis le tableau de **tous les mois** : clos ou en cours,
+  séances tenues, période, élèves payés / impayés, dette des élèves, part enseignant générée,
+  déjà réglée, restante. Chaque mois se déplie sur le détail élève par élève (séances,
+  présences / absences, versé, reste dû, arriérés des mois précédents, part bloquée), et un
+  onglet **Élèves impayés** rassemble tout, avec alertes.
+- **Payer** — le règlement s'ouvre sur le **dernier mois CLOS non réglé**, jamais sur le mois en
+  cours : si le groupe en est à la 3ᵉ séance d'un mois de 4, c'est le mois précédent qui est
+  coché. Les mois sont regroupés par emploi du temps, chacun montrant qui a payé et qui n'a pas
+  payé. La formule **par groupe** additionne les tarifs déjà écrits sur chaque présence (part
+  enseignant du mois ÷ séances), le **pourcentage** s'applique au tarif de chaque élève, le
+  **montant fixe** se répartit au prorata.
+
+Un élève qui n'a pas payé **retient** la part correspondante : elle n'est pas versée, elle reste
+ouverte et **réapparaît au règlement suivant** dès que sa dette est soldée. Les cas d'élèves sont
+appliqués à la source : **cas spécial** (gratuit) et **école seule** ne rapportent rien à
+l'enseignant concerné, et une **réduction** ne lui coûte que *sa* part de la remise.
+
 ### Alertes
 
 Séances épuisées, inscription à 2 séances ou moins, abonnement mensuel ou formation bientôt expiré
@@ -202,6 +241,7 @@ scan, sur la carte élève, dans le détail de la fiche, et dans les espaces ét
 | Types & sélecteurs               | `lib/types.ts`, `lib/helpers.ts`                                       |
 | Élèves (achat, dette, détail)    | `components/pages/StudentsPage.tsx`                                    |
 | Présence / scan                  | `components/pages/AttendancePage.tsx`, `lib/useScanProcessor.ts`       |
+| Mois d'emploi du temps (paie)    | `lib/teacherMonths.ts`, `components/teachers/`                          |
 | Espaces étudiant / parent        | `components/pages/StudentPages.tsx`, `components/pages/ParentPages.tsx` |
 
 L'application n'affiche **aucun favicon** : l'onglet du navigateur reste sans icône. Le logo

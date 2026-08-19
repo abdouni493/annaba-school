@@ -49,6 +49,7 @@ import type {
   TeacherExpense,
   TeacherPayment,
   TeacherPaymentDeduction,
+  TeacherPaymentMonth,
   UnpaidTeacherSession,
   WorkerShift,
 } from "@/lib/types";
@@ -376,7 +377,17 @@ interface DataActions {
    */
   payTeacherSessions: (args: {
     teacherId: string;
-    keys: string[];
+    /** legacy selection: "YYYY-MM-DD|sessionId" créneaux, settled whole */
+    keys?: string[];
+    /**
+     * The EXACT dues settled — `unpaid_teacher_sessions` ids. Months are per
+     * student, so two students of the same créneau may well sit in different
+     * months: only an explicit list can settle one month without touching the
+     * next. When given, it wins over `keys`.
+     */
+    dueIds?: string[];
+    /** the exact passager rows (séances libres) settled alongside */
+    passagerIds?: string[];
     /** net paid to the teacher */
     amount: number;
     /** what the séances earned him before the deductions */
@@ -385,6 +396,8 @@ interface DataActions {
     method: "fixed" | "percent" | "group";
     percentage?: number;
     details?: unknown[];
+    /** the emploi-du-temps months this settlement closes */
+    months?: TeacherPaymentMonth[];
     description?: string;
     /** dépenses cleared by this settlement */
     expenseIds?: string[];
@@ -577,16 +590,44 @@ function activeFreePeriod(
  * A teacher paid "par groupe" is priced by the emplois du temps ONLY: if the
  * one he just taught carries no split yet, the séance simply owes him nothing
  * until the abonnement is given one — his fiche has no rate of its own.
+ *
+ * The STUDENT's case then has the last word, exactly as the fiche promises:
+ *  - `special` (scolarité offerte): neither the school nor the teacher is paid,
+ *  - `school_only`: the school is paid, the listed teachers are not,
+ *  - `reduction`: the teacher grants his own part of the remise, so it comes
+ *    off his share and not off the school's.
  */
 function teacherDueFor(
   db: Database,
   session: ScheduleSession,
   sub: Subscription | undefined,
   base: number,
+  student?: Student,
 ): number {
+  if (student) {
+    if (student.isFree || student.studentCase === "special") return 0;
+    if (
+      student.studentCase === "school_only" &&
+      session.teacherId &&
+      (student.unpaidTeacherIds ?? []).includes(session.teacherId)
+    ) {
+      return 0;
+    }
+  }
+
   const perSeance = sub?.teacherPerSeance ?? 0;
-  if (perSeance > 0) return Math.max(0, Math.round(perSeance));
-  return teacherShare(db, session.teacherId, base);
+  const gross =
+    perSeance > 0
+      ? Math.max(0, Math.round(perSeance))
+      : teacherShare(db, session.teacherId, base);
+
+  const reduction = student?.studentCase === "reduction" ? student.caseReduction : undefined;
+  if (!reduction || gross <= 0) return gross;
+  const off =
+    reduction.type === "percent"
+      ? Math.round((gross * (reduction.teacherValue || 0)) / 100)
+      : Math.round(reduction.teacherValue || 0);
+  return Math.max(0, gross - off);
 }
 
 function teacherShare(db: Database, teacherId: string | undefined, base: number): number {
@@ -853,7 +894,7 @@ export const useData = create<DataStore>((set, get) => ({
     // The teacher taught the séance: an offered one still pays.
     const teacherBase =
       (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
-    const teacherDue = teacherDueFor(db, matched, scannedSub, teacherBase);
+    const teacherDue = teacherDueFor(db, matched, scannedSub, teacherBase, student);
 
     // Burn ONE séance and take its price off the SOLDE of that emploi — exactly
     // what the présence sheet does, so a badge and a click can never disagree.
@@ -1041,7 +1082,9 @@ export const useData = create<DataStore>((set, get) => ({
 
     const teacherBase =
       (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
-    const teacherDue = opts?.skipTeacherDue ? 0 : teacherDueFor(db, session, markedSub, teacherBase);
+    const teacherDue = opts?.skipTeacherDue
+      ? 0
+      : teacherDueFor(db, session, markedSub, teacherBase, student);
 
     const occurred =
       date === dateKey(new Date())
@@ -1270,7 +1313,7 @@ export const useData = create<DataStore>((set, get) => ({
 
     // The teacher earns on the séances that happened; an annulée pays nobody.
     const teacherBase = noCharge ? 0 : charge || waived;
-    const teacherDue = teacherDueFor(db, session, sub, teacherBase);
+    const teacherDue = teacherDueFor(db, session, sub, teacherBase, student);
     const billable = !noCharge;
 
     set((state) => {
@@ -2012,11 +2055,14 @@ export const useData = create<DataStore>((set, get) => ({
   payTeacherSessions: async ({
     teacherId,
     keys,
+    dueIds,
+    passagerIds,
     amount,
     gross,
     method,
     percentage,
     details,
+    months,
     description,
     expenseIds,
     acompteIds,
@@ -2030,6 +2076,12 @@ export const useData = create<DataStore>((set, get) => ({
       const [date, sessionId] = k.split("|");
       return { date, sessionId };
     });
+    // A settlement now names the exact dues it closes, because a créneau can
+    // hold two students living two different months. The old "whole créneau"
+    // selection still works for anything that has not been migrated.
+    const byId = Array.isArray(dueIds);
+    const dueIdSet = new Set(dueIds ?? []);
+    const passagerIdSet = new Set(passagerIds ?? []);
 
     const settledDues = db.unpaidTeacher.filter(
       (u) =>
@@ -2038,27 +2090,37 @@ export const useData = create<DataStore>((set, get) => ({
         // The teacher is never paid for a student who still owes money — the
         // due stays open and reappears once the student clears the debt.
         !studentHasDebt(db, u.studentId) &&
-        parsed.some((p) => p.sessionId === u.sessionId && p.date === dateKey(u.date)),
+        (byId
+          ? dueIdSet.has(u.id)
+          : parsed.some((p) => p.sessionId === u.sessionId && p.date === dateKey(u.date))),
     );
     const settledPassagers = db.independent.filter(
       (i) =>
         !i.studentId &&
         !i.teacherPaid &&
-        parsed.some((p) => p.sessionId === i.sessionId && p.date === i.date),
+        (byId
+          ? passagerIdSet.has(i.id)
+          : parsed.some((p) => p.sessionId === i.sessionId && p.date === i.date)),
     );
 
-    const covered = parsed.filter(
-      (p) =>
-        settledDues.some((u) => u.sessionId === p.sessionId && dateKey(u.date) === p.date) ||
-        settledPassagers.some((i) => i.sessionId === p.sessionId && i.date === p.date),
-    ).length;
+    // How many dated séances the settlement actually covers.
+    const covered = byId
+      ? new Set([
+          ...settledDues.map((u) => `${dateKey(u.date)}|${u.sessionId}`),
+          ...settledPassagers.map((i) => `${i.date}|${i.sessionId}`),
+        ]).size
+      : parsed.filter(
+          (p) =>
+            settledDues.some((u) => u.sessionId === p.sessionId && dateKey(u.date) === p.date) ||
+            settledPassagers.some((i) => i.sessionId === p.sessionId && i.date === p.date),
+        ).length;
 
     const detailRows = (details ?? []) as Array<{ presents?: number }>;
     const studentsCount = detailRows.reduce((s, d) => s + (d.presents ?? 0), 0);
 
     const paymentId = uid("tpy");
-    const dueIds = new Set(settledDues.map((u) => u.id));
-    const passagerIds = new Set(settledPassagers.map((i) => i.id));
+    const settledDueIds = new Set(settledDues.map((u) => u.id));
+    const settledPassagerIds = new Set(settledPassagers.map((i) => i.id));
     const paidAmount = Math.max(amount, 0);
 
     // What is taken off the pay — each line settled here and only here.
@@ -2089,10 +2151,10 @@ export const useData = create<DataStore>((set, get) => ({
 
     set((state) => ({
       unpaidTeacher: state.unpaidTeacher.map((u) =>
-        dueIds.has(u.id) ? { ...u, paid: true } : u,
+        settledDueIds.has(u.id) ? { ...u, paid: true } : u,
       ),
       independent: state.independent.map((i) =>
-        passagerIds.has(i.id) ? { ...i, teacherPaid: true } : i,
+        settledPassagerIds.has(i.id) ? { ...i, teacherPaid: true } : i,
       ),
       teacherExpenses: state.teacherExpenses.map((e) =>
         expenseIdSet.has(e.id) ? { ...e, paid: true, paymentId } : e,
@@ -2118,6 +2180,7 @@ export const useData = create<DataStore>((set, get) => ({
           expenses: expenseSnapshot,
           acomptes: acompteSnapshot,
           childCharges: childCharges ?? [],
+          months: months ?? [],
           paidAt: new Date().toISOString(),
         },
       ],

@@ -20,31 +20,23 @@ import {
   Eye,
   Plus,
   MoreVertical,
+  CalendarClock,
   DollarSign,
-  Percent,
   Printer,
   Receipt,
   Search,
-  Users,
   Clock,
   X,
 } from "lucide-react";
-import type {
-  Teacher,
-  TeacherChildCharge,
-  TeacherPaymentDeduction,
-  TeacherPaymentDetail,
-  TeacherPaymentType,
-} from "@/lib/types";
+import type { Teacher, TeacherPaymentType } from "@/lib/types";
 import { printHtmlDocument } from "@/lib/print";
 import { formatDA } from "@/lib/utils";
 import { buildTeacherPaymentReport } from "@/lib/reports/teacherPayment";
 import { buildTeacherSettlementReceipt } from "@/lib/reports/teacherSettlement";
-import {
-  buildTeacherPayslip,
-  type PayslipEmploi,
-  type PayslipStudent,
-} from "@/lib/reports/teacherPayslip";
+import { buildTeacherPayslip, type PayslipEmploi } from "@/lib/reports/teacherPayslip";
+import { TeacherPayModal } from "@/components/teachers/TeacherPayModal";
+import { TeacherMonthsModal } from "@/components/teachers/TeacherMonthsModal";
+import { teacherEmplois, unpaidStudents } from "@/lib/teacherMonths";
 import {
   cycleSizeOf,
   monthlyPriceOf,
@@ -53,48 +45,10 @@ import {
   teacherPerSeanceOf,
   formatDateFr,
   formatDays,
-  registrationNumberOf,
   salleName,
-  studentCaseLabel,
-  studentSoldDebtRows,
   todayIso,
 } from "@/lib/helpers";
 import { useSettings } from "@/lib/store/settings";
-
-/** One unpaid timing of a teacher: a (date, séance) pair with everyone who was
- *  present on it — registered students AND passagers. */
-interface UnpaidTiming {
-  key: string; // "YYYY-MM-DD|sessionId" — the key the settlement RPC expects
-  dateKey: string;
-  sessionId: string;
-  isOpen: boolean;
-  title: string;
-  moduleName: string;
-  className: string;
-  groupName: string;
-  startTime: string;
-  endTime: string;
-  students: {
-    studentId?: string;
-    name: string;
-    groupName: string;
-    time: string;
-    status: string;
-    fee: number;
-    share: number;
-    isPassager: boolean;
-    /** the student still owes money: the teacher is NOT paid for this présence
-     *  yet — it carries over to the next settlement once the debt is cleared */
-    withheld: boolean;
-  }[];
-  passagers: number;
-  totalFees: number;
-  totalShare: number;
-  /** share of students who have paid — the only part actually settled now */
-  payableShare: number;
-  /** share withheld because the student is still in debt */
-  withheldShare: number;
-}
 
 export function TeachersPage() {
   const db = useData();
@@ -119,7 +73,6 @@ export function TeachersPage() {
     push,
     deleteFrom,
     updateItem,
-    payTeacherSessions,
   } = db;
   const { language } = useSettings();
 
@@ -167,23 +120,39 @@ export function TeachersPage() {
   const [teacherSearch, setTeacherSearch] = useState("");
   const [teacherKind, setTeacherKind] = useState<"all" | "staff" | "passager">("all");
 
-  // ---- Per-timing settlement (séance libre + enseignant passager) ----------
+  // ---- Règlement (écran « mois par mois ») et lecture des mois -------------
   const [isTimingPayOpen, setIsTimingPayOpen] = useState(false);
-  const [selectedTimingKeys, setSelectedTimingKeys] = useState<string[]>([]);
-  const [payMethod, setPayMethod] = useState<"fixed" | "percent" | "group">("fixed");
-  const [payFixedAmount, setPayFixedAmount] = useState<number>(0);
-  const [payPercentage, setPayPercentage] = useState<number>(50);
-  const [expandedTimingKey, setExpandedTimingKey] = useState<string | null>(null);
-  const [timingGroupFilter, setTimingGroupFilter] = useState<string>("all");
-  const [savingPayment, setSavingPayment] = useState(false);
-  /** What the settlement takes off the pay: dépenses, acomptes, and the
-   *  schooling of the teacher's own children. All three are ticked by default
-   *  and settled once — they never come back on the next payment. */
-  const [payExpenseIds, setPayExpenseIds] = useState<string[]>([]);
-  const [payAcompteIds, setPayAcompteIds] = useState<string[]>([]);
-  const [payChildIds, setPayChildIds] = useState<string[]>([]);
+  const [isMonthsOpen, setIsMonthsOpen] = useState(false);
   // Passager teacher created straight from this page
   const [isPassagerCreateOpen, setIsPassagerCreateOpen] = useState(false);
+
+  /**
+   * Ce que la fiche de chaque enseignant affiche : ses mois d'emploi du temps,
+   * ce qui lui est réellement payable et ce qui reste retenu parce qu'un élève
+   * n'a pas payé. Mémoïsé une fois pour toute la grille — chaque carte lisait
+   * l'historique complet à chaque rendu.
+   */
+  const payroll = useMemo(() => {
+    const map = new Map<
+      string,
+      { payable: number; withheld: number; closed: number; running: number; debtors: number }
+    >();
+    for (const t of teachers) {
+      const emplois = teacherEmplois(db, t.id);
+      map.set(t.id, {
+        payable: emplois.reduce((s, e) => s + e.payable, 0),
+        withheld: emplois.reduce((s, e) => s + e.withheld, 0),
+        closed: emplois.reduce(
+          (s, e) => s + e.months.filter((m) => m.state === "done" && m.payable > 0).length,
+          0,
+        ),
+        running: emplois.length,
+        debtors: unpaidStudents(emplois).length,
+      });
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teachers, sessions, subscriptions, students, attendance, unpaidTeacher, payments, db.enrollments, independent]);
 
   // Helpers
   const getTeacherUnpaidSessions = (tid: string) => {
@@ -204,32 +173,6 @@ export function TeachersPage() {
   /** Dépenses not yet taken off a settlement. */
   const getUnpaidExpenses = (tid: string) =>
     teacherExpenses.filter((e) => e.teacherId === tid && !e.paid);
-
-  /**
-   * The teacher's own children, and what their schooling still costs. Their
-   * case is `teacher_child`: the school is paid from their father's salary, so
-   * every emploi they are in the red on is listed here and deducted from his
-   * pay — which clears their solde at the same time.
-   */
-  const getChildCharges = (tid: string): TeacherChildCharge[] =>
-    students
-      .filter((st) => st.studentCase === "teacher_child" && st.teacherFatherId === tid)
-      .map((st) => {
-        const lines = studentSoldDebtRows(db, st.id).map((r) => ({
-          subscriptionId: r.subscriptionId,
-          label: r.label,
-          monthCode: r.code,
-          amount: r.debt,
-        }));
-        return {
-          studentId: st.id,
-          studentName: `${st.firstName} ${st.lastName}`,
-          registrationNumber: registrationNumberOf(db, st),
-          lines,
-          amount: lines.reduce((s, l) => s + l.amount, 0),
-        };
-      })
-      .filter((c) => c.lines.length > 0);
 
   const getTeacherAbsences = (tid: string) => {
     return absences.filter((a) => a.teacherId === tid);
@@ -361,416 +304,18 @@ export function TeachersPage() {
   };
 
 
-  // ---------------------------------------------------------------------------
-  // Per-timing view of what a teacher is still owed.
-  //
-  // A "timing" is one (date, séance) pair. The presences of registered students
-  // come from `unpaid_teacher_sessions` (one row per présence, flipped to paid
-  // by the settlement RPC), and the passagers come from the séances libres
-  // recorded on the Séances Libres screen for the same timing — so the payout
-  // screen shows the FULL attendance of the créneau.
-  //
-  // Only UNPAID timings are ever listed: once settled, the underlying rows are
-  // `paid = true` and the timing disappears from here for good.
-  // ---------------------------------------------------------------------------
-  /** A student still owes money — the teacher is withheld until it is paid. */
-  const hasDebt = (studentId: string) => {
-    const debt = payments.filter((p) => p.studentId === studentId).reduce((s, p) => s + p.rest, 0);
-    if (debt > 0) return true;
-    return (students.find((s) => s.id === studentId)?.registrationDue ?? 0) > 0;
-  };
-
-  const buildUnpaidTimings = (tid: string): UnpaidTiming[] => {
-    const map = new Map<string, UnpaidTiming>();
-
-    const timingFor = (sessionId: string, dateKey: string): UnpaidTiming => {
-      const key = `${dateKey}|${sessionId}`;
-      let t = map.get(key);
-      if (!t) {
-        const sess = sessions.find((s) => s.id === sessionId);
-        const moduleName = sess ? modules.find((m) => m.id === sess.moduleId)?.name ?? "Séance" : "Séance";
-        t = {
-          key,
-          dateKey,
-          sessionId,
-          isOpen: !!sess?.isOpen,
-          title: sess?.isOpen ? sess.title || `Séance libre — ${moduleName}` : moduleName,
-          moduleName,
-          className: sess ? classes.find((c) => c.id === sess.classId)?.name ?? "-" : "-",
-          groupName: sess
-            ? sess.isOpen
-              ? (sess.groupIds?.length ? sess.groupIds : [sess.groupId])
-                  .map((id) => groups.find((g) => g.id === id)?.name ?? "-")
-                  .join(" · ")
-              : groups.find((g) => g.id === sess.groupId)?.name ?? "-"
-            : "-",
-          startTime: sess?.startTime ?? "",
-          endTime: sess?.endTime ?? "",
-          students: [],
-          passagers: 0,
-          totalFees: 0,
-          totalShare: 0,
-          payableShare: 0,
-          withheldShare: 0,
-        };
-        map.set(key, t);
-      }
-      return t;
-    };
-
-    // Registered students, from the teacher's unpaid dues
-    unpaidTeacher
-      .filter((u) => u.teacherId === tid && !u.paid)
-      .forEach((u) => {
-        const dateKey = new Date(u.date).toLocaleDateString("fr-CA");
-        const t = timingFor(u.sessionId, dateKey);
-        const stu = students.find((st) => st.id === u.studentId);
-        const att = attendance.find(
-          (a) =>
-            a.studentId === u.studentId &&
-            a.sessionId === u.sessionId &&
-            new Date(a.timestamp).toLocaleDateString("fr-CA") === dateKey,
-        );
-        const sess = sessions.find((s) => s.id === u.sessionId);
-        const withheld = hasDebt(u.studentId);
-        t.students.push({
-          studentId: u.studentId,
-          name: stu ? `${stu.firstName} ${stu.lastName}` : "Élève inconnu",
-          groupName: sess ? groups.find((g) => g.id === sess.groupId)?.name ?? "-" : "-",
-          time: new Date(att?.timestamp ?? u.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          status: att?.status === "late" ? "En Retard" : "Présent",
-          fee: att?.amountDeducted ?? 0,
-          share: u.amount,
-          isPassager: false,
-          withheld,
-        });
-        t.totalFees += att?.amountDeducted ?? 0;
-        t.totalShare += u.amount;
-        if (withheld) t.withheldShare += u.amount;
-        else t.payableShare += u.amount;
-      });
-
-    // Passagers of the same timings (séances libres, no student account).
-    // `teacherPaid` is their own settlement flag: a créneau attended only by
-    // passagers has no unpaid_teacher_sessions row to flip.
-    const teacherSessionIds = new Set(sessions.filter((s) => s.teacherId === tid).map((s) => s.id));
-    independent
-      .filter(
-        (ind) => ind.sessionId && teacherSessionIds.has(ind.sessionId) && !ind.studentId && !ind.teacherPaid,
-      )
-      .forEach((ind) => {
-        const key = `${ind.date}|${ind.sessionId}`;
-        // A passager alone can also create the timing: he still generated money.
-        const t = map.get(key) ?? timingFor(ind.sessionId!, ind.date);
-        t.students.push({
-          name: ind.passagerName ?? "Passager",
-          groupName: "Passager",
-          time: ind.startTime ?? "-",
-          status: "Présent",
-          fee: ind.price,
-          share: 0,
-          isPassager: true,
-          withheld: false,
-        });
-        t.passagers += 1;
-        t.totalFees += ind.price;
-      });
-
-    return [...map.values()].sort(
-      (a, b) => b.dateKey.localeCompare(a.dateKey) || a.startTime.localeCompare(b.startTime),
-    );
-  };
-
-  /** The timings currently listed in the payment modal (memoised: the modal
-   *  recomputes them on every keystroke of the amount field otherwise). */
-  const payTimings = useMemo(
-    () => (selectedTeacher ? buildUnpaidTimings(selectedTeacher.id) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedTeacher, unpaidTeacher, independent, attendance, sessions, students, groups, modules, classes],
-  );
-
-  const chosenTimings = payTimings.filter((t) => selectedTimingKeys.includes(t.key));
-  const chosenPresents = chosenTimings.reduce((s, t) => s + t.students.length, 0);
-  const chosenPassagers = chosenTimings.reduce((s, t) => s + t.passagers, 0);
-  const chosenRevenue = chosenTimings.reduce((s, t) => s + t.totalFees, 0);
-  /** Fees of paid students only — the base for a fixed amount's proportional
-   *  spread, and what the percentage method applies to. */
-  const chosenPayableRevenue = chosenTimings.reduce(
-    (s, t) => s + t.students.filter((st) => !st.withheld).reduce((a, st) => a + st.fee, 0),
-    0,
-  );
-  /** Withheld share across the chosen timings — shown as "en attente" and
-   *  never paid until the students clear their debt. */
-  const chosenWithheldShare = chosenTimings.reduce((s, t) => s + t.withheldShare, 0);
-  const chosenWithheldCount = chosenTimings.reduce(
-    (s, t) => s + t.students.filter((st) => st.withheld).length,
-    0,
-  );
-
-  /**
-   * What the teacher gets for the chosen timings.
-   *  - "fixed": whatever the user typed.
-   *  - "percent": the percentage is applied to what each student generated
-   *    (module cost × %), summed over every présence — computed automatically.
-   */
-  const computedPayout = useMemo(() => {
-    if (payMethod === "fixed") return Math.max(0, Math.round(payFixedAmount || 0));
-    // "group": each présence already carries the tarif of its emploi du temps
-    // (part enseignant ÷ séances du mois) — the payout is simply their sum.
-    if (payMethod === "group") return chosenTimings.reduce((s, t) => s + t.payableShare, 0);
-    const pct = Math.min(Math.max(payPercentage || 0, 0), 100);
-    // Only students who have paid are counted — a student in debt is withheld.
-    return chosenTimings.reduce(
-      (sum, t) =>
-        sum +
-        t.students
-          .filter((st) => !st.withheld)
-          .reduce((s, st) => s + Math.round((st.fee * pct) / 100), 0),
-      0,
-    );
-  }, [payMethod, payFixedAmount, payPercentage, chosenTimings]);
-
-  // ---- Retenues : dépenses, acomptes, scolarité des enfants ---------------
-  /** Only what has NEVER been settled: once a payment clears a dépense or an
-   *  acompte it is flagged paid and disappears from here for good. */
-  const payExpenses = selectedTeacher ? getUnpaidExpenses(selectedTeacher.id) : [];
-  const payAcomptes = selectedTeacher ? getUnpaidAcomptes(selectedTeacher.id) : [];
-  const payChildren = selectedTeacher ? getChildCharges(selectedTeacher.id) : [];
-
-  const chosenExpenses = payExpenses.filter((e) => payExpenseIds.includes(e.id));
-  const chosenAcomptes = payAcomptes.filter((a) => payAcompteIds.includes(a.id));
-  const chosenChildren = payChildren.filter((c) => payChildIds.includes(c.studentId));
-
-  const expensesTotal = chosenExpenses.reduce((s, e) => s + e.amount, 0);
-  const acomptesTotal = chosenAcomptes.reduce((s, a) => s + a.amount, 0);
-  const childrenTotal = chosenChildren.reduce((s, c) => s + c.amount, 0);
-  const deductionsTotal = expensesTotal + acomptesTotal + childrenTotal;
-
-  /** What the teacher actually takes home. It may go negative — he has drawn
-   *  more in advances and costs than the séances earned him. */
-  const netPayout = computedPayout - deductionsTotal;
-
-  /** Per-timing share, distributed the same way the total is computed — always
-   *  over paid students only. */
-  const shareForTiming = (t: UnpaidTiming) => {
-    const payableFees = t.students.filter((st) => !st.withheld).reduce((s, st) => s + st.fee, 0);
-    // Priced by the emploi du temps: the timing's own share, nothing to spread.
-    if (payMethod === "group") return t.payableShare;
-    if (payMethod === "percent") {
-      const pct = Math.min(Math.max(payPercentage || 0, 0), 100);
-      return t.students
-        .filter((st) => !st.withheld)
-        .reduce((s, st) => s + Math.round((st.fee * pct) / 100), 0);
-    }
-    // Fixed amount: spread proportionally to what each timing's PAID students
-    // generated, so the printed slip still adds up to the amount actually paid.
-    if (chosenPayableRevenue <= 0) {
-      return chosenTimings.length > 0 ? Math.round(computedPayout / chosenTimings.length) : 0;
-    }
-    return Math.round((computedPayout * payableFees) / chosenPayableRevenue);
-  };
-
-  /**
-   * Regroups the chosen timings by EMPLOI DU TEMPS (not by date): the payslip
-   * shows one table per emploi, each listing its students once with how many
-   * séances they attended over the settled period and what that earned him.
-   */
-  const buildPayslipEmplois = (): PayslipEmploi[] => {
-    const byEmploi = new Map<string, PayslipEmploi>();
-
-    for (const t of chosenTimings) {
-      let e = byEmploi.get(t.sessionId);
-      if (!e) {
-        const sess = sessions.find((x) => x.id === t.sessionId);
-        e = {
-          sessionId: t.sessionId,
-          title: t.title,
-          className: t.className,
-          groupName: t.groupName,
-          salleName: sess ? salleName(db, sess.salleId) : "—",
-          daysLabel: sess ? formatDays(sess.days) || "—" : "—",
-          timeLabel: `${t.startTime} - ${t.endTime}`,
-          sessionsCount: 0,
-          students: [],
-          presents: 0,
-          fees: 0,
-          total: 0,
-        };
-        byEmploi.set(t.sessionId, e);
-      }
-      e.sessionsCount += 1;
-
-      const share = shareForTiming(t);
-      const payableFees = t.students.filter((st) => !st.withheld).reduce((a, st) => a + st.fee, 0);
-
-      for (const st of t.students) {
-        const key = st.studentId ?? `passager:${st.name}`;
-        let row = e.students.find((r) => (r.studentId ?? `passager:${r.name}`) === key);
-        if (!row) {
-          const stu = st.studentId ? students.find((x) => x.id === st.studentId) : undefined;
-          row = {
-            studentId: st.studentId,
-            name: st.name,
-            registrationNumber: stu ? registrationNumberOf(db, stu) : undefined,
-            caseLabel: stu ? studentCaseLabel(stu) || undefined : undefined,
-            isPassager: st.isPassager,
-            withheld: st.withheld,
-            presents: 0,
-            fees: 0,
-            total: 0,
-          } satisfies PayslipStudent;
-          e.students.push(row);
-        }
-        row.presents += 1;
-        row.fees += st.fee;
-        // A withheld présence earns him nothing yet, so it adds 0 — but it is
-        // still printed, flagged, so the count matches the sheet.
-        if (!st.withheld) {
-          row.total +=
-            payMethod === "group"
-              ? st.share
-              : payMethod === "percent"
-                ? Math.round((st.fee * Math.min(Math.max(payPercentage || 0, 0), 100)) / 100)
-                : payableFees > 0
-                  ? Math.round((share * st.fee) / payableFees)
-                  : 0;
-        }
-        // Once a présence is withheld, the row stays flagged.
-        row.withheld = row.withheld || st.withheld;
-        e.presents += 1;
-        e.fees += st.fee;
-      }
-    }
-
-    for (const e of byEmploi.values()) {
-      e.students.sort((a, b) => a.name.localeCompare(b.name));
-      e.total = e.students.reduce((sum, r) => sum + r.total, 0);
-    }
-    return [...byEmploi.values()].sort((a, b) => a.title.localeCompare(b.title));
-  };
-
+  /** Ouvre le règlement : il s'occupe lui-même de cocher les mois CLOS dus. */
   const openTimingPay = (t: Teacher) => {
     setSelectedTeacher(t);
-    const timings = buildUnpaidTimings(t.id);
-    setSelectedTimingKeys(timings.map((x) => x.key));
-    // Each contract opens on its own formula: a salaried teacher on his fixed
-    // amount, a "par groupe" one on the tarifs his emplois du temps already
-    // wrote per présence, everyone else on the percentage they earn.
-    const monthly = t.paymentType === "monthly";
-    const perGroup = t.paymentType === "per_group";
-    setPayMethod(perGroup ? "group" : t.isPassager || monthly ? "fixed" : "percent");
-    setPayFixedAmount(monthly ? t.monthlyAmount ?? 0 : 0);
-    setPayPercentage(t.percentage ?? 50);
-    setExpandedTimingKey(null);
-    setTimingGroupFilter("all");
-    // Everything still owed is ticked by default — the desk unticks what it
-    // wants to carry over to the next settlement.
-    setPayExpenseIds(getUnpaidExpenses(t.id).map((e) => e.id));
-    setPayAcompteIds(getUnpaidAcomptes(t.id).map((a) => a.id));
-    setPayChildIds(getChildCharges(t.id).map((c) => c.studentId));
     setIsTimingPayOpen(true);
     setActiveMenuId(null);
   };
 
-  const handleTimingPayment = async () => {
-    if (!selectedTeacher) return;
-    if (selectedTimingKeys.length === 0) {
-      alert("Sélectionnez au moins un créneau à régler.");
-      return;
-    }
-    if (computedPayout <= 0) {
-      alert("Le montant brut des séances doit être supérieur à 0 DA.");
-      return;
-    }
-    if (netPayout < 0 && !confirm(
-      `Les retenues (${deductionsTotal} DA) dépassent le brut (${computedPayout} DA).\n` +
-      `L'enseignant sera enregistré à ${netPayout} DA. Continuer ?`,
-    )) {
-      return;
-    }
-
-    const details: TeacherPaymentDetail[] = chosenTimings.map((t) => ({
-      dateKey: t.dateKey,
-      sessionId: t.sessionId,
-      title: t.title,
-      moduleName: t.moduleName,
-      groupName: t.groupName,
-      startTime: t.startTime,
-      endTime: t.endTime,
-      presents: t.students.length,
-      passagers: t.passagers,
-      gross: t.totalFees,
-      share: shareForTiming(t),
-    }));
-
-    // The payslip is built from what is on screen, BEFORE the store settles
-    // anything: once the dépenses are flagged paid and the children's soldes
-    // are cleared, those figures are gone.
-    const emplois = buildPayslipEmplois();
-    const expenseLines: TeacherPaymentDeduction[] = chosenExpenses.map((e) => ({
-      id: e.id,
-      kind: "expense",
-      label: e.name,
-      description: e.description,
-      amount: e.amount,
-      date: e.date,
-    }));
-    const acompteLines: TeacherPaymentDeduction[] = chosenAcomptes.map((a) => ({
-      id: a.id,
-      kind: "acompte",
-      label: "Acompte",
-      description: a.description,
-      amount: a.amount,
-      date: a.date.slice(0, 10),
-    }));
-    const paidAt = new Date().toISOString();
-
-    setSavingPayment(true);
-    try {
-      const res = await payTeacherSessions({
-        teacherId: selectedTeacher.id,
-        keys: selectedTimingKeys,
-        amount: netPayout,
-        gross: computedPayout,
-        method: payMethod,
-        percentage: payMethod === "percent" ? payPercentage : undefined,
-        details,
-        description: `Règlement séances ${selectedTeacher.firstName} ${selectedTeacher.lastName}`,
-        expenseIds: chosenExpenses.map((e) => e.id),
-        acompteIds: chosenAcomptes.map((a) => a.id),
-        childCharges: chosenChildren,
-      });
-
-      if (!res.ok) {
-        alert("Le règlement a échoué — veuillez réessayer.");
-        return;
-      }
-
-      setIsTimingPayOpen(false);
-
-      if (confirm(`Paiement de ${netPayout} DA enregistré. Imprimer la fiche de paie ?`)) {
-        printHtmlDocument(
-          buildTeacherPayslip({
-            teacher: selectedTeacher,
-            school,
-            lang: language,
-            paidAt,
-            receiptNo: res.paymentId ? `PAY-${res.paymentId.slice(0, 8).toUpperCase()}` : undefined,
-            method: payMethod,
-            percentage: payMethod === "percent" ? payPercentage : undefined,
-            emplois,
-            expenses: expenseLines,
-            acomptes: acompteLines,
-            childCharges: chosenChildren,
-            gross: computedPayout,
-            net: netPayout,
-            withheld: { count: chosenWithheldCount, amount: chosenWithheldShare },
-          }),
-        );
-      }
-    } finally {
-      setSavingPayment(false);
-    }
+  /** Ouvre la lecture des mois : où en est chaque emploi du temps, qui a payé. */
+  const openMonths = (t: Teacher) => {
+    setSelectedTeacher(t);
+    setIsMonthsOpen(true);
+    setActiveMenuId(null);
   };
 
   /** Records a cost the school carried for a teacher — it is taken off his
@@ -1215,7 +760,13 @@ export function TeachersPage() {
           })
           .map((t) => {
           const unpaidSess = getTeacherUnpaidSessions(t.id);
-          const unpaidTimingsCount = buildUnpaidTimings(t.id).length;
+          const pay = payroll.get(t.id) ?? {
+            payable: 0,
+            withheld: 0,
+            closed: 0,
+            running: 0,
+            debtors: 0,
+          };
 
           return (
             <Card
@@ -1256,6 +807,12 @@ export function TeachersPage() {
                         className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-success/15 text-success border border-success/30 hover:bg-success/25 transition-colors"
                       >
                         <DollarSign className="h-3.5 w-3.5" /> Payer
+                      </button>
+                      <button
+                        onClick={() => openMonths(t)}
+                        className="col-span-2 flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-primary/15 text-primary border border-primary/30 hover:bg-primary/25 transition-colors"
+                      >
+                        <CalendarClock className="h-3.5 w-3.5" /> Mois & emplois du temps
                       </button>
                       {!t.isPassager && (
                         <>
@@ -1360,8 +917,8 @@ export function TeachersPage() {
                     {t.isPassager ? (
                       <div className="grid grid-cols-2 gap-2 text-[11px]">
                         <div className="bg-canvas/20 border border-line/50 p-2 rounded-xl flex flex-col justify-between">
-                          <span className="text-muted block text-[9px] uppercase">Créneaux non payés</span>
-                          <strong className="text-warning mt-0.5">{unpaidTimingsCount}</strong>
+                          <span className="text-muted block text-[9px] uppercase">Mois clos à régler</span>
+                          <strong className="text-warning mt-0.5">{pay.closed}</strong>
                         </div>
                         <div className="bg-canvas/20 border border-line/50 p-2 rounded-xl flex flex-col justify-between">
                           <span className="text-muted block text-[9px] uppercase">Total déjà versé</span>
@@ -1393,22 +950,27 @@ export function TeachersPage() {
                   const pendingDeductions =
                     getUnpaidExpenses(t.id).reduce((sum, e) => sum + e.amount, 0) +
                     getUnpaidAcomptes(t.id).reduce((sum, a) => sum + a.amount, 0);
-                  const dueAmount = unpaidSess.reduce((sum, u) => sum + u.amount, 0);
-                  const owing = unpaidTimingsCount > 0 || dueAmount > 0;
+                  const owing = pay.payable > 0 || pay.withheld > 0;
                   return (
                     <div className="border-t border-line/60 pt-3 mt-4 flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[10px] text-muted flex items-center gap-1.5">
                         <span className={`h-1.5 w-1.5 rounded-full ${owing ? "bg-warning animate-pulse" : "bg-success"}`} />
-                        {unpaidTimingsCount} créneau(x) dus · {unpaidSess.length} présence(s)
+                        {pay.closed} mois clos à régler · {unpaidSess.length} présence(s)
+                        {pay.debtors > 0 && ` · ${pay.debtors} impayé(s) élève`}
                       </span>
                       <div className="flex items-center gap-1.5">
+                        {pay.withheld > 0 && (
+                          <Badge tone="warning" className="font-mono font-bold text-[10px]" title="Part retenue : élèves en dette">
+                            ⏳ {pay.withheld} DA
+                          </Badge>
+                        )}
                         {pendingDeductions > 0 && (
                           <Badge tone="danger" className="font-mono font-bold text-[10px]" title="Dépenses et acomptes à retenir">
                             − {pendingDeductions} DA
                           </Badge>
                         )}
                         <Badge tone={owing ? "warning" : "success"} className="font-mono font-bold text-[10px]">
-                          {dueAmount} DA
+                          {pay.payable} DA
                         </Badge>
                       </div>
                     </div>
@@ -1699,7 +1261,7 @@ export function TeachersPage() {
                 .filter((p) => p.teacherId === selectedTeacher.id)
                 .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
               const distinctStudents = new Set(myDues.map((u) => u.studentId)).size;
-              const unpaidList = buildUnpaidTimings(selectedTeacher.id);
+              const myPayroll = payroll.get(selectedTeacher.id);
               const revenueGenerated = attendance
                 .filter((a) => myTimingIds.has(a.sessionId))
                 .reduce((s, a) => s + a.amountDeducted, 0)
@@ -1756,7 +1318,7 @@ export function TeachersPage() {
                       <strong className="text-success text-base font-mono">
                         {myPayments.reduce((s, p) => s + p.amount, 0)} DA
                       </strong>
-                      <span className="text-[9px] text-warning block">{unpaidList.length} créneau(x) dus</span>
+                      <span className="text-[9px] text-warning block">{myPayroll?.closed ?? 0} mois clos à régler</span>
                     </div>
                   </div>
 
@@ -1895,7 +1457,7 @@ export function TeachersPage() {
                       onClick={() => { setIsDetailsOpen(false); openTimingPay(selectedTeacher); }}
                       className="flex items-center gap-2"
                     >
-                      <DollarSign className="h-4 w-4" /> Payer ses séances ({unpaidList.length})
+                      <DollarSign className="h-4 w-4" /> Payer ses séances ({formatDA(myPayroll?.payable ?? 0)})
                     </Button>
                     <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>Fermer</Button>
                   </div>
@@ -2421,512 +1983,23 @@ export function TeachersPage() {
         </div>
       </Modal>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Per-timing settlement: only UNPAID timings, fixed or percentage   */}
-      {/* ---------------------------------------------------------------- */}
-      <Modal
+      {/* Règlement — organisé par emploi du temps et par mois */}
+      <TeacherPayModal
         open={isTimingPayOpen}
+        teacher={selectedTeacher}
         onClose={() => setIsTimingPayOpen(false)}
-        title="Règlement des séances de l'enseignant"
-        wide
-      >
-        {selectedTeacher && (
-          <div className="space-y-4">
-            <div className="bg-canvas border border-line rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <strong className="text-ink text-sm block">
-                  {selectedTeacher.firstName} {selectedTeacher.lastName}
-                </strong>
-                <span className="text-[11px] text-muted">
-                  {selectedTeacher.isPassager ? "Enseignant passager (sans compte)" : "Enseignant de l'école"}
-                  {selectedTeacher.phone ? ` · ${selectedTeacher.phone}` : ""}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <Badge tone="warning" className="font-bold">{payTimings.length} créneau(x) non payé(s)</Badge>
-                <Badge tone="primary" className="font-bold">{chosenPresents} présence(s) sélectionnée(s)</Badge>
-              </div>
-            </div>
+      />
 
-            {payTimings.length === 0 ? (
-              <p className="text-xs text-success font-bold text-center py-10 border border-dashed border-line rounded-2xl">
-                Tous les créneaux de cet enseignant ont déjà été réglés.
-              </p>
-            ) : (
-              <>
-                {/* Summary of what is being paid */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="bg-canvas border border-line p-3 rounded-xl text-center">
-                    <span className="text-muted text-[10px] uppercase block font-semibold">Créneaux</span>
-                    <strong className="text-ink text-base font-mono">{chosenTimings.length}</strong>
-                  </div>
-                  <div className="bg-canvas border border-line p-3 rounded-xl text-center">
-                    <span className="text-muted text-[10px] uppercase block font-semibold">Élèves présents</span>
-                    <strong className="text-ink text-base font-mono">{chosenPresents}</strong>
-                  </div>
-                  <div className="bg-canvas border border-line p-3 rounded-xl text-center">
-                    <span className="text-muted text-[10px] uppercase block font-semibold">Dont passagers</span>
-                    <strong className="text-warning text-base font-mono">{chosenPassagers}</strong>
-                  </div>
-                  <div className="bg-canvas border border-line p-3 rounded-xl text-center">
-                    <span className="text-muted text-[10px] uppercase block font-semibold">Montant généré</span>
-                    <strong className="text-success text-base font-mono">{chosenRevenue} DA</strong>
-                  </div>
-                </div>
-
-                {/* Payment method */}
-                <div className="rounded-2xl border border-primary/25 bg-primary-50/40 p-4 space-y-3">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                    Mode de rémunération
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setPayMethod("fixed")}
-                      className={`p-3 rounded-xl border text-left transition-all ${
-                        payMethod === "fixed" ? "border-primary bg-primary/10 ring-2 ring-primary/25" : "border-line bg-surface"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <DollarSign className={`h-4 w-4 ${payMethod === "fixed" ? "text-primary" : "text-muted"}`} />
-                        <span className="font-bold text-xs text-ink">Montant fixe</span>
-                      </div>
-                      <span className="text-[10px] text-muted block leading-normal">
-                        Vous saisissez directement la somme à verser.
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPayMethod("percent")}
-                      className={`p-3 rounded-xl border text-left transition-all ${
-                        payMethod === "percent" ? "border-primary bg-primary/10 ring-2 ring-primary/25" : "border-line bg-surface"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <Percent className={`h-4 w-4 ${payMethod === "percent" ? "text-primary" : "text-muted"}`} />
-                        <span className="font-bold text-xs text-ink">Pourcentage</span>
-                      </div>
-                      <span className="text-[10px] text-muted block leading-normal">
-                        % appliqué au tarif de chaque élève présent — calcul automatique.
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPayMethod("group")}
-                      className={`p-3 rounded-xl border text-left transition-all ${
-                        payMethod === "group" ? "border-primary bg-primary/10 ring-2 ring-primary/25" : "border-line bg-surface"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <Users className={`h-4 w-4 ${payMethod === "group" ? "text-primary" : "text-muted"}`} />
-                        <span className="font-bold text-xs text-ink">Par groupe</span>
-                      </div>
-                      <span className="text-[10px] text-muted block leading-normal">
-                        Tarif enseignant défini sur chaque emploi du temps — calcul automatique.
-                      </span>
-                    </button>
-                  </div>
-
-                  {payMethod === "group" ? (
-                    <div className="rounded-xl border border-line bg-surface p-3 text-[11px] leading-relaxed text-muted">
-                      Chaque présence a déjà été valorisée au tarif de son emploi du temps (part de
-                      l&apos;enseignant ÷ séances du mois, réglée sur l&apos;abonnement). Le montant
-                      ci-dessous est la somme de ces tarifs pour les créneaux cochés — rien à saisir.
-                      {chosenTimings.some((t) => t.payableShare === 0 && t.students.length > 0) && (
-                        <span className="block mt-2 text-warning font-semibold">
-                          Certains créneaux cochés ne rapportent rien : leur abonnement n&apos;a pas
-                          encore de part enseignant.
-                        </span>
-                      )}
-                    </div>
-                  ) : payMethod === "fixed" ? (
-                    <div>
-                      <label className="block text-[10px] font-semibold text-muted mb-1">Montant à verser (DA) *</label>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={payFixedAmount || ""}
-                        onChange={(e) => setPayFixedAmount(Number(e.target.value))}
-                        placeholder="Ex: 4000"
-                        className="w-48"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap items-end gap-4">
-                      <div>
-                        <label className="block text-[10px] font-semibold text-muted mb-1">
-                          Pourcentage par élève / par module (%)
-                        </label>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={payPercentage || ""}
-                          onChange={(e) => setPayPercentage(Number(e.target.value))}
-                          className="w-32"
-                        />
-                      </div>
-                      <div className="pb-1.5 text-xs">
-                        <span className="block text-[10px] font-semibold text-muted mb-1">Calcul automatique</span>
-                        <strong className="text-primary">
-                          {chosenRevenue} DA × {payPercentage}% = {computedPayout} DA
-                        </strong>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Timings list, each expandable to the students present */}
-                <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
-                  {payTimings.map((t) => {
-                    const checked = selectedTimingKeys.includes(t.key);
-                    const expanded = expandedTimingKey === t.key;
-                    const groupsInTiming = [...new Set(t.students.map((s) => s.groupName))];
-                    const visibleStudents =
-                      timingGroupFilter === "all"
-                        ? t.students
-                        : t.students.filter((s) => s.groupName === timingGroupFilter);
-                    return (
-                      <div key={t.key} className="border border-line rounded-2xl bg-canvas/20 overflow-hidden">
-                        <div className="flex flex-wrap items-center justify-between gap-2 p-3">
-                          <label className="flex items-start gap-2.5 min-w-0 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() =>
-                                setSelectedTimingKeys(
-                                  checked
-                                    ? selectedTimingKeys.filter((k) => k !== t.key)
-                                    : [...selectedTimingKeys, t.key],
-                                )
-                              }
-                              className="h-4 w-4 mt-0.5 shrink-0"
-                            />
-                            <span className="min-w-0">
-                              <strong className="text-ink block text-xs">
-                                📅 {formatDateFr(t.dateKey)} — {t.title}
-                                {t.isOpen && <Badge tone="success" className="ml-1.5 text-[9px]">Séance libre</Badge>}
-                              </strong>
-                              <span className="text-[10px] text-muted block">
-                                {t.className} · Gr: {t.groupName} ·{" "}
-                                <span className="font-mono">{t.startTime} - {t.endTime}</span>
-                              </span>
-                            </span>
-                          </label>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Badge tone="primary" className="font-mono font-bold text-[10px]">
-                              <Users className="h-3 w-3 inline mr-1" />
-                              {t.students.length}
-                              {t.passagers > 0 && ` (${t.passagers} pass.)`}
-                            </Badge>
-                            <Badge tone="success" className="font-mono font-bold text-[10px]">{t.totalFees} DA</Badge>
-                            {checked && (
-                              <Badge tone="warning" className="font-mono font-bold text-[10px]">
-                                → {shareForTiming(t)} DA
-                              </Badge>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setExpandedTimingKey(expanded ? null : t.key)}
-                            >
-                              {expanded ? "Masquer" : "Détails élèves"}
-                            </Button>
-                          </div>
-                        </div>
-
-                        {expanded && (
-                          <div className="border-t border-line bg-surface p-3 space-y-2">
-                            {/* Filter the presence list by group */}
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-[10px] uppercase font-bold text-muted mr-1">Filtrer :</span>
-                              {["all", ...groupsInTiming].map((g) => (
-                                <button
-                                  key={g}
-                                  onClick={() => setTimingGroupFilter(g)}
-                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                                    timingGroupFilter === g ? "bg-primary text-white" : "bg-canvas text-muted hover:text-ink"
-                                  }`}
-                                >
-                                  {g === "all" ? `Tous (${t.students.length})` : `${g} (${t.students.filter((s) => s.groupName === g).length})`}
-                                </button>
-                              ))}
-                            </div>
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="text-[10px] uppercase text-muted font-bold text-left">
-                                  <th className="py-1">Élève</th>
-                                  <th className="py-1">Groupe</th>
-                                  <th className="py-1">Heure</th>
-                                  <th className="py-1">Statut</th>
-                                  <th className="py-1 text-right">Tarif élève</th>
-                                  <th className="py-1 text-right">
-                                    Part prof{" "}
-                                    {payMethod === "percent"
-                                      ? `(${payPercentage}%)`
-                                      : payMethod === "group"
-                                        ? "(tarif du groupe)"
-                                        : ""}
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {visibleStudents.map((st, i) => (
-                                  <tr key={i} className={`border-t border-line/50 ${st.withheld ? "bg-danger/5" : ""}`}>
-                                    <td className="py-1.5 font-semibold text-ink">
-                                      {st.name}
-                                      {st.isPassager && (
-                                        <Badge tone="warning" className="ml-1.5 text-[8px]">Passager</Badge>
-                                      )}
-                                      {st.withheld && (
-                                        <Badge tone="danger" className="ml-1.5 text-[8px]">En dette — non réglé</Badge>
-                                      )}
-                                    </td>
-                                    <td className="py-1.5 text-muted">{st.groupName}</td>
-                                    <td className="py-1.5 font-mono">{st.time}</td>
-                                    <td className="py-1.5">
-                                      <Badge tone={st.status === "En Retard" ? "warning" : "success"} className="text-[9px]">
-                                        {st.status}
-                                      </Badge>
-                                    </td>
-                                    <td className="py-1.5 text-right font-mono">{st.fee} DA</td>
-                                    <td className="py-1.5 text-right font-mono font-bold text-primary">
-                                      {st.withheld
-                                        ? "— (dette)"
-                                        : payMethod === "percent"
-                                          ? `${Math.round((st.fee * payPercentage) / 100)} DA`
-                                          : payMethod === "group"
-                                            ? `${st.share} DA`
-                                            : "—"}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Retenues — dépenses, acomptes et scolarité de ses enfants.
-                    Seules celles jamais réglées apparaissent ici : une fois le
-                    paiement enregistré, elles ne reviennent plus. */}
-                <div className="rounded-2xl border border-warning/30 bg-warning/5 p-4 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-warning">
-                      Retenues sur ce règlement
-                    </span>
-                    <Badge tone="danger" className="font-mono font-bold">
-                      − {deductionsTotal} DA
-                    </Badge>
-                  </div>
-
-                  {payExpenses.length === 0 && payAcomptes.length === 0 && payChildren.length === 0 ? (
-                    <p className="text-[11px] italic text-muted">
-                      Aucune dépense, aucun acompte et aucun enfant à charge en attente.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                      {/* Dépenses */}
-                      <div className="rounded-xl border border-line bg-surface p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-[10px] font-bold uppercase text-muted">
-                            Dépenses ({payExpenses.length})
-                          </span>
-                          <strong className="text-xs text-danger">− {expensesTotal} DA</strong>
-                        </div>
-                        {payExpenses.length === 0 ? (
-                          <p className="text-[10px] italic text-muted">Aucune dépense en attente.</p>
-                        ) : (
-                          <div className="max-h-40 space-y-1.5 overflow-y-auto">
-                            {payExpenses.map((e) => {
-                              const on = payExpenseIds.includes(e.id);
-                              return (
-                                <label
-                                  key={e.id}
-                                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-line/60 p-2 text-[11px] hover:bg-primary-50/40"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={on}
-                                    onChange={() =>
-                                      setPayExpenseIds(
-                                        on
-                                          ? payExpenseIds.filter((id) => id !== e.id)
-                                          : [...payExpenseIds, e.id],
-                                      )
-                                    }
-                                    className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                                  />
-                                  <span className="min-w-0 flex-1">
-                                    <strong className="block text-ink">{e.name}</strong>
-                                    <span className="block text-[10px] text-muted">
-                                      {formatDateFr(e.date)}
-                                      {e.description ? ` · ${e.description}` : ""}
-                                    </span>
-                                  </span>
-                                  <strong className="shrink-0 font-mono text-danger">{e.amount} DA</strong>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Acomptes */}
-                      <div className="rounded-xl border border-line bg-surface p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-[10px] font-bold uppercase text-muted">
-                            Acomptes ({payAcomptes.length})
-                          </span>
-                          <strong className="text-xs text-danger">− {acomptesTotal} DA</strong>
-                        </div>
-                        {payAcomptes.length === 0 ? (
-                          <p className="text-[10px] italic text-muted">Aucun acompte en attente.</p>
-                        ) : (
-                          <div className="max-h-40 space-y-1.5 overflow-y-auto">
-                            {payAcomptes.map((a) => {
-                              const on = payAcompteIds.includes(a.id);
-                              return (
-                                <label
-                                  key={a.id}
-                                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-line/60 p-2 text-[11px] hover:bg-primary-50/40"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={on}
-                                    onChange={() =>
-                                      setPayAcompteIds(
-                                        on
-                                          ? payAcompteIds.filter((id) => id !== a.id)
-                                          : [...payAcompteIds, a.id],
-                                      )
-                                    }
-                                    className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                                  />
-                                  <span className="min-w-0 flex-1">
-                                    <strong className="block text-ink">Acompte</strong>
-                                    <span className="block text-[10px] text-muted">
-                                      {formatDateFr(a.date.slice(0, 10))}
-                                      {a.description ? ` · ${a.description}` : ""}
-                                    </span>
-                                  </span>
-                                  <strong className="shrink-0 font-mono text-danger">{a.amount} DA</strong>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Enfants scolarisés sur son salaire */}
-                      <div className="rounded-xl border border-line bg-surface p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-[10px] font-bold uppercase text-muted">
-                            Scolarité enfants ({payChildren.length})
-                          </span>
-                          <strong className="text-xs text-danger">− {childrenTotal} DA</strong>
-                        </div>
-                        {payChildren.length === 0 ? (
-                          <p className="text-[10px] italic text-muted">
-                            Aucun enfant à charge en dette.
-                          </p>
-                        ) : (
-                          <div className="max-h-40 space-y-1.5 overflow-y-auto">
-                            {payChildren.map((c) => {
-                              const on = payChildIds.includes(c.studentId);
-                              return (
-                                <label
-                                  key={c.studentId}
-                                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-line/60 p-2 text-[11px] hover:bg-primary-50/40"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={on}
-                                    onChange={() =>
-                                      setPayChildIds(
-                                        on
-                                          ? payChildIds.filter((id) => id !== c.studentId)
-                                          : [...payChildIds, c.studentId],
-                                      )
-                                    }
-                                    className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                                  />
-                                  <span className="min-w-0 flex-1">
-                                    <strong className="block text-ink">{c.studentName}</strong>
-                                    <span className="block font-mono text-[9px] text-muted">
-                                      N° {c.registrationNumber}
-                                    </span>
-                                    {c.lines.map((l) => (
-                                      <span
-                                        key={`${l.subscriptionId}-${l.monthCode}`}
-                                        className="block text-[10px] text-muted"
-                                      >
-                                        {l.label} · {l.monthCode} · {l.amount} DA
-                                      </span>
-                                    ))}
-                                  </span>
-                                  <strong className="shrink-0 font-mono text-danger">{c.amount} DA</strong>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="rounded-2xl border-2 border-success/40 bg-success/5 p-4 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-muted block">Net à verser</span>
-                    <strong
-                      className={`text-xl font-black ${netPayout < 0 ? "text-danger" : "text-success"}`}
-                    >
-                      {netPayout} DA
-                    </strong>
-                    <span className="mt-0.5 block text-[10px] text-muted">
-                      Brut {computedPayout} DA
-                      {deductionsTotal > 0 && (
-                        <>
-                          {" "}
-                          − retenues {deductionsTotal} DA
-                          <span className="text-[9px]">
-                            {" "}
-                            (dépenses {expensesTotal} · acomptes {acomptesTotal} · enfants{" "}
-                            {childrenTotal})
-                          </span>
-                        </>
-                      )}
-                    </span>
-                    <span className="text-[10px] text-muted block mt-0.5">
-                      {chosenTimings.length} créneau(x) · {chosenPresents} présence(s)
-                      {chosenPassagers > 0 && ` · ${chosenPassagers} passager(s)`}
-                    </span>
-                    {chosenWithheldCount > 0 && (
-                      <span className="mt-1 block rounded-lg bg-danger/10 px-2 py-1 text-[10px] font-semibold text-danger">
-                        ⏳ {chosenWithheldCount} présence(s) en attente (élève en dette) — {chosenWithheldShare} DA
-                        non réglés. Ils réapparaîtront au prochain paiement une fois la dette payée.
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => setIsTimingPayOpen(false)}>Annuler</Button>
-                    <Button
-                      onClick={handleTimingPayment}
-                      disabled={savingPayment || computedPayout <= 0 || selectedTimingKeys.length === 0}
-                    >
-                      {savingPayment ? "Enregistrement..." : `Payer ${netPayout} DA`}
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </Modal>
+      {/* Lecture des mois : où en est chaque emploi du temps, qui a payé */}
+      <TeacherMonthsModal
+        open={isMonthsOpen}
+        teacher={selectedTeacher}
+        onClose={() => setIsMonthsOpen(false)}
+        onPay={() => {
+          setIsMonthsOpen(false);
+          setIsTimingPayOpen(true);
+        }}
+      />
 
       {/* Print Salary Modal */}
       <Modal open={isPrintOpen} onClose={() => setIsPrintOpen(false)} title="Sélectionner la période d'impression">

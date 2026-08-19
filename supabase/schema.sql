@@ -457,6 +457,9 @@ create table if not exists public.teacher_payments (
   expenses       jsonb,                                -- dépenses soldées par ce règlement
   acomptes       jsonb,                                -- acomptes soldés par ce règlement
   child_charges  jsonb,                                -- enfants réglés sur le salaire du père
+  -- Mois d'emploi du temps soldés par ce règlement (M1, M2 …) : la paie se fait
+  -- mois par mois, un mois se ferme sur la séance qui complète le pack.
+  months         jsonb,
   paid_at        text not null default ''
 );
 

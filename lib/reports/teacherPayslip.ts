@@ -72,6 +72,9 @@ export interface PayslipEmploi {
   timeLabel: string;
   /** dated séances of this emploi included in the settlement */
   sessionsCount: number;
+  /** the emploi's OWN months this settlement closes — "M2" means "the 2nd
+   *  month of THAT emploi", not a calendar month */
+  monthsLabel?: string;
   students: PayslipStudent[];
   presents: number;
   fees: number;
@@ -167,6 +170,7 @@ const LABELS = {
     signTeacher: "Signature de l'enseignant",
     signCashier: "La Caisse / Direction",
     seances: "séance(s)",
+    months: "Mois réglé(s) :",
   },
   ar: {
     docTitle: "كشف الراتب — الأستاذ",
@@ -224,6 +228,7 @@ const LABELS = {
     signTeacher: "إمضاء الأستاذ",
     signCashier: "الصندوق / الإدارة",
     seances: "حصة",
+    months: "الأشهر المسواة :",
   },
 } as const;
 
@@ -275,6 +280,7 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
                 <h4>${esc(e.title)}</h4>
                 <span>${esc(e.className)} · ${esc(e.groupName)} · ${esc(e.salleName)}</span>
                 <span>${esc(e.daysLabel)} · ${esc(e.timeLabel)}</span>
+                ${e.monthsLabel ? `<span><strong>${L.months} ${esc(e.monthsLabel)}</strong></span>` : ""}
               </div>
               <span class="chip">${e.sessionsCount} ${L.seances}</span>
             </div>
