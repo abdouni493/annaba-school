@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useData, uid } from "@/lib/store/data";
-import { deleteRoleUser, resetUserPassword } from "@/lib/accounts/users";
+import { deleteRoleUser } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -33,6 +33,7 @@ import type {
   AbsencePenalty,
   AttendanceRecord,
   AttendanceStatus,
+  Payment,
   Student,
   SubscriptionPlan,
 } from "@/lib/types";
@@ -66,6 +67,7 @@ import { buildBalanceAlert } from "@/lib/whatsapp/alert";
 import {
 } from "@/components/students/ClassTimingPicker";
 import { CreateStudentModal } from "@/components/students/CreateStudentModal";
+import { StudentSituationModal } from "@/components/students/StudentSituationModal";
 import { formatDA } from "@/lib/utils";
 import { SoldManagerModal } from "@/components/students/SoldManagerModal";
 import {
@@ -79,6 +81,8 @@ import {
   studentCaseTone,
   studentMatches,
   studentSoldDebt,
+  studentSubscriptionHistory,
+  unsubscribedAtOf,
 } from "@/lib/helpers";
 
 export function StudentsPage() {
@@ -108,8 +112,10 @@ export function StudentsPage() {
     cancelAttendance,
     updateAttendance,
     deleteAbsencePenalty,
-    setStudentPassword,
     unsubscribeStudent,
+    subscribeStudent,
+    updateStudentPayment,
+    deleteStudentPayment,
   } = db;
 
   const { language, autoSendWhatsapp, autoSendEmail, setAutoSendWhatsapp, setAutoSendEmail } = useSettings();
@@ -121,7 +127,11 @@ export function StudentsPage() {
 
   // Modals
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [isEditOpen, setIsEditOpen] = useState(false);
+  /** the fiche being edited — the create screen, pre-filled */
+  const [editStudent, setEditStudent] = useState<Student | null>(null);
+  /** « Situation d'un élève » : rechercher, choisir un emploi du temps et lire
+   *  ses présences du mois avec ce qu'il reste à payer */
+  const [situationOpen, setSituationOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   /** "Payer & recharger" — the ONE money action of a card. */
   const [soldStudent, setSoldStudent] = useState<Student | null>(null);
@@ -138,17 +148,6 @@ export function StudentsPage() {
   } | null>(null);
   const [sendingAlerts, setSendingAlerts] = useState(false);
 
-  // Form: Create/Edit Student
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [birthDate, setBirthDate] = useState("");
-  const [phone, setPhone] = useState("");
-  const [rfid, setRfid] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [isFree, setIsFree] = useState(false);
-  const [isEmailDirty, setIsEmailDirty] = useState(false);
-  const [isPasswordDirty, setIsPasswordDirty] = useState(false);
 
   // ---- Student billing case (normal by default) ---------------------------
 
@@ -225,6 +224,13 @@ export function StudentsPage() {
   const [attKindFilter, setAttKindFilter] = useState<"all" | "present" | "absent">("all");
 
   // Correcting one presence / removing one billed absence
+  // ---- correcting a payment straight from the history ----------------------
+  const [payEdit, setPayEdit] = useState<Payment | null>(null);
+  const [payAmount, setPayAmount] = useState(0);
+  const [payMonth, setPayMonth] = useState("M1");
+  const [payNote, setPayNote] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
+
   const [editingAtt, setEditingAtt] = useState<AttendanceRecord | null>(null);
   const [deletingAtt, setDeletingAtt] = useState<AttendanceRecord | null>(null);
   const [deletingPen, setDeletingPen] = useState<AbsencePenalty | null>(null);
@@ -314,36 +320,6 @@ export function StudentsPage() {
       ];
     });
 
-  /** The formula an inscription is taken on, capped by what the tariff offers. */
-  // Auto-generate credentials when firstName, lastName, or birthDate changes in the creation modal
-  useEffect(() => {
-    if (isCreateOpen) {
-      // Login credentials are generated silently — reception no longer types an
-      // email or a password. Birthdate is optional, so a short numeric suffix
-      // keeps the auto-password at least 6 chars long even without one.
-      const cleanedFirst = firstName.trim().toLowerCase().replace(/\s+/g, "");
-      const cleanedLast = lastName.trim().toLowerCase().replace(/\s+/g, "");
-      const cleanedBirth = birthDate.replace(/-/g, "");
-      const suffix = cleanedBirth || (phone.replace(/\D/g, "").slice(-4) || "0000");
-
-      if (cleanedFirst && cleanedLast) {
-        if (!isEmailDirty) {
-          setEmail(`${cleanedFirst}${cleanedLast}${suffix}@elilm.com`);
-        }
-        if (!isPasswordDirty) {
-          setPassword(`${cleanedFirst}${cleanedLast}${suffix}`);
-        }
-      } else {
-        if (!isEmailDirty) {
-          setEmail("");
-        }
-        if (!isPasswordDirty) {
-          setPassword("");
-        }
-      }
-    }
-  }, [firstName, lastName, birthDate, phone, isCreateOpen, isEmailDirty, isPasswordDirty]);
-
   /** Money left across every emploi du temps — his soldes added up. */
   const remainingFor = (student: Student) =>
     student.subscriptionIds.reduce((t, subId) => t + soldFor(db, student.id, subId), 0);
@@ -390,32 +366,42 @@ export function StudentsPage() {
     });
   };
 
-  const handleEditStudent = async () => {
-    if (!selectedStudent) return;
+  /**
+   * L'historique des paiements est corrigeable : un montant mal tapé se
+   * modifie, un encaissement saisi deux fois se supprime — et le solde de
+   * l'emploi du temps comme la caisse suivent exactement le mouvement.
+   */
+  const openPayEdit = (p: Payment) => {
+    setPayEdit(p);
+    setPayAmount(p.amountPaid);
+    setPayMonth(p.monthCode || "M1");
+    setPayNote(p.description ?? "");
+  };
 
-    if (password) {
-      try {
-        await resetUserPassword(selectedStudent.id, password);
-        // Mirror the new password into the staff-only table so the receipt
-        // keeps printing credentials that actually work.
-        await setStudentPassword(selectedStudent.id, password);
-      } catch (err) {
-        alert(err instanceof Error ? err.message : "Erreur lors du changement de mot de passe.");
-        return;
-      }
-    }
-
-    updateItem("students", selectedStudent.id, {
-      firstName,
-      lastName,
-      birthDate,
-      phone,
-      email,
-      rfid,
-      isFree,
+  const savePayEdit = async () => {
+    if (!payEdit) return;
+    setPayBusy(true);
+    const res = await updateStudentPayment(payEdit.id, {
+      amount: payAmount,
+      monthCode: payMonth,
+      description: payNote,
     });
-    setIsEditOpen(false);
-    resetForm();
+    setPayBusy(false);
+    setPayEdit(null);
+    if (!res.ok) alert("Le paiement n'a pas pu être modifié.");
+  };
+
+  const removePayment = async (p: Payment) => {
+    if (
+      !confirm(
+        `Supprimer ce paiement de ${p.amountPaid} DA ?\nLe solde de l'emploi du temps sera repris d'autant et la caisse suivra.`,
+      )
+    )
+      return;
+    setPayBusy(true);
+    const res = await deleteStudentPayment(p.id);
+    setPayBusy(false);
+    if (!res.ok) alert("Le paiement n'a pas pu être supprimé.");
   };
 
   const openSoldManager = (stu: Student) => {
@@ -581,32 +567,10 @@ export function StudentsPage() {
     setScanRfidInput("");
   };
 
-  /** Clears the edit form. Creation lives in its own component now. */
-  const resetForm = () => {
-    setFirstName("");
-    setLastName("");
-    setBirthDate("");
-    setPhone("");
-    setRfid("");
-    setEmail("");
-    setPassword("");
-    setIsFree(false);
-    setSelectedStudent(null);
-    setIsEmailDirty(false);
-    setIsPasswordDirty(false);
-  };
-
+  /** « Modifier » ouvre LA fiche élève — exactement l'écran de création, déjà
+   *  rempli : identité, cas, emplois du temps, soldes et compte du portail. */
   const openEdit = (stu: Student) => {
-    setSelectedStudent(stu);
-    setFirstName(stu.firstName);
-    setLastName(stu.lastName);
-    setBirthDate(stu.birthDate);
-    setPhone(stu.phone);
-    setRfid(stu.rfid);
-    setEmail(stu.email);
-    setPassword("");
-    setIsFree(stu.isFree);
-    setIsEditOpen(true);
+    setEditStudent(stu);
     setOverlayStudentId(null);
   };
 
@@ -1517,10 +1481,17 @@ export function StudentsPage() {
               </span>
             )}
           </Button>
+          <Button
+            onClick={() => setSituationOpen(true)}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <Search className="h-4 w-4" /> Situation d&apos;un élève
+          </Button>
           <Button onClick={() => setIsScanOpen(true)} variant="secondary" className="flex items-center gap-2">
             <Scan className="h-4 w-4" /> Scanner RFID
           </Button>
-          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+          <Button onClick={() => setIsCreateOpen(true)} className="flex items-center gap-2">
             <Plus className="h-4 w-4" /> Nouvel Étudiant
           </Button>
         </div>
@@ -1870,52 +1841,6 @@ export function StudentsPage() {
       </div>
 
       {/* Edit Modal */}
-      <Modal open={isEditOpen} onClose={() => setIsEditOpen(false)} title="Modifier l'étudiant">
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Prénom</label>
-              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1">Nom</label>
-              <Input value={lastName} onChange={(e) => setLastName(e.target.value)} />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Date de naissance</label>
-            <Input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Téléphone</label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-muted mb-1">RFID</label>
-            <Input value={rfid} onChange={(e) => setRfid(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Email</label>
-            <Input value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Nouveau mot de passe</label>
-            <Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Laisser vide pour ne pas changer" />
-          </div>
-          <div className="flex items-center justify-between p-3 bg-canvas border border-line rounded-xl">
-            <span className="text-xs font-bold text-ink">Cas Spécial (Études gratuites)</span>
-            <input type="checkbox" checked={isFree} onChange={(e) => setIsFree(e.target.checked)} className="h-5 w-5" />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="outline" onClick={() => setIsEditOpen(false)}>
-              Annuler
-            </Button>
-            <Button onClick={handleEditStudent}>Enregistrer</Button>
-          </div>
-        </div>
-      </Modal>
-
       {/* Details Modal with subdivisions */}
       <Modal open={isDetailsOpen} onClose={() => setIsDetailsOpen(false)} title="Fiche Étudiant" wide>
         {selectedStudent && (
@@ -2030,9 +1955,18 @@ export function StudentsPage() {
                   recharge since) shows up: what was credited on each of the
                   emploi's own months, what the séances of that month ate, and
                   what is left. */}
-              {detailsTab === "subs" && (
+              {detailsTab === "subs" && (() => {
+                // Sa fiche liste TOUT son parcours : les emplois qu'il suit et
+                // ceux dont il a été désinscrit — ces derniers gardent leurs
+                // présences, leurs paiements et leur solde, avec la date de
+                // sortie. Rien ne disparaît quand un élève quitte un groupe.
+                const historyIds = studentSubscriptionHistory(db, selectedStudent);
+                const leftIds = historyIds.filter(
+                  (id) => !selectedStudent.subscriptionIds.includes(id),
+                );
+                return (
                 <div className="space-y-3">
-                  {selectedStudent.subscriptionIds.length === 0 ? (
+                  {historyIds.length === 0 ? (
                     <p className="text-xs text-muted italic">
                       Cet élève n&apos;est inscrit sur aucun emploi du temps.
                     </p>
@@ -2041,6 +1975,7 @@ export function StudentsPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-canvas/40 px-3 py-2">
                         <span className="text-[11px] font-semibold text-muted">
                           {selectedStudent.subscriptionIds.length} emploi(s) du temps
+                          {leftIds.length > 0 && ` · ${leftIds.length} quitté(s)`}
                         </span>
                         <div className="flex items-center gap-2">
                           <Badge
@@ -2064,8 +1999,10 @@ export function StudentsPage() {
                         </div>
                       </div>
 
-                      {selectedStudent.subscriptionIds.map((subId) => {
+                      {historyIds.map((subId) => {
                         const sub = subscriptions.find((s) => s.id === subId);
+                        const leftOn = unsubscribedAtOf(db, selectedStudent.id, subId);
+                        const gone = !selectedStudent.subscriptionIds.includes(subId);
                         if (!sub) {
                           return (
                             <div
@@ -2083,11 +2020,22 @@ export function StudentsPage() {
                         const cycles = enrollmentCycles(db, selectedStudent.id, subId);
                         const current = currentCycleIndex(db, selectedStudent.id, subId);
                         return (
-                          <div key={subId} className="rounded-xl border border-line bg-surface p-3">
+                          <div
+                            key={subId}
+                            className={`rounded-xl border p-3 ${
+                              gone ? "border-dashed border-line bg-canvas/30" : "border-line bg-surface"
+                            }`}
+                          >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <strong className="block text-xs text-ink">
                                   {getModuleLabel(subId)}
+                                  {gone && (
+                                    <Badge tone="warning" className="ml-1.5 text-[9px]">
+                                      Désinscrit
+                                      {leftOn ? ` le ${formatDateFr(leftOn)}` : ""}
+                                    </Badge>
+                                  )}
                                 </strong>
                                 <span className="block text-[10px] text-muted">
                                   {getTimingLabel(subId)}
@@ -2167,22 +2115,43 @@ export function StudentsPage() {
                               </table>
                             </div>
 
-                            <div className="mt-2 flex justify-end">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  if (confirm("Retirer cet emploi du temps de sa fiche ?")) {
-                                    // Son historique et son solde restent : le
-                                    // réinscrire plus tard le remet là où en
-                                    // sera le groupe à ce moment-là.
-                                    void unsubscribeStudent(selectedStudent.id, subId);
-                                  }
-                                }}
-                                className="text-danger"
-                              >
-                                Retirer
-                              </Button>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <span className="text-[10px] italic text-muted">
+                                {gone
+                                  ? `Historique conservé${leftOn ? ` — sorti le ${formatDateFr(leftOn)}` : ""}.`
+                                  : ""}
+                              </span>
+                              {gone ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    void subscribeStudent({
+                                      studentId: selectedStudent.id,
+                                      subscriptionId: subId,
+                                    });
+                                  }}
+                                >
+                                  Réinscrire
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        "Désinscrire cet élève de cet emploi du temps ?\nSes présences, ses paiements et son solde restent sur sa fiche, datés de la sortie.",
+                                      )
+                                    ) {
+                                      void unsubscribeStudent(selectedStudent.id, subId);
+                                    }
+                                  }}
+                                  className="text-danger"
+                                >
+                                  Désinscrire
+                                </Button>
+                              )}
                             </div>
                           </div>
                         );
@@ -2190,7 +2159,8 @@ export function StudentsPage() {
                     </>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* Paiements — the séance purchases and the debt settlements.
                   A purchase is filtered by the module its enrollment belongs to;
@@ -2223,6 +2193,56 @@ export function StudentsPage() {
                         {payList.length} paiement(s) · {totalPaid} DA versés
                       </span>
                     </div>
+                    {payEdit && (
+                      <div className="space-y-3 rounded-xl border border-primary/30 bg-primary-50/40 p-3">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                          Corriger le paiement du {payEdit.date.substring(0, 10)}
+                        </span>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <div>
+                            <label className="mb-1 block text-[10px] font-bold uppercase text-muted">
+                              Montant versé (DA)
+                            </label>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={payAmount || ""}
+                              onChange={(e) => setPayAmount(Math.max(0, Number(e.target.value) || 0))}
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[10px] font-bold uppercase text-muted">
+                              Mois concerné
+                            </label>
+                            <Select
+                              value={payMonth}
+                              onChange={(e) => setPayMonth(e.target.value)}
+                              className="w-full"
+                            >
+                              {Array.from({ length: 12 }, (_, i) => `M${i + 1}`).map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </Select>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[10px] font-bold uppercase text-muted">
+                              Description
+                            </label>
+                            <Input value={payNote} onChange={(e) => setPayNote(e.target.value)} />
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setPayEdit(null)}>
+                            Annuler
+                          </Button>
+                          <Button size="sm" onClick={savePayEdit} disabled={payBusy}>
+                            Enregistrer
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     <div className="space-y-2 max-h-60 overflow-y-auto">
                       {payList.length === 0 ? (
                         <p className="text-xs text-muted italic">Aucun paiement pour ce filtre.</p>
@@ -2250,7 +2270,38 @@ export function StudentsPage() {
                                     {p.description && enr ? ` · ${p.description}` : ""}
                                   </span>
                                 </div>
-                                <strong className="shrink-0 font-bold text-success">+{p.amountPaid} DA</strong>
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                  <strong className="font-bold text-success">
+                                    +{p.amountPaid} DA
+                                  </strong>
+                                  {/* Un règlement de dette a soldé des restes
+                                      répartis sur plusieurs achats : il ne se
+                                      supprime pas, il se re-encaisse. */}
+                                  <button
+                                    disabled={isDebt}
+                                    onClick={() => openPayEdit(p)}
+                                    title={
+                                      isDebt
+                                        ? "Un règlement de dette ne se modifie pas"
+                                        : "Modifier ce paiement"
+                                    }
+                                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-primary hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-30"
+                                  >
+                                    <Edit className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    disabled={payBusy || isDebt}
+                                    onClick={() => removePayment(p)}
+                                    title={
+                                      isDebt
+                                        ? "Un règlement de dette ne se supprime pas"
+                                        : "Supprimer ce paiement"
+                                    }
+                                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-30"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                               </div>
 
                               {!isDebt && (
@@ -2672,7 +2723,7 @@ export function StudentsPage() {
       <Modal open={isScanOpen} onClose={() => { setIsScanOpen(false); setScanResult(null); }} title="Scanner de carte RFID">
         <div className="space-y-4">
           <p className="text-xs text-muted">
-            Scannez une carte RFID à l'aide d'un lecteur physique ou saisissez manuellement le code de la carte pour simuler.
+            Scannez une carte RFID à l&apos;aide d&apos;un lecteur physique ou saisissez manuellement le code de la carte pour simuler.
           </p>
 
           <div className="flex gap-2">
@@ -2748,7 +2799,7 @@ export function StudentsPage() {
           {/* List of low balance students */}
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
             {students.filter(isSoonToRunOut).length === 0 ? (
-              <p className="text-xs text-muted italic p-4 text-center">Aucun étudiant n'a de séances presque épuisées en ce moment.</p>
+              <p className="text-xs text-muted italic p-4 text-center">Aucun étudiant n&apos;a de séances presque épuisées en ce moment.</p>
             ) : (
               <>
                 <div className="flex justify-between items-center px-1 pb-1">
@@ -2940,6 +2991,19 @@ export function StudentsPage() {
       {/* Création d'un élève — the shared screen, also used by the dashboard
           and by every présence sheet. */}
       <CreateStudentModal open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+
+      {/* Modification — LE MÊME écran, rempli avec la fiche */}
+      {editStudent && (
+        <CreateStudentModal
+          open
+          student={students.find((s) => s.id === editStudent.id) ?? editStudent}
+          onClose={() => setEditStudent(null)}
+        />
+      )}
+
+      {/* Situation d'un élève : ses emplois du temps, ses présences du mois et
+          ce qu'il lui reste à payer */}
+      {situationOpen && <StudentSituationModal onClose={() => setSituationOpen(false)} />}
 
       {/* Payer & recharger les soldes — replaces "Inscriptions" + "Renouvellement" */}
       {soldStudent && (

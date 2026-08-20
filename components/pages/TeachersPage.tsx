@@ -39,6 +39,8 @@ import { TeacherMonthsModal } from "@/components/teachers/TeacherMonthsModal";
 import { teacherEmplois, unpaidStudents } from "@/lib/teacherMonths";
 import {
   cycleSizeOf,
+  groupSeanceTotals,
+  teacherGroupSeances,
   monthlyPriceOf,
   schoolMonthShareOf,
   teacherMonthShareOf,
@@ -65,7 +67,6 @@ export function TeachersPage() {
     acomptes,
     teacherExpenses,
     absences,
-    cash,
     attendance,
     independent,
     teacherPayments,
@@ -1567,23 +1568,43 @@ export function TeachersPage() {
                 color: "text-danger bg-danger/5 border-danger/20",
               }));
 
-              const teacherPayments = cash
-                .filter(c => c.type === "teacher_payment" && (c.description.toLowerCase().includes(selectedTeacher.lastName.toLowerCase()) || c.description.toLowerCase().includes(selectedTeacher.firstName.toLowerCase())))
-                .map(pay => ({
-                  id: pay.id,
-                  type: "payment" as const,
-                  title: "Règlement de Salaire",
-                  amount: Math.abs(pay.amount),
-                  date: pay.date.split("T")[0],
-                  description: pay.description,
-                  color: "text-success bg-success/5 border-success/20",
-                }));
+              // Les VRAIS règlements de cet enseignant — plus aucune devinette
+              // sur le libellé des mouvements de caisse.
+              const settlements = teacherPayments
+                .filter((p) => p.teacherId === selectedTeacher.id)
+                .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+              const settlementLogs = settlements.map((pay) => ({
+                id: pay.id,
+                type: "payment" as const,
+                title: "Règlement de salaire",
+                amount: pay.amount,
+                date: pay.paidAt.split("T")[0],
+                description:
+                  (pay.months ?? []).length > 0
+                    ? `${(pay.months ?? []).map((m) => `${m.title} ${m.monthCode}`).join(" · ")}`
+                    : pay.description,
+                color: "text-success bg-success/5 border-success/20",
+              }));
+
+              // Les séances libres de GROUPE qu'il a animées : elles le paient
+              // au moment où la réception les crée.
+              const groupRows = teacherGroupSeances(db, selectedTeacher.id);
+              const groupLogs = groupRows.map((g) => ({
+                id: g.id,
+                type: "group" as const,
+                title: `Séance libre de groupe — ${g.title}`,
+                amount: groupSeanceTotals(g).teacherTotal,
+                date: g.date,
+                description: `${groupSeanceTotals(g).students} élève(s) · ${g.startTime} → ${g.endTime}`,
+                color: "text-primary bg-primary/5 border-primary/20",
+              }));
 
               const allFinancialLogs = [
+                ...groupLogs,
                 ...teacherAcomptes,
                 ...teacherExpenseLogs,
                 ...teacherAbsences,
-                ...teacherPayments,
+                ...settlementLogs,
               ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
               const unpaidExpenses = expensesOf.filter((e) => !e.paid);
@@ -1609,9 +1630,125 @@ export function TeachersPage() {
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Total Payé</span>
-                      <strong className="text-success text-base font-mono">{teacherPayments.reduce((s, a) => s + a.amount, 0)} DA</strong>
+                      <strong className="text-success text-base font-mono">
+                        {settlementLogs.reduce((t, a) => t + a.amount, 0) +
+                          groupLogs.reduce((t, a) => t + a.amount, 0)}{" "}
+                        DA
+                      </strong>
+                      {groupLogs.length > 0 && (
+                        <span className="text-[9px] text-primary block">
+                          dont {groupLogs.reduce((t, a) => t + a.amount, 0)} DA de séances de groupe
+                        </span>
+                      )}
                     </div>
                   </div>
+
+                  {/* Historique des règlements — avec les mois soldés et la
+                      réimpression de la fiche de paie. */}
+                  <div className="rounded-2xl border border-line bg-surface p-4">
+                    <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-muted">
+                      💸 Historique des règlements ({settlements.length})
+                    </h4>
+                    {settlements.length === 0 ? (
+                      <p className="py-6 text-center text-xs italic text-muted">
+                        Aucun règlement enregistré pour cet enseignant.
+                      </p>
+                    ) : (
+                      <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                        {settlements.map((pay) => (
+                          <div
+                            key={pay.id}
+                            className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-success/20 bg-success/5 p-3 text-xs"
+                          >
+                            <div className="min-w-0">
+                              <strong className="block text-ink">
+                                {pay.amount} DA net
+                                <Badge tone="neutral" className="ml-1.5 text-[9px]">
+                                  {pay.method === "percent"
+                                    ? `${pay.percentage ?? 0} %`
+                                    : pay.method === "group"
+                                      ? "par groupe"
+                                      : "montant fixe"}
+                                </Badge>
+                              </strong>
+                              <span className="block text-[10px] text-muted">
+                                {new Date(pay.paidAt).toLocaleString("fr-DZ", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                                {pay.gross != null && ` · brut ${pay.gross} DA`}
+                                {(pay.expenses?.length ?? 0) + (pay.acomptes?.length ?? 0) > 0 &&
+                                  ` · ${(pay.expenses?.length ?? 0)} dépense(s), ${(pay.acomptes?.length ?? 0)} acompte(s) retenus`}
+                              </span>
+                              {(pay.months ?? []).length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {(pay.months ?? []).map((m, i) => (
+                                    <Badge key={`${m.sessionId}-${m.monthCode}-${i}`} tone="primary" className="text-[9px]">
+                                      {m.title} · {m.monthCode} · {m.seances} séance(s) ·{" "}
+                                      {m.gross} DA
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => reprintSettlement(pay.id)}
+                              className="shrink-0 rounded-lg p-1.5 text-primary hover:bg-primary-50"
+                              title="Réimprimer la fiche de paie"
+                            >
+                              <Printer className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Séances libres de groupe animées par cet enseignant */}
+                  {groupRows.length > 0 && (
+                    <div className="rounded-2xl border border-line bg-surface p-4">
+                      <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-muted">
+                        👥 Séances libres de groupe ({groupRows.length})
+                      </h4>
+                      <div className="max-h-52 overflow-y-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-line text-left text-[10px] font-bold uppercase text-muted">
+                              <th className="py-1.5">Date</th>
+                              <th className="py-1.5">Séance</th>
+                              <th className="py-1.5 text-center">Élèves</th>
+                              <th className="py-1.5 text-right">Sa part</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {groupRows.map((g) => {
+                              const gt = groupSeanceTotals(g);
+                              return (
+                                <tr key={g.id} className="border-b border-line/50 last:border-0">
+                                  <td className="py-1.5 font-mono text-[10px]">
+                                    {formatDateFr(g.date)}
+                                  </td>
+                                  <td className="py-1.5">
+                                    <strong className="block text-ink">{g.title}</strong>
+                                    <span className="block font-mono text-[9px] text-muted">
+                                      {g.startTime} → {g.endTime}
+                                    </span>
+                                  </td>
+                                  <td className="py-1.5 text-center font-mono">{gt.students}</td>
+                                  <td className="py-1.5 text-right font-mono font-bold text-warning">
+                                    {gt.teacherTotal} DA
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Ce qui sera retenu sur le prochain règlement — et rien d'autre :
                       tout ce qui a déjà été réglé n'y figure plus. */}
@@ -1896,7 +2033,7 @@ export function TeachersPage() {
       <Modal open={isAcompteOpen} onClose={() => setIsAcompteOpen(false)} title="Enregistrer un acompte">
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Montant de l'acompte (DA) *</label>
+            <label className="block text-xs font-semibold text-muted mb-1 font-sans">Montant de l&apos;acompte (DA) *</label>
             <Input
               type="number"
               value={amount || ""}
@@ -1935,7 +2072,7 @@ export function TeachersPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-muted mb-1">Motif de l'absence</label>
+            <label className="block text-xs font-semibold text-muted mb-1">Motif de l&apos;absence</label>
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Absence non justifiée" />
           </div>
           <div>

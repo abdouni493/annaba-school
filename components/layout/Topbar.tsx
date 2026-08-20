@@ -1,18 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, ScanLine } from "lucide-react";
+import { Menu, PanelLeftClose, PanelLeftOpen, ScanLine } from "lucide-react";
 import { ThemeToggle } from "@/components/controls/ThemeToggle";
 import { LanguageSwitcher } from "@/components/controls/LanguageSwitcher";
 import { ScanModal } from "@/components/ScanModal";
 import { Button } from "@/components/ui/Button";
 import { useSession } from "@/lib/store/session";
+import { useSidebar } from "@/lib/store/ui";
 import { useTranslation } from "@/lib/i18n/useTranslation";
 
 export function Topbar({ onMenu }: { onMenu: () => void }) {
   const { t } = useTranslation();
   const user = useSession((s) => s.user);
   const [scanOpen, setScanOpen] = useState(false);
+  const sidebarHidden = useSidebar((s) => s.hidden);
+  const toggleSidebar = useSidebar((s) => s.toggle);
   const canScan = user?.role === "admin" || user?.role === "reception";
 
   const initials = (user?.name ?? "")
@@ -29,6 +32,21 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         className="flex h-10 w-10 items-center justify-center rounded-xl text-ink hover:bg-primary-50 lg:hidden"
       >
         <Menu className="h-5 w-5" />
+      </button>
+
+      {/* Masquer / afficher le menu latéral — les écrans denses (feuille de
+          présence, grille du jour) reprennent ainsi toute la largeur. */}
+      <button
+        onClick={toggleSidebar}
+        aria-label={sidebarHidden ? "Afficher le menu" : "Masquer le menu"}
+        title={sidebarHidden ? "Afficher le menu latéral" : "Masquer le menu latéral"}
+        className="hidden h-10 w-10 items-center justify-center rounded-xl text-ink transition-colors hover:bg-primary-50 lg:flex"
+      >
+        {sidebarHidden ? (
+          <PanelLeftOpen className="h-5 w-5" />
+        ) : (
+          <PanelLeftClose className="h-5 w-5" />
+        )}
       </button>
 
       <span className="hidden text-lg font-bold text-gradient-primary sm:inline">

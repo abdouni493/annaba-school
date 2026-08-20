@@ -32,3 +32,21 @@ export const useUiIntent = create<UiState>((set, get) => ({
     return true;
   },
 }));
+
+
+/**
+ * Whether the desktop sidebar is showing. The navbar carries the toggle, so a
+ * dense screen (feuille de présence, grille du jour) can take the whole width
+ * and come back with one click. Kept in memory only — a reload starts open.
+ */
+interface SidebarState {
+  hidden: boolean;
+  toggle: () => void;
+  set: (hidden: boolean) => void;
+}
+
+export const useSidebar = create<SidebarState>((set) => ({
+  hidden: false,
+  toggle: () => set((s) => ({ hidden: !s.hidden })),
+  set: (hidden) => set({ hidden }),
+}));

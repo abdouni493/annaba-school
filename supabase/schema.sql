@@ -819,6 +819,27 @@ create table if not exists public.independent_sessions (
   teacher_paid  boolean not null default false
 );
 
+-- Séance libre vendue à un GROUPE d'élèves : personne n'est nommé, on saisit
+-- le nombre d'élèves, le prix par élève et la part de l'école ; la part de
+-- l'enseignant et les totaux s'en déduisent. Les deux mouvements de caisse
+-- (recette et paie de l'enseignant) sont référencés ici, pour que modifier ou
+-- supprimer la séance les emporte avec elle.
+create table if not exists public.group_seances (
+  id                 text primary key,
+  teacher_id         text not null references public.teachers (id) on delete cascade,
+  title              text not null default '',
+  description        text,
+  date               text not null default '',
+  start_time         text not null default '',
+  end_time           text not null default '',
+  students_count     integer not null default 0,
+  price_per_student  numeric not null default 0,
+  school_per_student numeric not null default 0,
+  cash_in_id         text,
+  cash_out_id        text,
+  created_at         text
+);
+
 
 -- =============================================================================
 --  4. INDEX
@@ -845,6 +866,8 @@ create index if not exists idx_tpayments_teacher        on public.teacher_paymen
 create index if not exists idx_shifts_worker            on public.worker_shifts (worker_id, paid);
 create index if not exists idx_notifications_parent     on public.notifications (parent_id, read);
 create index if not exists idx_independent_session      on public.independent_sessions (session_id);
+create index if not exists idx_group_seances_teacher     on public.group_seances (teacher_id);
+create index if not exists idx_group_seances_date        on public.group_seances (date);
 create index if not exists idx_profiles_entity          on public.profiles (entity_id);
 
 
@@ -869,7 +892,7 @@ declare
     'reception_staff','worker_shifts','schedule_sessions','subscriptions','free_periods',
     'module_absence_rules','students','payments','absence_penalties',
     'announcements','expense_categories','expenses',
-    'cash_transactions','parents','notifications','coursework'
+    'cash_transactions','parents','notifications','coursework','group_seances'
   ];
   -- L'enseignant remplit la feuille de présence : cela écrit la présence, mais
   -- aussi le solde de l'inscription et sa propre part à payer.

@@ -38,19 +38,30 @@ import { printHtmlDocument } from "@/lib/print";
 import { presenceSheetHtml, soldReceiptHtml } from "@/lib/reports/documents";
 import {
   Check,
+  CheckCheck,
   ChevronLeft,
   ChevronRight,
   Clock,
+  History,
+  Pencil,
   Printer,
   RotateCcw,
   Search,
   Slash,
+  Trash2,
   UserMinus,
   UserPlus,
+  UserRoundPlus,
   Wallet,
   X,
 } from "lucide-react";
-import type { AttendanceRecord, AttendanceStatus, ScheduleSession, Student } from "@/lib/types";
+import type {
+  AttendanceRecord,
+  AttendanceStatus,
+  Payment,
+  ScheduleSession,
+  Student,
+} from "@/lib/types";
 import {
   DAY_LABELS_FR,
   attendanceOn,
@@ -58,14 +69,17 @@ import {
   cycleOf,
   cycleSizeOf,
   cycleSlots,
+  dayKeyOf,
   enrolledInMonth,
   enrollmentCycles,
   formatDateFr,
   groupName,
+  joinPointFor,
   moduleName as moduleNameOf,
   monthCodeLabel,
   monthOrder,
   registrationNumberOf,
+  schoolPerSeanceOf,
   salleName,
   sessionTimesOn,
   slotCountFor,
@@ -73,6 +87,7 @@ import {
   soldStatus,
   studentCaseLabel,
   studentCaseTone,
+  studentListPrice,
   studentMatches,
   studentName,
   studentSoldDebtRows,
@@ -107,7 +122,7 @@ export function PresenceSheet({
   onCreateStudent,
 }: PresenceSheetProps) {
   const db = useData();
-  const { setPresence, addSold, unsubscribeStudent } = db;
+  const { setPresence, addSold, unsubscribeStudent, subscribeStudent } = db;
   const { language } = useSettings();
   const { addToast } = useToast();
 
@@ -118,9 +133,16 @@ export function PresenceSheet({
   const [receipt, setReceipt] = useState<string | null>(null);
   /** the student the desk is about to take off the group */
   const [leaving, setLeaving] = useState<Student | null>(null);
+  /** inscrire un élève DÉJÀ dans la base sur cet emploi du temps */
+  const [addOpen, setAddOpen] = useState(false);
+  /** pointer tout le monde présent d'un coup */
+  const [allPresentOpen, setAllPresentOpen] = useState(false);
+  /** l'historique des paiements d'un élève sur cet emploi — modifiable */
+  const [history, setHistory] = useState<Student | null>(null);
 
   const sub = db.subscriptions.find((s) => s.sessionId === session.id);
   const unitPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
+  const schoolOnlyPrice = schoolPerSeanceOf(sub);
   const monthIndex = Math.max(0, monthOrder(monthCode));
 
   /**
@@ -128,13 +150,14 @@ export function PresenceSheet({
    * A child registered during M2 is simply not part of M1: showing him there
    * would invent séances he was never offered.
    */
-  const roster = useMemo(() => {
-    if (!sub) return [] as Student[];
-    return db.students
-      .filter((st) => st.subscriptionIds.includes(sub.id))
-      .filter((st) => enrolledInMonth(db, st.id, sub.id, monthCode))
-      .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
-  }, [db, sub, monthCode]);
+  const roster: Student[] = !sub
+    ? []
+    : db.students
+        .filter((st) => st.subscriptionIds.includes(sub.id))
+        .filter((st) => enrolledInMonth(db, st.id, sub.id, monthCode))
+        .sort((a, b) =>
+          `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`),
+        );
 
   /** Enrolled on the emploi, month aside — what the month filter hides. */
   const fullRoster = sub ? db.students.filter((st) => st.subscriptionIds.includes(sub.id)) : [];
@@ -203,10 +226,58 @@ export function PresenceSheet({
     addToast({
       type: "success",
       title: "Élève désinscrit",
-      message: `Retiré de ${title}. Son historique et son solde de ${formatDA(
+      message: `Retiré de ${title} le ${formatDateFr(res.leftOn ?? date)}. Ses présences, ses paiements et son solde de ${formatDA(
         res.balance ?? 0,
-      )} sont conservés.`,
+      )} restent sur sa fiche, datés de cette sortie.`,
       studentName: studentName(student),
+    });
+  };
+
+  // ---- bringing an EXISTING student onto the group ------------------------
+  const addExisting = async (student: Student) => {
+    if (!sub) return;
+    setBusyId(student.id);
+    const res = await subscribeStudent({
+      studentId: student.id,
+      subscriptionId: sub.id,
+      date,
+    });
+    setBusyId(null);
+    if (!res.ok) {
+      addToast({
+        type: "danger",
+        title: "Inscription refusée",
+        message: "Impossible d'inscrire cet élève sur cet emploi du temps.",
+        studentName: studentName(student),
+      });
+      return;
+    }
+    // Il entre LÀ OÙ EN EST LE GROUPE, comme un élève créé depuis la feuille :
+    // les séances tenues avant lui ne sont pas les siennes.
+    onMonthChange(res.monthCode ?? monthCode);
+    addToast({
+      type: "success",
+      title: "Élève inscrit sur le groupe",
+      message: `Entre en ${res.monthCode ?? monthCode} · séance ${(res.slotIndex ?? 0) + 1} — aucune fiche à ressaisir.`,
+      studentName: studentName(student),
+    });
+  };
+
+  // ---- marking the WHOLE list présent ------------------------------------
+  const markAllPresent = async (ids: string[]) => {
+    for (const id of ids) {
+      const student = db.students.find((s) => s.id === id);
+      if (!student) continue;
+      // Un élève déjà pointé ce jour-là n'est pas réécrit : son statut reste
+      // celui que la réception a choisi (absent, annulée…).
+      if (attendanceOn(db, id, session.id, date)) continue;
+      await setPresence({ studentId: id, sessionId: session.id, date, status: "present" });
+    }
+    setAllPresentOpen(false);
+    addToast({
+      type: "success",
+      title: "Présences enregistrées",
+      message: `${ids.length} élève(s) marqué(s) présents le ${formatDateFr(date)}.`,
     });
   };
 
@@ -314,6 +385,9 @@ export function PresenceSheet({
           <p className="text-[10px] text-muted sm:text-[11px]">
             Enseignant : {teacherName(db, session.teacherId)} · {cycleSizeOf(sub)} séances / mois ·
             séance à {formatDA(unitPrice)}
+            {schoolOnlyPrice > 0 && schoolOnlyPrice !== unitPrice && (
+              <> · « école seule » : {formatDA(schoolOnlyPrice)} / séance</>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -342,6 +416,13 @@ export function PresenceSheet({
               <UserPlus className="h-3.5 w-3.5" /> Nouvel élève
             </Button>
           )}
+          {/* Déjà dans la base : on l'ajoute au groupe sans ressaisir sa fiche. */}
+          <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} className="gap-1.5">
+            <UserRoundPlus className="h-3.5 w-3.5" /> Élève existant
+          </Button>
+          <Button size="sm" variant="success" onClick={() => setAllPresentOpen(true)} className="gap-1.5">
+            <CheckCheck className="h-3.5 w-3.5" /> Tout présent
+          </Button>
           <Button size="sm" variant="outline" onClick={printSheet} className="gap-1.5">
             <Printer className="h-3.5 w-3.5" /> Feuille de présence
           </Button>
@@ -391,7 +472,7 @@ export function PresenceSheet({
                   S{i + 1}
                 </th>
               ))}
-              <th className="px-2 py-2.5">Statut {monthCode}</th>
+              <th className="px-2 py-2.5">Versé / Reste {monthCode}</th>
               <th className="px-2 py-2.5">Mois préc.</th>
               <th className="px-2 py-2.5">Autres dettes</th>
               <th className="px-2 py-2.5 text-center">Pointage du jour</th>
@@ -425,6 +506,7 @@ export function PresenceSheet({
                   onPay={setPay}
                   onDrill={(kind) => setDrill({ student: st, kind })}
                   onLeave={() => setLeaving(st)}
+                  onHistory={() => setHistory(st)}
                 />
               ))
             )}
@@ -548,7 +630,8 @@ export function PresenceSheet({
             </div>
             <p className="text-xs text-ink">
               Il sort de la liste de ce groupe et n&apos;y sera plus pointé. Ses présences, ses
-              paiements et son solde sont conservés — le réinscrire plus tard le remet là où en
+              paiements et son solde restent visibles sur sa fiche, avec la{" "}
+              <strong>date de désinscription</strong> — le réinscrire plus tard le remet là où en
               sera le groupe à ce moment-là.
             </p>
             {(() => {
@@ -586,8 +669,450 @@ export function PresenceSheet({
         </Modal>
       )}
 
+      {/* ---- inscrire un élève DÉJÀ créé ------------------------------------ */}
+      {addOpen && (
+        <AddExistingStudentModal
+          subscriptionId={sub.id}
+          title={title}
+          date={date}
+          busyId={busyId}
+          onAdd={addExisting}
+          onClose={() => setAddOpen(false)}
+        />
+      )}
+
+      {/* ---- tout le monde présent ------------------------------------------ */}
+      {allPresentOpen && (
+        <MarkAllPresentModal
+          students={roster}
+          session={session}
+          date={date}
+          onConfirm={markAllPresent}
+          onClose={() => setAllPresentOpen(false)}
+        />
+      )}
+
+      {/* ---- l'historique des paiements, modifiable sur place --------------- */}
+      {history && (
+        <PaymentHistoryModal
+          student={history}
+          subscriptionId={sub.id}
+          label={title}
+          onClose={() => setHistory(null)}
+        />
+      )}
+
       {receipt && <PrintAsk html={receipt} onClose={() => setReceipt(null)} />}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * « Élève existant » — il est déjà dans la base, on l'ajoute simplement à cet
+ * emploi du temps : aucune fiche à ressaisir, et il entre là où en est le
+ * groupe à la date affichée.
+ */
+function AddExistingStudentModal({
+  subscriptionId,
+  title,
+  date,
+  busyId,
+  onAdd,
+  onClose,
+}: {
+  subscriptionId: string;
+  title: string;
+  date: string;
+  busyId: string | null;
+  onAdd: (student: Student) => void;
+  onClose: () => void;
+}) {
+  const db = useData();
+  const [query, setQuery] = useState("");
+
+  const point = joinPointFor(db, subscriptionId, date);
+  const candidates = useMemo(() => {
+    const q = query.trim();
+    return db.students
+      .filter((st) => !st.subscriptionIds.includes(subscriptionId))
+      .filter((st) => (q ? studentMatches(db, st, q) : true))
+      .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`))
+      .slice(0, 60);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db.students, subscriptionId, query]);
+
+  return (
+    <Modal open onClose={onClose} title="Ajouter un élève existant au groupe">
+      <div className="space-y-3">
+        <div className="rounded-xl bg-primary-50/60 p-3 text-[11px] text-muted">
+          <strong className="block text-sm text-ink">{title}</strong>
+          Il entrera en <strong className="text-primary">{point.monthCode}</strong> · séance{" "}
+          <strong className="text-primary">{point.slotIndex + 1}</strong> — là où en est le groupe
+          le {formatDateFr(date)}. Les séances tenues avant lui resteront vides sur sa ligne.
+        </div>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Nom, n° d'inscription (00001) ou téléphone…"
+            className="pl-9"
+          />
+        </div>
+        <div className="max-h-[45vh] space-y-1.5 overflow-y-auto pr-1">
+          {candidates.length === 0 ? (
+            <p className="py-8 text-center text-xs italic text-muted">
+              {query.trim()
+                ? "Aucun élève ne correspond — il est peut-être déjà inscrit sur ce groupe."
+                : "Aucun élève à ajouter."}
+            </p>
+          ) : (
+            candidates.map((st) => (
+              <div
+                key={st.id}
+                className="flex items-center justify-between gap-2 rounded-xl border border-line bg-surface p-2.5"
+              >
+                <div className="min-w-0">
+                  <strong className="block text-xs text-ink">{studentName(st)}</strong>
+                  <span className="text-[10px] text-muted">
+                    N° {registrationNumberOf(db, st)}
+                    {st.phone ? ` · ${st.phone}` : ""} · {st.subscriptionIds.length} emploi(s) du
+                    temps
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  disabled={busyId === st.id}
+                  onClick={() => onAdd(st)}
+                  className="gap-1.5"
+                >
+                  <UserRoundPlus className="h-3.5 w-3.5" /> Inscrire
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="flex justify-end border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose}>
+            Fermer
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * « Tout présent » — le raccourci du matin. La liste s'ouvre entièrement cochée,
+ * la recherche permet d'en décocher un ou deux, et les élèves déjà pointés ce
+ * jour-là sont laissés tels quels.
+ */
+function MarkAllPresentModal({
+  students,
+  session,
+  date,
+  onConfirm,
+  onClose,
+}: {
+  students: Student[];
+  session: ScheduleSession;
+  date: string;
+  onConfirm: (ids: string[]) => Promise<void> | void;
+  onClose: () => void;
+}) {
+  const db = useData();
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<string[]>(() =>
+    students.filter((st) => !attendanceOn(db, st.id, session.id, date)).map((st) => st.id),
+  );
+  const [busy, setBusy] = useState(false);
+
+  const shown = students.filter((st) => studentMatches(db, st, query));
+  const toggle = (id: string) =>
+    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  return (
+    <Modal open onClose={onClose} title="Marquer tout le groupe présent">
+      <div className="space-y-3">
+        <div className="rounded-xl bg-success/10 p-3 text-[11px] text-muted">
+          Tous les élèves cochés seront pointés <strong className="text-success">présents</strong>{" "}
+          le {formatDateFr(date)}. Ceux qui portent déjà un pointage ce jour-là ne sont pas
+          réécrits — corrigez-les depuis leur ligne.
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <Input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Rechercher un élève…"
+              className="pl-9"
+            />
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setPicked(shown.map((x) => x.id))}>
+            Tout cocher
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setPicked([])}>
+            Tout décocher
+          </Button>
+        </div>
+        <div className="max-h-[42vh] space-y-1 overflow-y-auto pr-1">
+          {shown.length === 0 ? (
+            <p className="py-8 text-center text-xs italic text-muted">Aucun élève.</p>
+          ) : (
+            shown.map((st) => {
+              const already = attendanceOn(db, st.id, session.id, date);
+              return (
+                <label
+                  key={st.id}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-surface p-2.5 hover:bg-primary-50/40"
+                >
+                  <input
+                    type="checkbox"
+                    checked={picked.includes(st.id)}
+                    onChange={() => toggle(st.id)}
+                    className="h-4 w-4 shrink-0"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <strong className="block text-xs text-ink">{studentName(st)}</strong>
+                    <span className="text-[10px] text-muted">
+                      N° {registrationNumberOf(db, st)}
+                    </span>
+                  </span>
+                  {already && (
+                    <Badge
+                      tone={already.status === "present" ? "success" : "warning"}
+                      className="text-[9px]"
+                    >
+                      déjà {STATUS_STYLE[already.status].label.toLowerCase()}
+                    </Badge>
+                  )}
+                </label>
+              );
+            })
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-line pt-3">
+          <span className="text-[11px] font-semibold text-muted">
+            {picked.length} élève(s) sélectionné(s)
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} disabled={busy}>
+              Annuler
+            </Button>
+            <Button
+              variant="success"
+              disabled={busy || picked.length === 0}
+              onClick={async () => {
+                setBusy(true);
+                await onConfirm(picked);
+                setBusy(false);
+              }}
+              className="gap-1.5"
+            >
+              <CheckCheck className="h-4 w-4" />
+              {busy ? "Enregistrement…" : `Marquer ${picked.length} présent(s)`}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * L'historique des encaissements d'un élève SUR CET EMPLOI DU TEMPS, corrigeable
+ * sur place : un montant mal tapé se modifie, un paiement saisi en double se
+ * supprime — et le solde comme la caisse suivent le mouvement.
+ */
+export function PaymentHistoryModal({
+  student,
+  subscriptionId,
+  label,
+  onClose,
+}: {
+  student: Student;
+  subscriptionId: string;
+  label: string;
+  onClose: () => void;
+}) {
+  const db = useData();
+  const { deleteStudentPayment, updateStudentPayment } = db;
+  const { addToast } = useToast();
+  const [editing, setEditing] = useState<Payment | null>(null);
+  const [amount, setAmount] = useState(0);
+  const [code, setCode] = useState("M1");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const rows = db.payments
+    .filter((p) => p.studentId === student.id && p.subscriptionId === subscriptionId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const total = rows.reduce((t, p) => t + p.amountPaid, 0);
+
+  const openEdit = (p: Payment) => {
+    setEditing(p);
+    setAmount(p.amountPaid);
+    setCode(p.monthCode || "M1");
+    setNote(p.description ?? "");
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setBusy(true);
+    const res = await updateStudentPayment(editing.id, {
+      amount,
+      monthCode: code,
+      description: note,
+    });
+    setBusy(false);
+    setEditing(null);
+    addToast({
+      type: res.ok ? "success" : "danger",
+      title: res.ok ? "Paiement corrigé" : "Correction impossible",
+      message: res.ok
+        ? `${formatDA(amount)} sur ${code} — le solde et la caisse ont suivi.`
+        : "Le paiement n'a pas pu être modifié.",
+      studentName: studentName(student),
+    });
+  };
+
+  const remove = async (p: Payment) => {
+    if (
+      !confirm(`Supprimer ce paiement de ${formatDA(p.amountPaid)} ? Le solde sera repris d'autant.`)
+    )
+      return;
+    setBusy(true);
+    const res = await deleteStudentPayment(p.id);
+    setBusy(false);
+    addToast({
+      type: res.ok ? "success" : "danger",
+      title: res.ok ? "Paiement supprimé" : "Suppression impossible",
+      message: res.ok
+        ? `${formatDA(res.amount ?? 0)} retirés du solde et de la caisse.`
+        : "Le paiement n'a pas pu être supprimé.",
+      studentName: studentName(student),
+    });
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Paiements de cet emploi du temps" wide>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-primary-50/60 p-3">
+          <div className="min-w-0">
+            <strong className="block text-sm text-ink">{studentName(student)}</strong>
+            <span className="text-[11px] text-muted">
+              N° {registrationNumberOf(db, student)} · {label}
+            </span>
+          </div>
+          <Badge tone="success" className="font-mono font-bold">
+            {formatDA(total)} versés
+          </Badge>
+        </div>
+
+        {rows.length === 0 ? (
+          <p className="py-8 text-center text-xs italic text-muted">
+            Aucun paiement enregistré sur cet emploi du temps.
+          </p>
+        ) : (
+          <div className="max-h-[45vh] space-y-1.5 overflow-y-auto pr-1">
+            {rows.map((p) => (
+              <div
+                key={p.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface p-3"
+              >
+                <div className="min-w-0">
+                  <strong className="block text-xs text-ink">
+                    {formatDA(p.amountPaid)}
+                    <Badge tone="primary" className="ml-1.5 font-mono text-[9px]">
+                      {p.monthCode || "M1"}
+                    </Badge>
+                  </strong>
+                  <span className="block text-[10px] text-muted">
+                    {formatDateFr(dayKeyOf(p.date))}
+                    {p.description ? ` · ${p.description}` : ""}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    onClick={() => openEdit(p)}
+                    title="Modifier ce paiement"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-primary hover:bg-primary-50"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    disabled={busy}
+                    onClick={() => remove(p)}
+                    title="Supprimer ce paiement"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-danger hover:bg-danger/10 disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {editing && (
+          <div className="space-y-3 rounded-xl border border-primary/30 bg-primary-50/40 p-3">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+              Corriger le paiement
+            </span>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-[10px] font-bold uppercase text-muted">
+                  Montant versé (DA)
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={amount || ""}
+                  onChange={(e) => setAmount(Math.max(0, Number(e.target.value) || 0))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-bold uppercase text-muted">
+                  Mois concerné
+                </label>
+                <Select value={code} onChange={(e) => setCode(e.target.value)} className="w-full">
+                  {Array.from({ length: 12 }, (_, i) => `M${i + 1}`).map((c) => (
+                    <option key={c} value={c}>
+                      {monthCodeLabel(c)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase text-muted">
+                Description
+              </label>
+              <Input value={note} onChange={(e) => setNote(e.target.value)} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setEditing(null)}>
+                Annuler
+              </Button>
+              <Button size="sm" onClick={saveEdit} disabled={busy}>
+                Enregistrer
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose}>
+            Fermer
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -650,6 +1175,7 @@ function StudentRow({
   onPay,
   onDrill,
   onLeave,
+  onHistory,
 }: {
   student: Student;
   session: ScheduleSession;
@@ -663,6 +1189,7 @@ function StudentRow({
   onPay: (t: PayTarget) => void;
   onDrill: (kind: "previous" | "other") => void;
   onLeave: () => void;
+  onHistory: () => void;
 }) {
   const db = useData();
   const sub = db.subscriptions.find((s) => s.id === subscriptionId)!;
@@ -673,10 +1200,13 @@ function StudentRow({
   const lead = cycleLead(db, student.id, subscriptionId, monthCode);
   const cycle = cycleOf(db, student.id, subscriptionId, monthCode);
   const sold = soldFor(db, student.id, subscriptionId);
-  const unit = sub.pricePerSession;
+  // « École seule » paie la part de l'école, pas le prix complet.
+  const unit = studentListPrice(student, sub);
   const status = soldStatus(sold, unit);
   const today = attendanceOn(db, student.id, session.id, date);
 
+  /** Ce qu'il doit ENCORE sur le mois affiché — jamais un nombre négatif. */
+  const monthDue = Math.max(0, -cycle.balance);
   const prevDebt =
     monthIndex > 0 ? Math.max(0, -cycleOf(db, student.id, subscriptionId, `M${monthIndex}`).balance) : 0;
   const otherDebt = studentSoldDebtRows(db, student.id)
@@ -732,12 +1262,21 @@ function StudentRow({
         );
       })}
 
-      {/* current month */}
+      {/* current month — jamais un solde signé : ce qui est VERSÉ d'un côté,
+          ce qui RESTE DÛ de l'autre. Un montant payé ne s'affiche donc plus
+          avec un moins devant. */}
       <td className="px-2 py-2">
-        <div className="flex items-center gap-1.5">
-          <Badge tone={soldTone} className="font-mono">
-            {formatDA(sold)}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone="success" className="font-mono" title={`Versé sur ${monthCode}`}>
+            {formatDA(cycle.credited)}
           </Badge>
+          {monthDue > 0 ? (
+            <Badge tone="danger" className="font-mono" title={`Reste dû sur ${monthCode}`}>
+              reste {formatDA(monthDue)}
+            </Badge>
+          ) : (
+            <Badge tone="success" title={`${monthCode} réglé`}>✅</Badge>
+          )}
           <button
             onClick={() =>
               onPay({
@@ -745,8 +1284,8 @@ function StudentRow({
                 subscriptionId,
                 label,
                 monthCode,
-                amount: Math.max(0, -cycle.balance) || 0,
-                suggestion: Math.max(0, -cycle.balance),
+                amount: monthDue || 0,
+                suggestion: monthDue,
               })
             }
             title="Encaisser un solde sur ce mois"
@@ -754,11 +1293,23 @@ function StudentRow({
           >
             <Wallet className="h-3.5 w-3.5" />
           </button>
+          <button
+            onClick={onHistory}
+            title="Historique des paiements — modifier ou supprimer"
+            className="flex h-6 w-6 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:bg-primary-50 hover:text-ink"
+          >
+            <History className="h-3.5 w-3.5" />
+          </button>
         </div>
         <span className="mt-0.5 block text-[9px] text-muted">
-          {cycle.done}/{Math.max(0, cycle.size - cycle.lead)} séance(s)
+          {cycle.done}/{Math.max(0, cycle.size - cycle.lead)} séance(s) · consommé{" "}
+          {formatDA(cycle.consumed)}
           {cycle.complete ? " · mois clos" : ""}
           {cycle.lead > 0 ? ` · entré à la séance ${cycle.lead + 1}` : ""}
+        </span>
+        <span className={`block text-[9px] font-semibold ${soldTone === "danger" ? "text-danger" : "text-muted"}`}>
+          Solde de l&apos;emploi :{" "}
+          {sold < 0 ? `${formatDA(-sold)} dus` : `${formatDA(sold)} d'avance`}
         </span>
       </td>
 

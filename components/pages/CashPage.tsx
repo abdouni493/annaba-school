@@ -27,9 +27,12 @@ import {
   X
 } from "lucide-react";
 import type { CashTransaction, CashTxType } from "@/lib/types";
+import { formatDateFr, groupSeanceTotals } from "@/lib/helpers";
+import { formatDA } from "@/lib/utils";
 
 export function CashPage() {
-  const { cash, cashMove, deleteFrom, updateItem } = useData();
+  const db = useData();
+  const { cash, cashMove, deleteFrom, updateItem, groupSeances, teachers } = db;
 
   // Helper for timezone-safe local date string (YYYY-MM-DD)
   const getLocalDateString = (d: Date) => {
@@ -230,6 +233,25 @@ export function CashPage() {
     if (confirm("Voulez-vous vraiment supprimer cette transaction ? Cette action est irréversible.")) {
       deleteFrom("cash", id);
     }
+  };
+
+  /**
+   * Les séances libres de GROUPE de la période affichée. Leurs deux mouvements
+   * sont déjà dans le journal ci-dessous ; ce bloc en donne le détail complet —
+   * élèves, prix par élève, part de l'école et part de l'enseignant.
+   */
+  const periodGroupSeances = (() => {
+    const dates = filteredTx.map((t) => t.date.substring(0, 10));
+    const from = dates.length ? dates.reduce((a, b) => (a < b ? a : b)) : "";
+    const to = dates.length ? dates.reduce((a, b) => (a > b ? a : b)) : "";
+    return groupSeances
+      .filter((g) => (!from || g.date >= from) && (!to || g.date <= to))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  })();
+
+  const teacherNameOf = (id: string) => {
+    const t = teachers.find((x) => x.id === id);
+    return t ? `${t.firstName} ${t.lastName}` : "—";
   };
 
   const getTxTypeBadge = (type: string) => {
@@ -496,6 +518,65 @@ export function CashPage() {
             </button>
           ))}
         </div>
+
+        {/* Séances libres de groupe — le détail derrière les deux mouvements */}
+        {periodGroupSeances.length > 0 && (
+          <div className="border-b border-line p-4">
+            <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+              <UserCheck className="h-3.5 w-3.5 text-primary" /> Séances libres de groupe (
+              {periodGroupSeances.length})
+            </h4>
+            <div className="overflow-x-auto rounded-xl border border-line">
+              <table className="w-full min-w-[760px] text-left text-[11px]">
+                <thead className="bg-canvas/50">
+                  <tr className="text-[9px] font-bold uppercase tracking-wider text-muted">
+                    <th className="p-2.5">Date</th>
+                    <th className="p-2.5">Séance</th>
+                    <th className="p-2.5">Enseignant</th>
+                    <th className="p-2.5 text-center">Élèves</th>
+                    <th className="p-2.5 text-right">Prix / élève</th>
+                    <th className="p-2.5 text-right">Encaissé</th>
+                    <th className="p-2.5 text-right">École</th>
+                    <th className="p-2.5 text-right">Enseignant</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {periodGroupSeances.map((g) => {
+                    const t = groupSeanceTotals(g);
+                    return (
+                      <tr key={g.id}>
+                        <td className="p-2.5">
+                          <span className="block font-semibold text-ink">{formatDateFr(g.date)}</span>
+                          <span className="block font-mono text-[9px] text-muted">
+                            {g.startTime} → {g.endTime}
+                          </span>
+                        </td>
+                        <td className="p-2.5">
+                          <strong className="block text-ink">{g.title}</strong>
+                          {g.description && (
+                            <span className="block text-[9px] text-muted">{g.description}</span>
+                          )}
+                        </td>
+                        <td className="p-2.5 text-muted">{teacherNameOf(g.teacherId)}</td>
+                        <td className="p-2.5 text-center font-mono">{t.students}</td>
+                        <td className="p-2.5 text-right font-mono">{formatDA(t.pricePerStudent)}</td>
+                        <td className="p-2.5 text-right font-mono font-bold text-success">
+                          {formatDA(t.total)}
+                        </td>
+                        <td className="p-2.5 text-right font-mono text-primary">
+                          {formatDA(t.schoolTotal)}
+                        </td>
+                        <td className="p-2.5 text-right font-mono text-warning">
+                          {formatDA(t.teacherTotal)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Transaction Table */}
         <div className="overflow-x-auto">

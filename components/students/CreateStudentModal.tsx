@@ -1,7 +1,11 @@
 "use client";
 
 /**
- * "Nouvel élève" — the ONE creation screen of the app.
+ * "Nouvel élève" — the ONE student screen of the app, for creating AND for
+ * editing. Passing a `student` turns it into "Modifier l'élève": exactly the
+ * same fields, pre-filled, with the identity, the cas, les emplois du temps et
+ * les soldes tous modifiables, plus l'identifiant et le mot de passe du
+ * portail que seule une fiche existante possède.
  *
  * Used from the Élèves page, from the dashboard, and from a group's présence
  * sheet (where the emploi du temps of the group arrives pre-ticked).
@@ -17,7 +21,7 @@
  * that opened that month stay blank on his row, and M1 never lists him.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useData, uid } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
 import { useToast } from "@/lib/store/toast";
@@ -26,7 +30,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
 import { BookOpen, Check, Trash2, Wallet } from "lucide-react";
-import { createRoleUser } from "@/lib/accounts/users";
+import { createRoleUser, resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
 import { formatDA } from "@/lib/utils";
 import { inscriptionVoucherHtml } from "@/lib/reports/documents";
 import { PrintAsk } from "@/components/attendance/PresenceSheet";
@@ -39,7 +43,9 @@ import {
 import {
   cycleSizeOf,
   joinPointFor,
-  monthlyPriceOf,
+  registrationNumberOf,
+  soldFor,
+  studentMonthPrice,
   nextRegistrationNumber,
   todayIso,
 } from "@/lib/helpers";
@@ -60,56 +66,102 @@ export const STUDENT_CASE_OPTIONS: { value: StudentCase; label: string }[] = [
   { value: "school_only", label: "École seulement" },
 ];
 
-export function CreateStudentModal({
-  open,
-  onClose,
-  /** emplois du temps ticked as soon as the screen opens (the group it was
-   *  opened from, typically) */
-  defaultSubIds = [],
-  /** the day he comes in on — the séance of THAT day is the one he joins on
-   *  (the présence sheet passes the journée it is working; today otherwise) */
-  joinDate,
-  onCreated,
-}: {
+export interface StudentFicheProps {
   open: boolean;
   onClose: () => void;
+  /** emplois du temps ticked as soon as the screen opens (the group it was
+   *  opened from, typically) */
   defaultSubIds?: string[];
+  /** the day he comes in on — the séance of THAT day is the one he joins on
+   *  (the présence sheet passes the journée it is working; today otherwise) */
   joinDate?: string;
+  /** an existing fiche: the very same screen, in edit mode */
+  student?: Student | null;
   onCreated?: (student: Student) => void;
-}) {
+}
+
+export function CreateStudentModal(props: StudentFicheProps) {
+  /** The bon d'inscription lives OUT here: it is offered once the screen has
+   *  closed, so it must survive the form's unmount. */
+  const [voucher, setVoucher] = useState<string | null>(null);
+  return (
+    <>
+      {props.open && (
+        <StudentFiche
+          key={props.student?.id ?? `new|${(props.defaultSubIds ?? []).join("|")}`}
+          {...props}
+          onVoucher={setVoucher}
+        />
+      )}
+      {voucher && (
+        <PrintAsk
+          html={voucher}
+          onClose={() => setVoucher(null)}
+          question="Imprimer le bon d'inscription de l'élève ?"
+        />
+      )}
+    </>
+  );
+}
+
+function StudentFiche({
+  onClose,
+  defaultSubIds = [],
+  joinDate,
+  student: editing,
+  onCreated,
+  onVoucher,
+}: StudentFicheProps & { onVoucher: (html: string) => void }) {
   const db = useData();
-  const { school, teachers, subscriptions, push, addSold, setStudentPassword } = db;
+  const {
+    school,
+    teachers,
+    subscriptions,
+    push,
+    addSold,
+    setStudentPassword,
+    updateItem,
+    subscribeStudent,
+    unsubscribeStudent,
+  } = db;
+  const isEdit = !!editing;
   const { language } = useSettings();
   const { addToast } = useToast();
   const { subLabel } = useClassTimings();
 
-  // identity
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [birthDate, setBirthDate] = useState("");
-  const [phone, setPhone] = useState("");
+  // identity — a creation starts blank, an edit starts on the fiche
+  const [firstName, setFirstName] = useState(editing?.firstName ?? "");
+  const [lastName, setLastName] = useState(editing?.lastName ?? "");
+  const [birthDate, setBirthDate] = useState(editing?.birthDate ?? "");
+  const [phone, setPhone] = useState(editing?.phone ?? "");
 
   // billing case
-  const [studentCase, setStudentCase] = useState<StudentCase>("normal");
-  const [teacherFatherId, setTeacherFatherId] = useState("");
+  const [studentCase, setStudentCase] = useState<StudentCase>(
+    editing?.studentCase ?? (editing?.isFree ? "special" : "normal"),
+  );
+  const [teacherFatherId, setTeacherFatherId] = useState(editing?.teacherFatherId ?? "");
   const [teacherSearch, setTeacherSearch] = useState("");
-  const [caseRedType, setCaseRedType] = useState<DiscountType>("percent");
-  const [caseRedSchool, setCaseRedSchool] = useState(0);
-  const [caseRedTeacher, setCaseRedTeacher] = useState(0);
-  const [unpaidTeacherIds, setUnpaidTeacherIds] = useState<string[]>([]);
+  const [caseRedType, setCaseRedType] = useState<DiscountType>(
+    editing?.caseReduction?.type ?? "percent",
+  );
+  const [caseRedSchool, setCaseRedSchool] = useState(editing?.caseReduction?.schoolValue ?? 0);
+  const [caseRedTeacher, setCaseRedTeacher] = useState(editing?.caseReduction?.teacherValue ?? 0);
+  const [unpaidTeacherIds, setUnpaidTeacherIds] = useState<string[]>(
+    editing?.unpaidTeacherIds ?? [],
+  );
 
   // inscriptions + the solde paid on each of them
-  const [subIds, setSubIds] = useState<string[]>(defaultSubIds);
+  const [subIds, setSubIds] = useState<string[]>(editing?.subscriptionIds ?? defaultSubIds);
   const [solds, setSolds] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
-  const [voucher, setVoucher] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (open) setSubIds(defaultSubIds);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, defaultSubIds.join("|")]);
+  // edit only: the portal login, which a fiche being created does not have yet
+  const [editEmail, setEditEmail] = useState(editing?.email ?? "");
+  const [editPassword, setEditPassword] = useState("");
+  const [editRfid, setEditRfid] = useState(editing?.rfid ?? "");
 
   const nextNumber = useMemo(() => nextRegistrationNumber(db), [db.students]);
+  const shownNumber = editing ? registrationNumberOf(db, editing) : nextNumber;
   const isFree = studentCase === "special";
   const totalSold = subIds.reduce((s, id) => s + (solds[id] || 0), 0);
 
@@ -159,11 +211,19 @@ export function CreateStudentModal({
     });
   };
 
-  /** Suggested opening solde of an emploi: the price of one of its months. */
+  /**
+   * Suggested opening solde of an emploi: the price of one of its months FOR
+   * HIM. An « école seule » élève ne paie que la part de l'école, donc son mois
+   * coûte cette part-là et pas le prix complet.
+   */
   const suggestFor = (subId: string) => {
     const sub = subscriptions.find((s) => s.id === subId);
     if (!sub) return 0;
-    return monthlyPriceOf(sub) || sub.pricePerSession * cycleSizeOf(sub);
+    const asStudent = { ...(editing ?? ({} as Student)), studentCase, isFree };
+    return (
+      studentMonthPrice(asStudent as Student, sub) ||
+      sub.pricePerSession * cycleSizeOf(sub)
+    );
   };
 
   const submit = async () => {
@@ -191,6 +251,86 @@ export function CreateStudentModal({
         title: "Enseignants à exclure",
         message: "Sélectionnez au moins un enseignant qui ne sera pas payé.",
       });
+      return;
+    }
+
+    // ---- editing an existing fiche ---------------------------------------
+    if (editing) {
+      setBusy(true);
+      try {
+        if (editEmail.trim() && editEmail.trim() !== editing.email) {
+          await updateUserEmail(editing.id, editEmail.trim());
+        }
+        if (editPassword.trim()) {
+          await resetUserPassword(editing.id, editPassword.trim());
+          await setStudentPassword(editing.id, editPassword.trim());
+        }
+
+        updateItem("students", editing.id, {
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          birthDate,
+          phone: phone.trim(),
+          email: editEmail.trim() || editing.email,
+          rfid: editRfid.trim() || editing.rfid,
+          isFree,
+          studentCase,
+          teacherFatherId: studentCase === "teacher_child" ? teacherFatherId : undefined,
+          caseReduction:
+            studentCase === "reduction"
+              ? ({
+                  type: caseRedType,
+                  schoolValue: caseRedSchool || 0,
+                  teacherValue: caseRedTeacher || 0,
+                } as CaseReduction)
+              : undefined,
+          unpaidTeacherIds: studentCase === "school_only" ? unpaidTeacherIds : undefined,
+        });
+
+        // Emplois du temps cochés/décochés : il ENTRE là où en est le groupe
+        // aujourd'hui, et il en SORT sans rien perdre de son historique.
+        for (const subId of subIds) {
+          if (editing.subscriptionIds.includes(subId)) continue;
+          await subscribeStudent({ studentId: editing.id, subscriptionId: subId, date: arrivalDay });
+        }
+        for (const subId of editing.subscriptionIds) {
+          if (subIds.includes(subId)) continue;
+          await unsubscribeStudent(editing.id, subId);
+        }
+
+        // Un montant saisi ici est un VERSEMENT de plus, jamais une réécriture
+        // de ce qui a déjà été encaissé.
+        for (const subId of subIds) {
+          const amount = Math.max(0, Math.round(solds[subId] || 0));
+          if (amount <= 0) continue;
+          await addSold({
+            studentId: editing.id,
+            subscriptionId: subId,
+            amount,
+            monthCode: joinPointOf(subId).monthCode,
+            description: `Solde versé (${subLabel(subId)})`,
+          });
+        }
+
+        addToast({
+          type: "success",
+          title: "Fiche enregistrée",
+          message:
+            totalSold > 0
+              ? `${subIds.length} emploi(s) du temps · ${formatDA(totalSold)} versés en plus.`
+              : `${subIds.length} emploi(s) du temps.`,
+          studentName: `${firstName} ${lastName}`,
+        });
+        setBusy(false);
+        onClose();
+      } catch (err) {
+        setBusy(false);
+        addToast({
+          type: "danger",
+          title: "Erreur",
+          message: err instanceof Error ? err.message : "Erreur lors de l'enregistrement.",
+        });
+      }
       return;
     }
 
@@ -291,7 +431,7 @@ export function CreateStudentModal({
         studentName: `${firstName} ${lastName}`,
       });
 
-      setVoucher(
+      onVoucher(
         inscriptionVoucherHtml(db, {
           student,
           language,
@@ -325,7 +465,7 @@ export function CreateStudentModal({
 
   return (
     <>
-      <Modal open={open} onClose={onClose} title="Nouvel élève" wide>
+      <Modal open onClose={onClose} title={isEdit ? "Modifier l'élève" : "Nouvel élève"} wide>
         <div className="space-y-4">
           {/* identity */}
           <div className="rounded-xl border border-line bg-canvas/30 p-3">
@@ -334,7 +474,7 @@ export function CreateStudentModal({
                 👤 Informations personnelles
               </span>
               <Badge tone="primary" className="font-mono">
-                N° {nextNumber}
+                N° {shownNumber}
               </Badge>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -360,6 +500,37 @@ export function CreateStudentModal({
               </div>
             </div>
           </div>
+
+          {/* portal login — only an existing fiche has one */}
+          {isEdit && (
+            <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                🔐 Compte du portail &amp; badge
+              </span>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-muted">
+                    Email de connexion
+                  </label>
+                  <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-muted">
+                    Nouveau mot de passe
+                  </label>
+                  <Input
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    placeholder="Laisser vide pour ne pas changer"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-muted">Carte RFID</label>
+                  <Input value={editRfid} onChange={(e) => setEditRfid(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* billing case */}
           <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
@@ -505,7 +676,10 @@ export function CreateStudentModal({
             {subIds.length > 0 && (
               <div className="space-y-2">
                 <span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-muted">
-                  <Wallet className="h-3 w-3" /> Solde versé pour chaque emploi du temps
+                  <Wallet className="h-3 w-3" />{" "}
+                  {isEdit
+                    ? "Solde à AJOUTER sur chaque emploi du temps (laisser 0 pour ne rien encaisser)"
+                    : "Solde versé pour chaque emploi du temps"}
                 </span>
                 {subIds.map((subId) => {
                   const sub = subscriptions.find((s) => s.id === subId);
@@ -524,7 +698,9 @@ export function CreateStudentModal({
                             {suggestion > 0 ? ` · mois à ${formatDA(suggestion)}` : ""}
                           </span>
                           <Badge tone="primary" className="mt-1 text-[9px]">
-                            Entre en {point.monthCode} · séance {point.slotIndex + 1}
+                            {isEdit && editing?.subscriptionIds.includes(subId)
+                              ? `Déjà inscrit · solde ${formatDA(soldFor(db, editing.id, subId))}`
+                              : `Entre en ${point.monthCode} · séance ${point.slotIndex + 1}`}
                           </Badge>
                         </div>
                         <button
@@ -538,7 +714,7 @@ export function CreateStudentModal({
                       <div className="mt-2 flex flex-wrap items-end gap-2">
                         <div>
                           <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                            Solde payé (DA)
+                            {isEdit ? "Solde à ajouter (DA)" : "Solde payé (DA)"}
                           </label>
                           <Input
                             type="number"
@@ -568,7 +744,9 @@ export function CreateStudentModal({
                 })}
 
                 <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary-50/40 px-3 py-2">
-                  <span className="text-xs font-semibold text-muted">Total versé à l&apos;inscription</span>
+                  <span className="text-xs font-semibold text-muted">
+                    {isEdit ? "Total encaissé maintenant" : "Total versé à l'inscription"}
+                  </span>
                   <strong className="text-sm text-primary">{formatDA(totalSold)}</strong>
                 </div>
 
@@ -594,19 +772,17 @@ export function CreateStudentModal({
               Annuler
             </Button>
             <Button onClick={submit} disabled={busy}>
-              {busy ? "Création…" : "Créer l'élève"}
+              {busy
+                ? isEdit
+                  ? "Enregistrement…"
+                  : "Création…"
+                : isEdit
+                  ? "Enregistrer les modifications"
+                  : "Créer l'élève"}
             </Button>
           </div>
         </div>
       </Modal>
-
-      {voucher && (
-        <PrintAsk
-          html={voucher}
-          onClose={() => setVoucher(null)}
-          question="Imprimer le bon d'inscription de l'élève ?"
-        />
-      )}
     </>
   );
 }

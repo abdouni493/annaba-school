@@ -39,12 +39,13 @@ import {
   formatDays,
   groupName,
   monthCodeLabel,
-  monthlyPriceOf,
   moduleName as moduleNameOf,
   registrationNumberOf,
   salleName,
   soldFor,
   soldStatus,
+  studentListPrice,
+  studentMonthPrice,
   studentName,
   teacherName,
   todayIso,
@@ -96,12 +97,17 @@ export function SoldManagerModal({
         const curIdx = currentCycleIndex(db, student.id, subId);
         const code = monthFilter === "current" ? `M${curIdx + 1}` : monthFilter;
         const cycle = cycleOf(db, student.id, subId, code);
-        const status = student.isFree ? "ok" : soldStatus(sold, sub.pricePerSession);
+        // Son tarif à LUI : « école seule » ne paie que la part de l'école.
+        const unit = studentListPrice(student, sub);
+        const monthPrice = studentMonthPrice(student, sub);
+        const status = student.isFree ? "ok" : soldStatus(sold, unit);
         return [
           {
             subId,
             sub,
             session,
+            unit,
+            monthPrice,
             label: session.title || moduleNameOf(db, session.moduleId) || "Emploi du temps",
             sold,
             code,
@@ -235,8 +241,8 @@ export function SoldManagerModal({
                         </span>
                         <span className="block text-[10px] text-muted">
                           {teacherName(db, r.session.teacherId)} · {cycleSizeOf(r.sub)} séances /
-                          mois · séance à {formatDA(r.sub.pricePerSession)}
-                          {monthlyPriceOf(r.sub) > 0 ? ` · mois à ${formatDA(monthlyPriceOf(r.sub))}` : ""}
+                          mois · séance à {formatDA(r.unit)}
+                          {r.monthPrice > 0 ? ` · mois à ${formatDA(r.monthPrice)}` : ""}
                         </span>
                       </div>
                       <Badge tone={alert.tone} className="gap-1 shrink-0">
@@ -297,8 +303,8 @@ export function SoldManagerModal({
                             subscriptionId: r.subId,
                             label: r.label,
                             monthCode: r.code,
-                            amount: monthDebt || monthlyPriceOf(r.sub) || 0,
-                            suggestion: monthDebt || monthlyPriceOf(r.sub) || 0,
+                            amount: monthDebt || r.monthPrice || 0,
+                            suggestion: monthDebt || r.monthPrice || 0,
                             description: "",
                           })
                         }

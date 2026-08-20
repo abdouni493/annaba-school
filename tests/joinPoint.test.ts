@@ -271,7 +271,10 @@ describe("désinscrire un élève du groupe", () => {
     const db = useData.getState();
     const student = db.students.find((s) => s.id === NEW)!;
     expect(student.subscriptionIds).not.toContain(SUB);
-    expect(student.subscriptionDates?.[SUB]).toBeUndefined();
+    // Le bloc d'inscription est CONSERVÉ et daté de la sortie : sa fiche
+    // continue d'afficher cet emploi du temps, son historique et son solde.
+    expect(student.subscriptionDates?.[SUB]?.unsubscribedAt).toBe(res.leftOn);
+    expect(res.leftOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     // L'argent et les présences ne sont pas effacés.
     expect(soldFor(db, NEW, SUB)).toBe(2400 - sub.pricePerSession);
     expect(db.attendance.filter((a) => a.studentId === NEW && a.sessionId === SES)).toHaveLength(1);

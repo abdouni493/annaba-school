@@ -31,6 +31,7 @@ import type { IndependentSession, Student } from "@/lib/types";
 import { printHtmlDocument } from "@/lib/print";
 import { formatDateFr, registrationNumberOf, studentMatches } from "@/lib/helpers";
 import { seanceLibreInvoiceHtml } from "@/lib/reports/documents";
+import { GroupSeanceSection } from "@/components/independent/GroupSeanceSection";
 import { useSettings } from "@/lib/store/settings";
 
 /** Everything the séance libre receipt needs, captured at creation time. */
@@ -418,6 +419,10 @@ export function IndependentPage() {
           <Plus className="h-4 w-4" /> Nouvelle Séance Libre
         </Button>
       </div>
+
+      {/* Séances libres vendues à un GROUPE entier — on saisit le nombre
+          d'élèves, jamais leurs noms. */}
+      <GroupSeanceSection />
 
       {/* Filters toolbar */}
       <Card className="border border-line">

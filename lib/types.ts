@@ -330,6 +330,13 @@ export interface SubscriptionDates {
    */
   joinMonthCode?: string;
   joinSlotIndex?: number;
+  /**
+   * The day reception took the student OFF this emploi du temps. The block is
+   * KEPT when he leaves — only `subscriptionIds` loses the module — so his
+   * présences, ses paiements et son solde restent lisibles sur sa fiche, datés
+   * de la sortie. Re-registering him clears it and rewrites the join point.
+   */
+  unsubscribedAt?: string;
 }
 
 /** Reduction granted to ONE student on ONE module, applied by every price
@@ -714,4 +721,44 @@ export interface IndependentSession {
   /** the teacher has already been settled for this passager's séance — a
    *  créneau attended only by passagers has no unpaid_teacher_sessions row */
   teacherPaid?: boolean;
+}
+
+/**
+ * A "séance libre de groupe": one ponctual séance sold to a WHOLE group of
+ * students at once, without naming any of them.
+ *
+ * Reception picks the teacher, the day and the hours, names the séance, types
+ * how many students came, what one of them pays and how much of that the
+ * school keeps. Everything else is arithmetic:
+ *
+ *     part enseignant d'un élève = prix élève − part école
+ *     total encaissé  = élèves × prix élève
+ *     total école     = élèves × part école
+ *     total enseignant= élèves × part enseignant
+ *
+ * Creating one posts BOTH cash movements (the money in, the teacher's pay out),
+ * so the caisse and the rapports read it like any other séance — and editing or
+ * deleting the row moves those two movements with it. The teacher's fiche de
+ * paie prints the séance WITHOUT ever showing the school's share.
+ */
+export interface GroupSeance {
+  id: string;
+  teacherId: string;
+  /** what the séance is called on every document */
+  title: string;
+  description?: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  /** how many students attended */
+  studentsCount: number;
+  /** what ONE student pays for the séance */
+  pricePerStudent: number;
+  /** how much of that ONE price the school keeps */
+  schoolPerStudent: number;
+  /** the cash movement that booked the money in — rewritten on every edit */
+  cashInId?: string;
+  /** the cash movement that paid the teacher */
+  cashOutId?: string;
+  createdAt: string;
 }

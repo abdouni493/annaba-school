@@ -39,6 +39,7 @@ import {
   sessionTimeLabel,
   studentCaseLabel,
   studentHasDebt,
+  studentListPrice,
   studentName,
   studentSoldDebtRows,
   teacherPerSeanceOf,
@@ -531,7 +532,10 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
       ? db.enrollments.find((e) => e.studentId === st.id && e.subscriptionId === sub.id)
       : undefined;
     const discount = enrollment?.discount ?? (sub ? st.subscriptionDiscounts?.[sub.id] : undefined);
-    const row = emptyMonthStudent(db, st, size, netPriceFor(listPrice, discount));
+    // Son tarif à LUI : un « école seule » ne paie que la part de l'école, donc
+    // son mois ne coûte pas le prix affiché de l'emploi du temps.
+    const own = studentListPrice(st, sub, listPrice);
+    const row = emptyMonthStudent(db, st, size, netPriceFor(own, discount));
 
     const cycle = cycles[index];
     if (cycle) {

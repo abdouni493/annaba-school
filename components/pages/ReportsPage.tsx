@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { formatDA } from "@/lib/utils";
-import { studentDebt, totalRemainingSeances } from "@/lib/helpers";
+import { groupSeanceTotals, studentDebt, totalRemainingSeances } from "@/lib/helpers";
 import {
   Calendar,
   FileText,
@@ -393,6 +393,7 @@ export function ReportsPage() {
     enrollments,
     attendance,
     independent,
+    groupSeances,
     coursework,
     subscriptions,
     categories,
@@ -484,6 +485,14 @@ export function ReportsPage() {
     const fAco = acomptes.filter((a) => inRange(a.date));
     const fAbs = absences.filter((a) => inRange(a.date));
     const fInd = independent.filter((i) => inRange(i.date));
+    // Les séances libres vendues à un GROUPE : leur recette, la part de
+    // l'école et la paie de l'enseignant, toutes trois déjà en caisse.
+    const fGroup = groupSeances.filter((g) => inRange(g.date));
+    const groupTotals = fGroup.map((g) => ({ g, t: groupSeanceTotals(g) }));
+    const groupRevenue = groupTotals.reduce((n, r) => n + r.t.total, 0);
+    const groupSchool = groupTotals.reduce((n, r) => n + r.t.schoolTotal, 0);
+    const groupTeacher = groupTotals.reduce((n, r) => n + r.t.teacherTotal, 0);
+    const groupStudents = groupTotals.reduce((n, r) => n + r.t.students, 0);
     const fUnpaidRange = unpaidTeacher.filter((u) => inRange(u.date));
 
     // Reusable cell renderers
@@ -1202,8 +1211,44 @@ export function ReportsPage() {
           },
         },
         {
+          label: "Séances libres de groupe",
+          value: inflow(groupRevenue),
+          tone: "primary",
+          icon: <Users className="h-5 w-5" />,
+          hint: `${fGroup.length} séance(s) · ${groupStudents} élève(s)`,
+          detail: {
+            columns: [
+              { label: "Date", render: (r) => dateCell(r.g.date) },
+              {
+                label: "Séance",
+                render: (r) => (
+                  <span>
+                    <strong className="block text-ink">{r.g.title}</strong>
+                    <span className="block text-[10px] text-muted">
+                      {r.g.startTime} → {r.g.endTime}
+                      {r.g.description ? ` · ${r.g.description}` : ""}
+                    </span>
+                  </span>
+                ),
+              },
+              { label: "Enseignant", render: (r) => <span className="text-muted">{tName(r.g.teacherId)}</span> },
+              { label: "Élèves", align: "right", render: (r) => <span className="font-mono">{r.t.students}</span> },
+              { label: "Prix / élève", align: "right", render: (r) => <span className="font-mono">{formatDA(r.t.pricePerStudent)}</span> },
+              { label: "Total", align: "right", render: (r) => <strong className="text-success">{formatDA(r.t.total)}</strong> },
+              { label: "École", align: "right", render: (r) => <span className="font-mono text-primary">{formatDA(r.t.schoolTotal)}</span> },
+              { label: "Enseignant", align: "right", render: (r) => <span className="font-mono text-warning">{formatDA(r.t.teacherTotal)}</span> },
+            ],
+            rows: [...groupTotals].sort((a, b) => (a.g.date < b.g.date ? 1 : -1)),
+            totalLabel: "Recette séances de groupe",
+            totalValue: inflow(groupRevenue),
+            totalTone: "success",
+            empty: "Aucune séance libre de groupe sur la période.",
+            searchable: (r) => `${r.g.title} ${r.g.description ?? ""} ${tName(r.g.teacherId)}`,
+          },
+        },
+        {
           label: "Total activités indépendantes",
-          value: inflow(independentRevenue + courseworkRevenue),
+          value: inflow(independentRevenue + courseworkRevenue + groupRevenue),
           tone: "success",
           icon: <Puzzle className="h-5 w-5" />,
         },
@@ -1218,7 +1263,12 @@ export function ReportsPage() {
             { label: "Recette séances libres", value: inflow(independentRevenue), tone: "success" },
             { label: "Stages actifs sur la période", value: `${courseworkInRange.length}` },
             { label: "Recette stages (période)", value: formatDA(courseworkRevenue), tone: "sky" },
-            { label: "Total activités indépendantes", value: inflow(independentRevenue + courseworkRevenue), tone: "success", emphasis: true },
+            { label: "Séances libres de groupe (nombre)", value: `${fGroup.length}` },
+            { label: "Élèves cumulés sur ces séances", value: `${groupStudents}` },
+            { label: "Recette séances de groupe", value: inflow(groupRevenue), tone: "success" },
+            { label: "dont part de l'école", value: formatDA(groupSchool), tone: "primary" },
+            { label: "dont part des enseignants", value: outflow(groupTeacher), tone: "danger", formula: "élèves × (prix élève − part école)" },
+            { label: "Total activités indépendantes", value: inflow(independentRevenue + courseworkRevenue + groupRevenue), tone: "success", emphasis: true },
           ],
         },
       ],
@@ -1913,6 +1963,7 @@ export function ReportsPage() {
     enrollments,
     attendance,
     independent,
+    groupSeances,
     coursework,
     subscriptions,
     categories,

@@ -60,3 +60,57 @@ make sure to connect all the interfaces and all the button action to make them u
 fix the creation of emploi du temps remove the requarement of remplire tous les champs and remove the option of requaremen on the creation for all the interfaces 
 fix the interface of create new emploi du temps make it when user select more than one day for that emploi du temps then request from him to set the starting hour and ending hour of each day
 change the logic of create new emploi du temps dont let the user select the salle until he select the days and the starting hour and the ending hour of each day then display for him the created sales that disponible on that day and hours or not disponible 
+
+
+
+
+fix the groupe liste table that displaying from the dashboard make on it button for unsbscribe the student from that group
+
+fix the creation of the students on the groupes on the dashboard or on the interface of sudents make sure to make the creation of the students on the current month and on the current seance for example we are on M2 on the seance 3 then i create new student on it then its will created on the M2 on the seance 3 and he will not be displayed exisiting on the previouse seances and the previous months 
+
+fix the interface of teacher payement its not display what the teachers have to get pay analyse the application and make sure to fix the interface of teachers payement make sure to make it display only the monthes that not payed and make sure to make it display the students that did not pay to pass them pay on the next month and make sure to make it dipsplay the payement for each student according to his case on the creation and make sure to make this interface of payment display all the not payed monthes correctly and make the payements diaplay on the interface of view detaiels on the histoy and make possibiityo f print it 
+
+fix the interface of edit button action interface make it display the exactly like the interface of create new student and let user can edit and save the edits 
+
+fix the interface of dashboard on the first page that displaying the groupes make on it option for search and option for filtering by class and by year and by modul and by teacher and let user when seach or filtering make it display the groupe directly on the first one to click on it directly
+
+fix the interface of see detailes button action interface of students make sure to app on the part of history of payements user can delete or edit the payment from the history 
+
+make option on dashboard make it when user click on group on dashboard and make payement for the student on the group then make option for delete the payement onthe same page 
+
+fix the payement of student that only pay for school make sure to make it calculate like this : 
+for example we have emploi du temps contains 4 seances and  price is 2000 and the part of school is 800 and this student only pay for the school and dont pay for the teacher 
+then make sure to make the seance price of that student is the price that will get the school (800 from 2000) divided by 4 ( the number of seances of that emploi du temps ) make sure to fix the payement of this type of students exactly like this 
+
+fix the dashboard i got it display when students are payed for a months i got it display the amout that payed fromt aht students with minus make sure to fix it 
+
+fix the interface of group that opening from the dashboard next to the button of create new student on that emploi du temps add new button for add new student existing on the data base on this emploi du temps let the user seach about it and add it on this emploi du temps to add it for his subscripitons without create it with all his personal informations because he is existing 
+
+i got problem when i unsbscribe a student from an emploi du temps when i unsubscribe it from a group i got all informations of payements and preences and absences of that emploi get expired no make sure to make them still display on the history of that student and make sure to make it display the date of unsbscription 
+
+create another shortcut on the interface of group that opening on the dashboard make it for make all students are present with possibility of searrch about student on the same interface 
+
+apply this updates then push all updates to repo without pull request make it merge code directly 
+then make sure to give me the sql code that i have to run it for this new updates 
+
+
+fix the interface of dashboard make it display how much emploi du temps user did for it the present and how much emploi du temps rests on that day 
+
+change the design of display the emplois du temps on the interface of dashboard make it better deisng and make each emploi with diffrent color 
+and make the table dispaying like this : 
+first column for timing for exammple from 8:00 to 10:00 
+and for the next columns make it display the salles under it the emploi name for each time for that sale with possibility of click on each one to see the groupe detailes make sure to make this displaying timings on dashboard with better design and better organization and better colors
+
+add button on the nave bare make it for hide and unhide the side bare
+
+fix the interface of students create new button next to the button of students make it when user click on it then let him seach about a student with name or creation id number of phone number let him select it then when user select the student let it dispay all the emploi du temmps that student is subscribed on them let him select the emploi du temps and display for him the presenses of that month of that selected groupe and let it display how much have to pay that student 
+
+create new button on the interface of seance libre on the side bare make it for create seance libre for group of students without set the names of the students just let the user search and select the teacher and let user set the date and the hour of starting and hour of ending and desciption about the name of this seance libre and let user type how much the total number of students and the price of the seance and how much will get the school and make it calculate how much will get the teacher from onw seance and make it calculate how much total price that will get the school and the teacher from this seance libre for this groupe when user create it ask him for print the fiche de pay for the teacher make sure to make it display all the details about it without display how much the school will get 
+and make it display on the histoy of payement for that teacher 
+and make button action for edit and delete and view details for this created seance libre for group and amek it if user edit or delete than its will edit or delete from the history of that teacher and from the caisse and repports interface 
+make sure to make this informations of seance libre of group display also on the caisse interface and on the repports interface with all details 
+
+fix the interface of dashboard create on it new button for shortcut create new deposit for the caisse make it exactly like the same interface of create new deposit of the interface of caisse on the side bare let user set the amount and the description and the date 
+and make another button shorcut for create new expens on the same interface of dashboard and make another button also for create new withdrwal money from the cash
+
+apply this updates then give me the sql code that i have to run for this new updates then push all updates to repo without pull request make sure to merge code directly to repo

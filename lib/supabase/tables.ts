@@ -219,6 +219,12 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     fields: ["id", "studentId", "passagerName", "itemLabel", "price", "date", "sessionId",
              "startTime", "endTime", "createdAt", "teacherPaid"],
   },
+  groupSeances: {
+    table: "group_seances", pk: "id", pkField: "id",
+    fields: ["id", "teacherId", "title", "description", "date", "startTime", "endTime",
+             "studentsCount", "pricePerStudent", "schoolPerStudent", "cashInId",
+             "cashOutId", "createdAt"],
+  },
 };
 
 /** Dependency order: safe for inserts, reverse it for deletes. */

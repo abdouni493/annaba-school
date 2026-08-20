@@ -1193,5 +1193,7 @@ function rawSeed(): Database {
         teacherPaid: false,
       },
     ],
+    // Séances libres vendues à un groupe entier : la base démarre sans aucune.
+    groupSeances: [],
   };
 }

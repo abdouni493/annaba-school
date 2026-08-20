@@ -7,6 +7,7 @@ import { Topbar } from "./Topbar";
 import { PageTransition } from "./PageTransition";
 import { useSession } from "@/lib/store/session";
 import { useSettings } from "@/lib/store/settings";
+import { useSidebar } from "@/lib/store/ui";
 
 import { GlobalRFIDListener } from "@/components/controls/GlobalRFIDListener";
 
@@ -16,6 +17,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const user = useSession((s) => s.user);
   const hydrated = useSession((s) => s.hydrated);
   const isRTL = useSettings((s) => s.language) === "ar";
+  const sidebarHidden = useSidebar((s) => s.hidden);
 
   useEffect(() => {
     if (hydrated && !user) router.replace("/login");
@@ -30,8 +32,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-dvh overflow-hidden bg-canvas">
       <GlobalRFIDListener />
-      {/* Desktop sidebar */}
-      <div className="hidden lg:block">
+      {/* Desktop sidebar — hidden on demand from the navbar */}
+      <div className={sidebarHidden ? "hidden" : "hidden lg:block"}>
         <Sidebar />
       </div>
 

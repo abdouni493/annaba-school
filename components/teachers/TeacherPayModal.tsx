@@ -209,6 +209,25 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
     m.students.filter((st) => st.debt > 0).map((st) => ({ month: m, student: st })),
   );
 
+  /**
+   * Ce que l'enseignant doit toucher, TOUS emplois du temps confondus — la
+   * question à laquelle cet écran répond en premier. Les mois déjà réglés n'y
+   * entrent pas : ils ne sont même plus listés.
+   */
+  const owed = emplois.reduce(
+    (acc, e) => {
+      acc.gross += e.gross;
+      acc.settled += e.settled;
+      acc.open += e.open;
+      acc.withheld += e.withheld;
+      acc.payable += e.payable;
+      return acc;
+    },
+    { gross: 0, settled: 0, open: 0, withheld: 0, payable: 0 },
+  );
+  const openMonths = allMonths.filter((m) => m.open > 0);
+  const closedOwing = allMonths.filter((m) => m.state === "done" && m.payable > 0);
+
   /** Les mois clos non réglés que l'écran a cochés tout seul. */
   const suggested = defaultPayableMonthKeys(emplois);
   const runningOnly = suggested.length === 0 && allMonths.some((m) => m.payable > 0);
@@ -484,7 +503,34 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
               )}
             </div>
 
-            {/* ---- résumé --------------------------------------------- */}
+            {/* ---- ce qu'il doit toucher, avant toute sélection --------- */}
+            <div className="space-y-2 rounded-2xl border-2 border-primary/30 bg-primary-50/40 p-4">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                Ce que cet enseignant doit toucher
+              </span>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat label="Généré (non réglé)" value={formatDA(owed.open)} tone="text-ink" />
+                <Stat
+                  label="Payable maintenant"
+                  value={formatDA(owed.payable)}
+                  tone="text-success"
+                />
+                <Stat
+                  label="Retenu (élèves en dette)"
+                  value={formatDA(owed.withheld)}
+                  tone={owed.withheld > 0 ? "text-danger" : "text-muted"}
+                />
+                <Stat label="Déjà réglé" value={formatDA(owed.settled)} tone="text-muted" />
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted">
+                {openMonths.length} mois non réglé(s) sur {emplois.length} emploi(s) du temps —
+                dont <strong className="text-primary">{closedOwing.length} mois clos</strong>. Les
+                mois déjà payés ne sont plus listés : ce que vous voyez ci-dessous est exactement ce
+                qui reste dû.
+              </p>
+            </div>
+
+            {/* ---- résumé de la sélection ------------------------------ */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Mois réglés" value={String(chosen.length)} />
               <Stat label="Présences payées" value={String(chosenDues.length)} tone="text-ink" />
@@ -993,6 +1039,7 @@ function MonthLine({
                 <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
                   <th className="py-1">N°</th>
                   <th className="py-1">Élève</th>
+                  <th className="py-1 text-right">Son tarif</th>
                   <th className="py-1 text-center">Séances</th>
                   <th className="py-1 text-center">P / A</th>
                   <th className="py-1 text-right">Versé</th>
@@ -1032,6 +1079,10 @@ function MonthLine({
                           </span>
                         )}
                       </td>
+                      <td className="py-1.5 text-right font-mono text-muted">
+                        {formatDA(st.unitPrice)}
+                        <span className="block text-[8px]">séance · {formatDA(st.expected)} / mois</span>
+                      </td>
                       <td className="py-1.5 text-center font-mono">
                         {st.done}/{st.size}
                       </td>
@@ -1070,6 +1121,7 @@ function MonthLine({
                         Passager
                       </Badge>
                     </td>
+                    <td className="py-1.5 text-right font-mono text-muted">{formatDA(p.price)}</td>
                     <td className="py-1.5 text-center font-mono">1</td>
                     <td className="py-1.5 text-center font-mono text-muted">1 / 0</td>
                     <td className="py-1.5 text-right font-mono text-success">

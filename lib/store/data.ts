@@ -6,10 +6,12 @@ import {
   cycleSizeOf,
   currentCycleCode,
   joinPointFor,
+  groupSeanceTotals,
   netPriceFor,
   sessionTimesOn,
   soldFor,
   studentHasDebt,
+  studentListPrice,
 } from "@/lib/helpers";
 import type {
   AbsencePenalty,
@@ -27,6 +29,7 @@ import type {
   FreePeriod,
   FreePeriodStat,
   Group,
+  GroupSeance,
   IndependentSession,
   Module,
   ModuleAbsenceRule,
@@ -94,6 +97,8 @@ export interface Database {
   notifications: Notification[];
   coursework: Coursework[];
   independent: IndependentSession[];
+  /** séances libres vendues à un GROUPE d'élèves, sans nommer personne */
+  groupSeances: GroupSeance[];
 }
 
 /** Ids are generated locally now (demo mode); the prefix is kept so the ~100
@@ -475,7 +480,37 @@ interface DataActions {
   unsubscribeStudent: (
     studentId: string,
     subscriptionId: string,
-  ) => Promise<{ ok: boolean; balance?: number }>;
+  ) => Promise<{ ok: boolean; balance?: number; leftOn?: string }>;
+  /**
+   * Removes ONE money movement of a student from his history: the solde it
+   * credited is taken back off the emploi du temps, and the cash movement it
+   * posted leaves the caisse with it. Used by the fiche élève and by the
+   * group's présence sheet, so a mis-typed encaissement is undone where it was
+   * made.
+   */
+  deleteStudentPayment: (
+    paymentId: string,
+  ) => Promise<{ ok: boolean; balance?: number; amount?: number; messageKey?: string }>;
+  /**
+   * Corrects ONE money movement: the amount, the month it is booked on, its
+   * date or its wording. The solde moves by exactly the difference, and the
+   * caisse follows.
+   */
+  updateStudentPayment: (
+    paymentId: string,
+    fields: { amount?: number; monthCode?: string; description?: string; date?: string },
+  ) => Promise<{ ok: boolean; balance?: number; messageKey?: string }>;
+  /**
+   * Creates or rewrites a "séance libre de groupe". Both cash movements — the
+   * money in and the teacher's pay out — are written, rewritten or removed
+   * with the row, so the caisse, la fiche de l'enseignant et les rapports ne
+   * peuvent pas diverger.
+   */
+  saveGroupSeance: (
+    input: Omit<GroupSeance, "cashInId" | "cashOutId" | "createdAt"> & { createdAt?: string },
+  ) => Promise<{ ok: boolean; id?: string }>;
+  /** Deletes a séance libre de groupe and both of its cash movements. */
+  deleteGroupSeance: (id: string) => Promise<{ ok: boolean }>;
   /** Uses up one séance of an inscription (attendance). */
   consumeSeance: (
     enrollmentId: string,
@@ -556,7 +591,7 @@ function enrollmentsOf(db: Database, student: Student): EnrollmentView[] {
         subscriptionId: subId,
         sessionId: sub.sessionId,
         session,
-        price: netPriceFor(sub.pricePerSession, discount),
+        price: netPriceFor(studentListPrice(student, sub), discount),
         discount,
         startDate: row?.startDate ?? dates?.startDate,
         expiryDate: row?.expiryDate ?? dates?.expiryDate,
@@ -893,7 +928,7 @@ export const useData = create<DataStore>((set, get) => ({
     // Net price: his OWN tariff (with his reduction) even on a sibling group.
     // It is no longer charged to anybody — it only sizes the teacher's share.
     const scannedSub = db.subscriptions.find((s) => s.sessionId === matched.id);
-    const fallbackPrice = scannedSub?.pricePerSession ?? 0;
+    const fallbackPrice = studentListPrice(student, scannedSub, 0);
     const price = enrollment?.price ?? fallbackPrice;
 
     const enrollmentStart = enrollment?.startDate;
@@ -1088,7 +1123,7 @@ export const useData = create<DataStore>((set, get) => ({
     let enrollmentStart = enrollment?.startDate;
     if (price === undefined) {
       if (!session.isOpen) return { ok: false, messageKey: "attendance.notEnrolled" };
-      price = markedSub?.pricePerSession ?? session.openPrice ?? 0;
+      price = studentListPrice(student, markedSub, session.openPrice ?? 0);
       enrollmentStart = undefined;
     }
 
@@ -1229,7 +1264,9 @@ export const useData = create<DataStore>((set, get) => ({
     }
     const discount =
       enrollment?.discount ?? (sub ? student.subscriptionDiscounts?.[sub.id] : undefined);
-    const listPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
+    // « École seule » : il ne paie que la part de l'école, jamais celle de
+    // l'enseignant — que personne ne lui versera.
+    const listPrice = studentListPrice(student, sub, session.openPrice ?? 0);
 
     const existing = db.attendance.find(
       (a) => a.studentId === studentId && a.sessionId === sessionId && dateKey(a.timestamp) === date,
@@ -1412,7 +1449,7 @@ export const useData = create<DataStore>((set, get) => ({
     );
     const enrollmentId = existing?.id ?? uid("enr");
     const packSeances = cycleSizeOf(sub);
-    const unit = Math.max(1, netPriceFor(sub.pricePerSession, existing?.discount));
+    const unit = Math.max(1, netPriceFor(studentListPrice(student, sub), existing?.discount));
 
     const enrollment: Enrollment = existing
       ? { ...existing, balance: (existing.balance ?? 0) + credit }
@@ -2580,6 +2617,9 @@ export const useData = create<DataStore>((set, get) => ({
                   startDate: st.subscriptionDates?.[subscriptionId]?.startDate ?? day,
                   joinMonthCode: point.monthCode,
                   joinSlotIndex: point.slotIndex,
+                  // He is back on the roster: the old leaving date is history
+                  // no more.
+                  unsubscribedAt: undefined,
                 },
               },
             }
@@ -2596,13 +2636,17 @@ export const useData = create<DataStore>((set, get) => ({
     if (!student || !student.subscriptionIds.includes(subscriptionId)) return { ok: false };
     const balance = soldFor(db, studentId, subscriptionId);
 
+    const leftOn = dateKey(new Date());
+
     set((state) => ({
       students: state.students.map((st) => {
         if (st.id !== studentId) return st;
-        // The arrival point goes with the inscription: re-registering him later
-        // must land him where the group stands THEN, not where it stood before.
+        // The block is KEPT and simply dated: his présences, ses paiements et
+        // son solde restent lisibles sur sa fiche, avec le jour de la sortie.
+        // Re-registering him rewrites the join point and clears that date, so
+        // he lands where the group stands THEN, not where it stood before.
         const dates = { ...(st.subscriptionDates ?? {}) };
-        delete dates[subscriptionId];
+        dates[subscriptionId] = { ...(dates[subscriptionId] ?? {}), unsubscribedAt: leftOn };
         return {
           ...st,
           subscriptionIds: st.subscriptionIds.filter((id) => id !== subscriptionId),
@@ -2611,7 +2655,163 @@ export const useData = create<DataStore>((set, get) => ({
       }),
     }));
 
-    return { ok: true, balance };
+    return { ok: true, balance, leftOn };
+  },
+
+  deleteStudentPayment: async (paymentId) => {
+    const db = get();
+    const payment = db.payments.find((p) => p.id === paymentId);
+    if (!payment) return { ok: false };
+    // Un règlement de dette a effacé des restes à payer répartis sur plusieurs
+    // achats, sans garder lesquels : le supprimer laisserait ces dettes
+    // soldées pour rien. Il se corrige en réencaissant, pas en effaçant.
+    if (payment.type === "debt_payment") return { ok: false, messageKey: "payment.debtLocked" };
+
+    const credit = Math.max(0, Math.round(payment.amountPaid || 0));
+    const enrollment = db.enrollments.find(
+      (e) =>
+        e.studentId === payment.studentId &&
+        (payment.enrollmentId ? e.id === payment.enrollmentId : e.subscriptionId === payment.subscriptionId),
+    );
+    // The caisse row written alongside carries the very same timestamp and
+    // amount — that is what identifies it, no extra column needed.
+    const cashRow = db.cash.find(
+      (c) => c.type === "student_payment" && c.date === payment.date && c.amount === credit,
+    );
+    const balanceAfter = (enrollment?.balance ?? 0) - credit;
+
+    set((state) => ({
+      payments: state.payments.filter((p) => p.id !== paymentId),
+      enrollments: enrollment
+        ? state.enrollments.map((e) =>
+            e.id === enrollment.id ? { ...e, balance: (e.balance ?? 0) - credit } : e,
+          )
+        : state.enrollments,
+      cash: cashRow ? state.cash.filter((c) => c.id !== cashRow.id) : state.cash,
+    }));
+
+    return { ok: true, balance: balanceAfter, amount: credit };
+  },
+
+  updateStudentPayment: async (paymentId, fields) => {
+    const db = get();
+    const payment = db.payments.find((p) => p.id === paymentId);
+    if (!payment) return { ok: false };
+    if (payment.type === "debt_payment" && fields.amount !== undefined) {
+      return { ok: false, messageKey: "payment.debtLocked" };
+    }
+
+    const before = Math.max(0, Math.round(payment.amountPaid || 0));
+    const after = fields.amount === undefined ? before : Math.max(0, Math.round(fields.amount));
+    const delta = after - before;
+    const enrollment = db.enrollments.find(
+      (e) =>
+        e.studentId === payment.studentId &&
+        (payment.enrollmentId ? e.id === payment.enrollmentId : e.subscriptionId === payment.subscriptionId),
+    );
+    const cashRow = db.cash.find(
+      (c) => c.type === "student_payment" && c.date === payment.date && c.amount === before,
+    );
+    const nextDate = fields.date
+      ? fields.date.length === 10
+        ? `${fields.date}T${payment.date.slice(11) || "12:00:00.000Z"}`
+        : new Date(fields.date).toISOString()
+      : payment.date;
+
+    const patched: Payment = {
+      ...payment,
+      amountPaid: after,
+      // A purchase priced at its net total keeps its arithmetic straight: what
+      // is not handed over is exactly what stays owed.
+      rest: Math.max(0, Math.round((payment.netTotal || after) - after)),
+      monthCode: fields.monthCode ?? payment.monthCode,
+      description: fields.description ?? payment.description,
+      date: nextDate,
+    };
+
+    set((state) => ({
+      payments: state.payments.map((p) => (p.id === paymentId ? patched : p)),
+      enrollments:
+        enrollment && delta !== 0
+          ? state.enrollments.map((e) =>
+              e.id === enrollment.id ? { ...e, balance: (e.balance ?? 0) + delta } : e,
+            )
+          : state.enrollments,
+      cash: cashRow
+        ? state.cash.map((c) =>
+            c.id === cashRow.id ? { ...c, amount: after, date: nextDate } : c,
+          )
+        : state.cash,
+    }));
+
+    return { ok: true, balance: (enrollment?.balance ?? 0) + delta };
+  },
+
+  // ---- Séances libres de groupe --------------------------------------------
+  saveGroupSeance: async (input) => {
+    const db = get();
+    const teacher = db.teachers.find((t) => t.id === input.teacherId);
+    if (!teacher) return { ok: false };
+
+    const existing = db.groupSeances.find((g) => g.id === input.id);
+    const totals = groupSeanceTotals(input);
+    const when = input.date.length === 10 ? `${input.date}T12:00:00.000Z` : input.date;
+    const label = input.title?.trim() || "Séance libre de groupe";
+
+    const cashInId = existing?.cashInId ?? uid("csh");
+    const cashOutId = existing?.cashOutId ?? uid("csh");
+    const cashIn: CashTransaction = {
+      id: cashInId,
+      type: "student_payment",
+      amount: totals.total,
+      date: when,
+      description: `Séance libre de groupe : ${label} — ${totals.students} élève(s) × ${totals.pricePerStudent} DA`,
+    };
+    const cashOut: CashTransaction = {
+      id: cashOutId,
+      type: "teacher_payment",
+      amount: -totals.teacherTotal,
+      date: when,
+      description: `Séance libre de groupe : ${label} — ${teacher.firstName} ${teacher.lastName}`,
+    };
+
+    const row: GroupSeance = {
+      ...input,
+      title: label,
+      studentsCount: totals.students,
+      pricePerStudent: totals.pricePerStudent,
+      schoolPerStudent: totals.schoolPerStudent,
+      cashInId,
+      cashOutId,
+      createdAt: existing?.createdAt ?? input.createdAt ?? new Date().toISOString(),
+    };
+
+    set((state) => {
+      // The two movements are rewritten in place: editing the séance can never
+      // leave a stale amount behind in the caisse or in the rapports.
+      const cash = state.cash.filter((c) => c.id !== cashInId && c.id !== cashOutId);
+      cash.push(cashIn);
+      if (totals.teacherTotal > 0) cash.push(cashOut);
+      return {
+        groupSeances: existing
+          ? state.groupSeances.map((g) => (g.id === row.id ? row : g))
+          : [...state.groupSeances, row],
+        cash,
+      };
+    });
+
+    return { ok: true, id: row.id };
+  },
+
+  deleteGroupSeance: async (id) => {
+    const db = get();
+    const row = db.groupSeances.find((g) => g.id === id);
+    if (!row) return { ok: false };
+    set((state) => ({
+      groupSeances: state.groupSeances.filter((g) => g.id !== id),
+      cash: state.cash.filter((c) => c.id !== row.cashInId && c.id !== row.cashOutId),
+    }));
+    return { ok: true };
   },
 
   setStudentPassword: async (studentId, password) => {

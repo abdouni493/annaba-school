@@ -6,6 +6,7 @@ import type {
   Day,
   DayTime,
   Enrollment,
+  GroupSeance,
   Payment,
   ScheduleSession,
   SchoolClass,
@@ -247,9 +248,54 @@ export function discountLabel(discount?: SubscriptionDiscount): string {
   return discount.type === "percent" ? `-${discount.value}%` : `-${discount.value} DA`;
 }
 
+/**
+ * What ONE séance of a subscription costs the SCHOOL side of the split:
+ * `part école du mois ÷ séances du mois`. With a month at 2000 DA over 4
+ * séances of which the school keeps 800, that is 200 DA — not 500.
+ *
+ * Falls back on the ordinary séance price when the emploi carries no monthly
+ * split at all (there is then nothing to take the school's part out of).
+ */
+export function schoolPerSeanceOf(sub?: Subscription): number {
+  if (!sub) return 0;
+  const n = sub.monthlySeances ?? 0;
+  if (n <= 0) return Math.max(0, Math.round(sub.pricePerSession ?? 0));
+  return Math.max(0, Math.round(schoolMonthShareOf(sub) / n));
+}
+
+/**
+ * The LIST price of one séance for one student — before his own reduction.
+ *
+ * Everybody pays the emploi's séance price, with ONE exception: an
+ * « école seule » student pays only what the school keeps, because the teacher
+ * is deliberately not paid for him. Charging him the full price would collect
+ * a teacher's share nobody is ever going to hand over.
+ */
+export function studentListPrice(
+  student: Student | undefined,
+  sub: Subscription | undefined,
+  fallback = 0,
+): number {
+  const base = Math.max(0, Math.round(sub?.pricePerSession ?? fallback));
+  if (!student || !sub) return base;
+  if (student.studentCase !== "school_only") return base;
+  const schoolPart = schoolPerSeanceOf(sub);
+  return schoolPart > 0 ? schoolPart : base;
+}
+
+/** What a full month of an emploi costs one student — his séance price × the
+ *  séances of the pack, or the pack price when he pays the ordinary tariff. */
+export function studentMonthPrice(student: Student | undefined, sub?: Subscription): number {
+  if (!sub) return 0;
+  if (student?.studentCase === "school_only") {
+    return Math.max(0, Math.round(schoolMonthShareOf(sub)));
+  }
+  return monthlyPriceOf(sub) || Math.round((sub.pricePerSession ?? 0) * cycleSizeOf(sub));
+}
+
 /** Net price of one séance for a given student on a given subscription. */
 export function studentSeancePrice(student: Student, sub: Subscription): number {
-  return netPriceFor(sub.pricePerSession, student.subscriptionDiscounts?.[sub.id]);
+  return netPriceFor(studentListPrice(student, sub), student.subscriptionDiscounts?.[sub.id]);
 }
 
 export function subscriptionLabel(db: Database, sub: Subscription): string {
@@ -761,6 +807,37 @@ export function studentUnpaidPayments(db: Database, studentId: string): Payment[
   return db.payments.filter((p) => p.studentId === studentId && p.rest > 0);
 }
 
+/**
+ * Every emploi du temps a student has EVER been on — the ones he follows today
+ * plus the ones he has been taken off. A désinscription only removes him from
+ * the roster: his présences, ses paiements et son solde restent, so every
+ * history screen reads this list rather than `subscriptionIds`.
+ */
+export function studentSubscriptionHistory(db: Database, student: Student): string[] {
+  const ids = new Set(student.subscriptionIds);
+  for (const id of Object.keys(student.subscriptionDates ?? {})) ids.add(id);
+  for (const e of db.enrollments) if (e.studentId === student.id) ids.add(e.subscriptionId);
+  return [...ids].filter((id) => db.subscriptions.some((s) => s.id === id));
+}
+
+/** The emplois he has LEFT — those in his history he no longer follows. */
+export function studentPastSubscriptions(db: Database, student: Student): string[] {
+  return studentSubscriptionHistory(db, student).filter(
+    (id) => !student.subscriptionIds.includes(id),
+  );
+}
+
+/** The day a student was taken off an emploi du temps, when he was. */
+export function unsubscribedAtOf(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+): string | undefined {
+  const student = db.students.find((s) => s.id === studentId);
+  if (!student || student.subscriptionIds.includes(subscriptionId)) return undefined;
+  return student.subscriptionDates?.[subscriptionId]?.unsubscribedAt;
+}
+
 /** One emploi du temps a student is behind on, for ONE of its months. */
 export interface SoldDebtRow {
   subscriptionId: string;
@@ -779,7 +856,9 @@ export function studentSoldDebtRows(db: Database, studentId: string): SoldDebtRo
   const student = db.students.find((s) => s.id === studentId);
   if (!student) return [];
   const out: SoldDebtRow[] = [];
-  for (const subId of student.subscriptionIds) {
+  // The emplois he LEFT are included: leaving a group never cancels what is
+  // still owed on it, and the fiche must keep showing that money.
+  for (const subId of studentSubscriptionHistory(db, student)) {
     const sub = db.subscriptions.find((s) => s.id === subId);
     if (!sub) continue;
     for (const cycle of enrollmentCycles(db, studentId, subId)) {
@@ -1160,4 +1239,62 @@ export function attendanceOn(
   return db.attendance.find(
     (a) => a.studentId === studentId && a.sessionId === sessionId && dayKeyOf(a.timestamp) === date,
   );
+}
+
+
+// ---- Séances libres de groupe ----------------------------------------------
+/** Everything a "séance libre de groupe" is worth, from the three numbers
+ *  reception typed. Never negative: the school's part is capped at the price. */
+export interface GroupSeanceTotals {
+  students: number;
+  pricePerStudent: number;
+  schoolPerStudent: number;
+  /** what ONE student earns the teacher */
+  teacherPerStudent: number;
+  /** élèves × prix élève */
+  total: number;
+  /** élèves × part école */
+  schoolTotal: number;
+  /** élèves × part enseignant — what the fiche de paie pays */
+  teacherTotal: number;
+}
+
+export function groupSeanceTotals(seance: {
+  studentsCount: number;
+  pricePerStudent: number;
+  schoolPerStudent: number;
+}): GroupSeanceTotals {
+  const students = Math.max(0, Math.round(seance.studentsCount || 0));
+  const price = Math.max(0, Math.round(seance.pricePerStudent || 0));
+  const school = Math.min(Math.max(0, Math.round(seance.schoolPerStudent || 0)), price);
+  const teacherPer = price - school;
+  return {
+    students,
+    pricePerStudent: price,
+    schoolPerStudent: school,
+    teacherPerStudent: teacherPer,
+    total: students * price,
+    schoolTotal: students * school,
+    teacherTotal: students * teacherPer,
+  };
+}
+
+/** The séances libres de groupe of one teacher, most recent first. */
+export function teacherGroupSeances(db: Database, teacherId: string): GroupSeance[] {
+  return db.groupSeances
+    .filter((g) => g.teacherId === teacherId)
+    .sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
+}
+
+/** What the séances libres de groupe have paid a teacher in total. */
+export function teacherGroupSeanceTotal(db: Database, teacherId: string): number {
+  return teacherGroupSeances(db, teacherId).reduce(
+    (s, g) => s + groupSeanceTotals(g).teacherTotal,
+    0,
+  );
+}
+
+/** Readable hours of a séance libre de groupe. */
+export function groupSeanceTimeLabel(g: GroupSeance): string {
+  return `${g.startTime || "--:--"} → ${g.endTime || "--:--"}`;
 }
