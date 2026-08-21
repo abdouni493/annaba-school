@@ -36,6 +36,7 @@ import { Input, Select } from "@/components/ui/SearchInput";
 import { TeacherPages } from "@/components/pages/TeacherPages";
 import { PresenceSheet } from "@/components/attendance/PresenceSheet";
 import { CreateStudentModal } from "@/components/students/CreateStudentModal";
+import { StudentSituationModal } from "@/components/students/StudentSituationModal";
 import { formatDA } from "@/lib/utils";
 import {
   DAY_LABELS_FR,
@@ -48,6 +49,8 @@ import {
   moduleName as moduleNameOf,
   salleName,
   sessionCurrentMonthCode,
+  sessionSalleIds,
+  sessionSalleOn,
   sessionTimesOn,
   teacherName,
 } from "@/lib/helpers";
@@ -65,6 +68,7 @@ import {
   Receipt,
   Search,
   UserPlus,
+  UserSearch,
   Users,
   Wallet,
   X,
@@ -111,6 +115,8 @@ function AdminDashboard() {
   const [openDate, setOpenDate] = useState<string>(todayIso);
   const [month, setMonth] = useState<string>("M1");
   const [createOpen, setCreateOpen] = useState(false);
+  /** « Situation d'un élève » : le tableau de tous ses emplois du temps. */
+  const [situationOpen, setSituationOpen] = useState(false);
   /** the emploi the create screen arrives pre-ticked on */
   const [createSubIds, setCreateSubIds] = useState<string[]>([]);
 
@@ -251,7 +257,7 @@ function AdminDashboard() {
         const haystack = [
           sessionTitle(s),
           groupName(db, s.groupId),
-          salleName(db, s.salleId),
+          sessionSalleIds(s).map((id) => salleName(db, id)).join(" "),
           teacherName(db, s.teacherId),
           classes.find((c) => c.id === s.classId)?.name ?? "",
           formatDays(s.days),
@@ -289,7 +295,9 @@ function AdminDashboard() {
       const { startTime, endTime } = sessionTimesOn(s, dow);
       const slot = `${startTime}|${endTime}`;
       if (!slotKeys.has(slot)) slotKeys.set(slot, { start: startTime, end: endTime });
-      const salleId = s.salleId || "__none__";
+      // La salle DU JOUR : un emploi qui tourne samedi en Salle A et mardi en
+      // Salle B se range dans la bonne colonne chaque jour.
+      const salleId = sessionSalleOn(s, dow) || "__none__";
       if (!salleIds.includes(salleId)) salleIds.push(salleId);
       const key = `${slot}::${salleId}`;
       const list = cells.get(key);
@@ -373,6 +381,11 @@ function AdminDashboard() {
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => openCreateFor([])} className="gap-2">
             <UserPlus className="h-4 w-4" /> Nouvel élève
+          </Button>
+          {/* « Il en est où ? » — la question du parent au comptoir, tous ses
+              emplois du temps dans un seul tableau, encaissement compris. */}
+          <Button variant="outline" onClick={() => setSituationOpen(true)} className="gap-2">
+            <UserSearch className="h-4 w-4 text-primary" /> Situation d&apos;un élève
           </Button>
           <Button variant="outline" onClick={() => openCash("deposit")} className="gap-2">
             <ArrowDownLeft className="h-4 w-4 text-success" /> Dépôt
@@ -476,7 +489,8 @@ function AdminDashboard() {
                             {sessionTitle(s)}
                           </strong>
                           <span className="block text-[10px] text-muted">
-                            Groupe {groupName(db, s.groupId)} · {salleName(db, s.salleId)} ·{" "}
+                            Groupe {groupName(db, s.groupId)} ·{" "}
+                            {salleName(db, sessionSalleOn(s, runsToday ? dow : s.days[0]))} ·{" "}
                             {teacherName(db, s.teacherId)}
                           </span>
                           <span className="block text-[10px] text-muted">
@@ -728,6 +742,10 @@ function AdminDashboard() {
           </div>
         </Modal>
       )}
+
+      {/* Situation d'un élève : tous ses emplois du temps, mois par mois, avec
+          l'encaissement sur place */}
+      {situationOpen && <StudentSituationModal onClose={() => setSituationOpen(false)} />}
 
       {/* Caisse — dépôt / dépense / retrait, la même saisie que l'écran Caisse */}
       {cashKind && (

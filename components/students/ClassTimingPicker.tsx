@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Clock, MapPin, Search, Users } from "lucide-react";
+import { Clock, MapPin, Search, Users, X } from "lucide-react";
 import { Input, Select } from "@/components/ui/SearchInput";
 import { useData } from "@/lib/store/data";
 import {
@@ -165,6 +165,31 @@ export function useClassTimings() {
     return sub.pricePerSession;
   };
 
+  /**
+   * The catalogue entry of ONE subscription — what the chips need to be able to
+   * untick an emploi du temps without going back through its level and year.
+   */
+  const timingOf = (subId: string): ClassTimingOption | null => {
+    const sub = subscriptions.find((s) => s.id === subId);
+    const session = sub && sessions.find((se) => se.id === sub.sessionId);
+    if (!session) return null;
+    return timingsOf(session.classId).find((t) => t.subId === subId) ?? null;
+  };
+
+  /**
+   * WHERE a subscription sits in the catalogue: the level and the year of its
+   * class. The enrollment picker opens there when a student already follows it,
+   * instead of on the default primaire/1AP where his emplois are invisible.
+   */
+  const levelYearOf = (subId: string): { level: LevelValue; year: string } | null => {
+    const sub = subscriptions.find((s) => s.id === subId);
+    const session = sub && sessions.find((se) => se.id === sub.sessionId);
+    const cls = session && classes.find((c) => c.id === session.classId);
+    if (!cls) return null;
+    if (cls.type === "formation") return { level: "formation", year: "" };
+    return { level: (cls.coursLevel ?? "primaire") as LevelValue, year: cls.year ?? "" };
+  };
+
   /** Human label of a subscription (module · group), for the selected chips. */
   const subLabel = (subId: string): string => {
     const sub = subscriptions.find((s) => s.id === subId);
@@ -176,7 +201,7 @@ export function useClassTimings() {
     return grp ? `${mod} · ${grp}` : mod;
   };
 
-  return { timingsOf, timingsForLevelYear, subCost, subLabel };
+  return { timingsOf, timingsForLevelYear, timingOf, levelYearOf, subCost, subLabel };
 }
 
 /**
@@ -196,9 +221,22 @@ export function ClassTimingPicker({
   onToggle: (option: ClassTimingOption) => void;
   showTotal?: boolean;
 }) {
-  const { timingsForLevelYear, subCost, subLabel } = useClassTimings();
-  const [level, setLevel] = useState<LevelValue>("primaire");
-  const [year, setYear] = useState<string>(timingYearOptions("primaire")[0] ?? "");
+  const { timingsForLevelYear, timingOf, levelYearOf, subCost, subLabel } = useClassTimings();
+  /**
+   * L'écran s'ouvre LÀ OÙ L'ÉLÈVE EST DÉJÀ : le niveau et l'année de sa première
+   * inscription. En modification, ses emplois du temps sont donc visibles et
+   * décochables tout de suite, au lieu d'être cachés derrière un primaire/1AP
+   * qui ne le concerne pas.
+   */
+  const start = useMemo(
+    () => (selectedSubIds.length ? levelYearOf(selectedSubIds[0]) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const [level, setLevel] = useState<LevelValue>(start?.level ?? "primaire");
+  const [year, setYear] = useState<string>(
+    start?.year || timingYearOptions(start?.level ?? "primaire")[0] || "",
+  );
   const [search, setSearch] = useState("");
 
   const years = timingYearOptions(level);
@@ -369,17 +407,32 @@ export function ClassTimingPicker({
         </div>
       )}
 
-      {/* The selected timings, listed so several level/year visits stay visible */}
+      {/* Les créneaux cochés — y compris ceux d'un AUTRE niveau que celui affiché.
+          Un clic sur la croix les décoche sans avoir à retrouver leur niveau et
+          leur année dans la liste. */}
       {selectedSubIds.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {selectedSubIds.map((id) => (
-            <span
-              key={id}
-              className="rounded-lg border border-primary/30 bg-primary-50/50 px-2 py-1 text-[10px] font-semibold text-ink"
-            >
-              {subLabel(id)} · {formatDA(subCost(id))}
-            </span>
-          ))}
+          {selectedSubIds.map((id) => {
+            const option = timingOf(id);
+            return (
+              <span
+                key={id}
+                className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary-50/50 px-2 py-1 text-[10px] font-semibold text-ink"
+              >
+                {subLabel(id)} · {formatDA(subCost(id))}
+                {option && (
+                  <button
+                    type="button"
+                    title="Retirer cet emploi du temps"
+                    onClick={() => onToggle(option)}
+                    className="flex h-4 w-4 items-center justify-center rounded text-muted transition-colors hover:bg-danger/15 hover:text-danger"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
     </div>

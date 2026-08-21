@@ -46,6 +46,10 @@ Aucune donnée de démonstration n'est insérée.
 > 4. **`supabase/update-2026-08-20-seances-groupe-et-fiche-eleve.sql`** — crée la table
 >    `group_seances` (les **séances libres de groupe**, avec leurs deux mouvements de caisse) et
 >    documente `students.subscription_dates.unsubscribedAt`, le jour où un élève quitte un groupe.
+> 5. **`supabase/update-2026-08-22-salle-par-jour-et-paie-par-groupe.sql`** — ajoute
+>    `schedule_sessions.day_salles` (la **salle de chaque jour**) et rend les **noms de salles
+>    uniques** (les doublons déjà en base sont renommés, jamais supprimés). La paie « groupe par
+>    groupe » et la « situation d'un élève » n'ont besoin d'aucune colonne de plus.
 >
 > Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
 > erreur.
@@ -187,7 +191,15 @@ Annuler une présence ou marquer un élève absent **rend** la séance et retire
 - la **salle se choisit en dernier** : elle reste verrouillée tant que les jours et leurs horaires
   ne sont pas fixés, puis chaque salle indique si elle est **disponible** sur ces créneaux ou
   **occupée**, avec l'emploi du temps qui la retient déjà. Deux créneaux qui se touchent
-  (fin 10:00 / début 10:00) ne sont pas un conflit.
+  (fin 10:00 / début 10:00) ne sont pas un conflit ;
+- dès qu'il tourne sur plusieurs jours, **chaque jour porte aussi sa propre salle** — Samedi en
+  Salle A, Mardi en Salle B est un seul emploi du temps — et la disponibilité se vérifie jour par
+  jour : une salle prise le samedi reste proposée le mardi. Un bouton copie la salle du premier
+  jour sur tous les autres quand elle ne change pas ;
+- **deux salles ne peuvent pas porter le même nom** : la création refuse un doublon, casse et
+  espaces de bord ignorés ;
+- l'**enseignant se cherche par son nom** au lieu de se dérouler dans une liste : on tape deux
+  lettres (ou son téléphone) et on clique.
 
 Le badge, la feuille de présence et le tableau de la semaine lisent tous l'horaire **du jour** :
 un créneau déplacé un seul jour de la semaine est accepté à sa nouvelle heure, pas à l'ancienne.
@@ -205,7 +217,11 @@ emplois du temps, pas seulement ceux du jour : le premier résultat est mis en a
 d'un clic.
 
 Trois raccourcis de **caisse** — dépôt, dépense, retrait — saisissent au même endroit ce que
-l'écran Caisse saisit, sans quitter le tableau de bord.
+l'écran Caisse saisit, sans quitter le tableau de bord. À côté d'eux, **Situation d'un élève**
+ouvre le tableau de toute sa scolarité (voir plus bas).
+
+La grille lit la **salle du jour** : un emploi qui tourne samedi en Salle A et mardi en Salle B se
+range dans la bonne colonne chaque jour.
 
 ### Tableau de bord — n'importe quelle journée
 
@@ -304,11 +320,20 @@ Trois raccourcis en tête de la feuille, en plus du **Nouvel élève** :
   est le groupe** ce jour-là.
 - **Tout présent** — la liste s'ouvre entièrement cochée (les élèves déjà pointés ce jour-là ne
   sont pas réécrits), une recherche permet d'en décocher un ou deux, et un clic écrit tout.
+- **Séance annulée pour tous** — la séance n'a pas eu lieu : toute la liste s'ouvre cochée, y
+  compris les élèves déjà pointés, parce qu'une présence notée sur une séance qui n'a pas eu lieu
+  doit être reprise. Rien n'est consommé, aucun solde n'est débité, aucune part enseignant n'est
+  due, et le mois du groupe n'avance pas.
 - **Historique** (sur chaque ligne) — les encaissements de cet élève sur cet emploi du temps,
   corrigeables et supprimables sur place.
 
 La colonne d'argent ne montre plus un solde signé : elle affiche ce qui a été **versé** d'un côté
 et ce qui **reste dû** de l'autre, jamais un montant payé précédé d'un moins.
+
+Un élève qui donne **plus** que ce que le mois coûte ne perd rien : la différence reste sur le
+**solde de cet emploi du temps** et paiera ses prochaines séances. L'écran d'encaissement l'annonce
+avant d'écrire — « M3 est soldé et 200 DA restent d'avance » — et la ligne de l'élève affiche
+ensuite ce solde d'avance.
 
 ### La fiche élève
 
@@ -317,9 +342,22 @@ temps et soldes. En modification s'y ajoutent l'email de connexion, le mot de pa
 RFID, que seule une fiche existante possède. Cocher un emploi du temps l'inscrit là où en est le
 groupe, en décocher un l'en désinscrit — historique conservé.
 
-Le bouton **Situation d'un élève**, sur l'écran Élèves, répond à la question du parent : on cherche
-l'élève, on choisit un de ses emplois du temps (ceux qu'il a quittés compris) et on lit ses
-présences du mois, séance par séance, avec ce qu'il **reste à payer**.
+En modification, le choix des emplois du temps **s'ouvre sur le niveau et l'année de l'élève**, pas
+sur un primaire/1AP qui ne le concerne pas : ses inscriptions sont donc visibles et décochables
+immédiatement. Celles qui appartiennent à un autre niveau restent listées en pastilles, chacune
+avec une croix pour la retirer sans avoir à retrouver son niveau dans la liste.
+
+Le bouton **Situation d'un élève** — sur l'écran Élèves **et sur le tableau de bord** — répond à
+la question du parent au comptoir. On cherche l'élève par son nom, son n° d'inscription ou son
+téléphone, et **un seul grand tableau** s'ouvre, lu exactement comme la feuille de présence d'un
+groupe : **une ligne par emploi du temps** — ceux qu'il suit et ceux qu'il a quittés — avec ses
+séances du mois S1…Sn, ce qu'il a **versé**, ce qui **reste dû**, ses **arriérés** des mois
+précédents et le **solde** de cet emploi.
+
+On y **encaisse sur place**, sur la ligne concernée, avec son reçu. Le navigateur de mois travaille
+en **décalage** et non en numéro — « mois en cours », puis « 1 mois avant » — parce que deux
+emplois du temps ne vivent pas le même mois au même moment : l'un en est à son M5 quand l'autre en
+est à son M2. Reculer d'un cran permet de lire **et de régler** un mois passé.
 
 ### Paie de l'enseignant — mois par mois
 
@@ -336,12 +374,16 @@ Deux écrans, sur sa fiche :
   déjà réglée, restante. Chaque mois se déplie sur le détail élève par élève (séances,
   présences / absences, versé, reste dû, arriérés des mois précédents, part bloquée), et un
   onglet **Élèves impayés** rassemble tout, avec alertes.
-- **Payer** — le règlement s'ouvre sur le **dernier mois CLOS non réglé**, jamais sur le mois en
-  cours : si le groupe en est à la 3ᵉ séance d'un mois de 4, c'est le mois précédent qui est
-  coché. Les mois sont regroupés par emploi du temps, chacun montrant qui a payé et qui n'a pas
-  payé. La formule **par groupe** additionne les tarifs déjà écrits sur chaque présence (part
-  enseignant du mois ÷ séances), le **pourcentage** s'applique au tarif de chaque élève, le
-  **montant fixe** se répartit au prorata.
+- **Payer** — **un grand tableau par GROUPE**, lu comme la feuille de présence de ce groupe : une
+  ligne par élève, ses séances du mois S1…Sn, puis les colonnes qui décident du règlement —
+  **payé ce mois ?**, **mois précédents impayés**, **arriérés débloqués** et **part enseignant**.
+  Le règlement s'ouvre sur le **dernier mois CLOS non réglé**, jamais sur le mois en cours : si le
+  groupe en est à la 3ᵉ séance d'un mois de 4, c'est le mois précédent qui est coché. La formule
+  **par groupe** additionne les tarifs déjà écrits sur chaque présence (part enseignant du mois ÷
+  séances), le **pourcentage** s'applique au tarif de chaque élève, le **montant fixe** se répartit
+  au prorata. En bas de l'écran : les **cas particuliers**, la table des **dépenses**, celle des
+  **acomptes**, et le récapitulatif *total des élèves − dépenses − acomptes − scolarité des enfants
+  = net à verser*. Enregistrer propose d'imprimer la **fiche de paie**.
 
 L'écran de règlement s'ouvre sur **ce que l'enseignant doit toucher** : généré non réglé, payable
 maintenant, retenu, déjà réglé — et il ne liste que les mois qui doivent encore quelque chose.
@@ -349,10 +391,41 @@ Chaque élève y est lu **à son tarif**, celui de son cas : un « école seule 
 un « cas spécial » à zéro. Sur sa fiche, l'onglet **Historique financier** montre les règlements
 réels, les mois que chacun a soldés, et réimprime la fiche de paie d'un clic.
 
+### Ce qu'un élève retient, et ce qui revient plus tard
+
 Un élève qui n'a pas payé **retient** la part correspondante : elle n'est pas versée, elle reste
-ouverte et **réapparaît au règlement suivant** dès que sa dette est soldée. Les cas d'élèves sont
-appliqués à la source : **cas spécial** (gratuit) et **école seule** ne rapportent rien à
-l'enseignant concerné, et une **réduction** ne lui coûte que *sa* part de la remise.
+ouverte et **réapparaît au règlement suivant** dès que sa dette est soldée. C'est exactement le cas
+que la colonne **« arriérés débloqués »** rend enfin lisible :
+
+```
+M2 — l'élève ne paie pas       -> la part de l'enseignant est RETENUE
+      l'enseignant est réglé du M2 sans elle
+      l'élève s'acquitte de son M2
+M3 — au règlement suivant      -> la part de M2 réapparaît, débloquée,
+                                  à côté de celle du M3
+```
+
+### Les cas d'élèves, appliqués à la source
+
+| Cas | L'élève paie | L'école garde | L'enseignant touche |
+| --- | ------------ | ------------- | ------------------- |
+| **Normal** | le prix de la séance | sa part du mois ÷ séances | la sienne |
+| **Cas spécial** (gratuit) | rien | rien | rien |
+| **École seule** | la seule part de l'école | tout ce qu'il verse | rien — et il **n'apparaît pas** sur la paie de cet enseignant |
+| **Réduction** | prix − les deux remises | sa part − sa remise | la sienne − sa remise |
+| **Fils d'enseignant** | rien au comptoir | oui | sa scolarité est **retenue sur le salaire du père** |
+
+Une **réduction** se partage : l'école en accorde sa moitié sur *sa* part, l'enseignant la sienne
+sur *la sienne*, et l'élève ne paie donc que ce que les deux lui laissent.
+
+```
+mois à 2000 DA, 4 séances, l'école garde 800   ->  séance 500 = école 200 + enseignant 300
+réduction 50% école / 10% enseignant           ->  séance 370 = école 100 + enseignant 270
+```
+
+Le **fils d'enseignant** apparaît en bas du règlement de son père : ce qu'il a **étudié ce mois-ci**
+(séances et montant), ce qu'il traîne des **mois précédents**, et le **total retenu** sur le
+salaire. Cet argent ne passe jamais par la caisse — l'école est payée en versant *moins*.
 
 ### Alertes
 

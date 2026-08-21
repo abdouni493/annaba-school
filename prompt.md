@@ -114,3 +114,35 @@ fix the interface of dashboard create on it new button for shortcut create new d
 and make another button shorcut for create new expens on the same interface of dashboard and make another button also for create new withdrwal money from the cash
 
 apply this updates then give me the sql code that i have to run for this new updates then push all updates to repo without pull request make sure to merge code directly to repo
+
+
+
+
+fix the interface of payment of teacher 
+change all the design of the interface make it when user click on it that will display for him a big table streamlined according to the device 
+like the interface of openning of the groupes on the dashboard 
+then make sure to make this interface of payment for the teacher exactly like the interface of presence on the interface of openning group on the dashboard make sure to make it exactly like that but make it organized by groupe for each groupe of that teacher and make it display for each student if he payed for this month or not and make on another column display if there is on previous month there is not payed seances and make it display also if there is some payments that student made them on the previous month but the teacher did not payed on it like this case : on m2 there is some student did not payed month and the admin create the payment of teacher on the month of m2 and after the payement of m2 that student comes to pay his debt of m2 then when admin comes to pay for the teacher on m3 then make it display the paymnet of that student of m2 and the m3 also 
+and make sure to make on this interface of payment the special casses of students also : 
+1st case if there is some student is his son then make sure to make it display it on special case on the end of the payment make it display how much his son studyed on that month and total amount and make it display if there is previous months not payed then make sure to make it calculate how much total have to pay for his son from his salary 
+for the case student that pay to the school only and do not pay for the teacher then make sure to make it do not display on the interface of payment 
+for the case of reduction of student case make sure to fix it for the payment for the school and for the interface of payment for the teacher make sure to make it calculate correctly from the original price then make it calculate correctly how much have to pay for the school after reduction and how much have to pay for teacher for reduction and make sure to make it display on the interface of payment of teacher on the case of special casses
+then on the same interface of payement of teacher make it dsiplay another table display the expenses liste of that teacher and make it calculate the total and make it dispay the total of students and minus from it the expensses and the acompes then display the total that have to get pay 
+and let user create the payement and when user create it ask him for print it 
+make sure to make it display the informations of school with logo and informations of teacher and the table of all that payment for students and table of expensses and all details about the payment and make it display with nice organisation and make it with nice design 
+make sure to focus on the amount that have to pay teacher for each student and for each groupe for that teacher make it calculate correctly the amount that have to get pay teacher from the price calculated for each seance on the creation of that groupes that assigned to them that teacher 
+
+fix the interface of create new emploi du temps make option for seach about the teacher from his name and let user select it
+
+fix the interface of create new emploi du temps make when user comes to create new salle then its will not let the user create another salle with same name 
+
+fix the interface of create new emploi du temps make it if the user select more then one day then let him select the salle for each day 
+
+fix the interface of edit student make it when user click on edit student then make it load all informations of that student and the same for the part of inscription and the class and the year and inscriptions of that student and let the user can select more emploi du temps and can unselect the currrent 
+
+fix the interface of dashboard if the student pay more that the cost of the subscription like the cost is 1800 and the student payed 2000 then let him calculate the rest and save it for the solde for that emploi du temps that will display it after how much currect sold of the student for that emploi du temps 
+
+fix the interface of openning groupe make another button make if for make all the seance canceled for all the students 
+
+create new button on the dashboard make it for situation student make it when user click on it then let him search about the student with name or phone number of creation number let the user select it to display for him a table exacty like the table of open group from the interface of dashboard 
+make this table display all emploi du temps of that student and the statue of the currect mont if payed or not with possibility of create payment on the same interface and make user can go to the previous months to see the statue of the previous months and can create payement for them also 
+

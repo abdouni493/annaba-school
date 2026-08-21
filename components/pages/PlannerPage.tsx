@@ -31,6 +31,8 @@ import {
   minutesOf,
   monthlyPriceOf,
   schoolMonthShareOf,
+  sessionSalleIds,
+  sessionSalleOn,
   sessionTimeLabel,
   sessionTimesOn,
   soldFor,
@@ -150,6 +152,14 @@ export function PlannerPage() {
    * as it picks more than one. A single day still reads as one simple pair.
    */
   const [dayTimes, setDayTimes] = useState<Partial<Record<Day, DayTime>>>({});
+  /**
+   * The salle of EACH selected day. One day = one room, chosen in the ordinary
+   * list. Several days = one room PER day, because a group is rarely given the
+   * same room Samedi matin and Mardi après-midi.
+   */
+  const [daySalles, setDaySalles] = useState<Partial<Record<Day, string>>>({});
+  /** Recherche de l'enseignant par son nom, plutôt qu'une liste déroulante. */
+  const [teacherSearch, setTeacherSearch] = useState("");
 
   // ---- Tarification mensuelle de l'emploi du temps ------------------------
   // The desk gives TWO figures — the séances a month contains and what that
@@ -265,6 +275,11 @@ export function PlannerPage() {
         delete next[day];
         return next;
       });
+      setDaySalles((prev) => {
+        const next = { ...prev };
+        delete next[day];
+        return next;
+      });
       return;
     }
     const template = selectedDays.length
@@ -335,13 +350,23 @@ export function PlannerPage() {
     clashes: { sessionId: string; label: string; days: Day[]; timeLabel: string }[];
   }
 
-  const salleAvailability = useMemo<SalleAvailability[]>(() => {
+  /**
+   * Availability of every salle, for ONE day or for the whole draft.
+   *
+   * Passing a day narrows the check twice over: only that day's créneau is
+   * compared, and only against the emplois that hold that salle THAT day — an
+   * emploi in Salle A on Samedi leaves Salle A free on Mardi.
+   */
+  const availabilityFor = (day?: Day): SalleAvailability[] => {
     const editingId = selectedSession?.id;
+    const draft = day
+      ? { ...draftTiming, days: draftTiming.days.filter((d) => d === day) }
+      : draftTiming;
     return salles.map((salle) => {
       const clashes = sessions
         .filter((other) => other.id !== editingId)
-        .filter((other) => (other.salleIds?.length ? other.salleIds : [other.salleId]).includes(salle.id))
-        .map((other) => ({ other, days: clashingDays(draftTiming, other) }))
+        .filter((other) => sessionSalleIds(other).includes(salle.id))
+        .map((other) => ({ other, days: clashingDays(draft, other, salle.id) }))
         .filter(({ days }) => days.length > 0)
         .map(({ other, days }) => ({
           sessionId: other.id,
@@ -357,10 +382,31 @@ export function PlannerPage() {
         }));
       return { id: salle.id, name: salle.name, free: clashes.length === 0, clashes };
     });
+  };
+
+  const salleAvailability = useMemo<SalleAvailability[]>(
+    () => availabilityFor(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [salles, sessions, draftTiming, selectedSession]);
+    [salles, sessions, draftTiming, selectedSession],
+  );
 
   const freeSalleCount = salleAvailability.filter((s) => s.free).length;
+
+  /** Sets the room of ONE day; a single-day emploi keeps `salleId` in step. */
+  const setDaySalle = (day: Day, id: string) =>
+    setDaySalles((prev) => ({ ...prev, [day]: id }));
+
+  /** Copies the first day's room onto every other selected day. */
+  const applyFirstSalleToAll = () => {
+    const first = orderedDays[0];
+    if (!first) return;
+    const model = daySalles[first] ?? salleId;
+    if (!model) return;
+    setDaySalles(Object.fromEntries(orderedDays.map((d) => [d, model])));
+  };
+
+  /** The days still waiting for a room — what the save button warns about. */
+  const daysWithoutSalle = orderedDays.filter((d) => !(daySalles[d] || salleId));
 
   const handleCreateModule = () => {
     if (!newModuleName.trim()) return;
@@ -380,11 +426,31 @@ export function PlannerPage() {
     setShowAddGroup(false);
   };
 
-  const handleCreateSalle = () => {
-    if (!newSalleName.trim()) return;
+  /**
+   * Deux salles ne peuvent pas porter le même nom : l'écran choisit une salle
+   * PAR SON NOM, et deux « Salle 3 » rendraient ce choix indécidable — la
+   * disponibilité afficherait deux lignes identiques dont une seule est libre.
+   * La comparaison ignore la casse et les espaces de bord.
+   */
+  const salleNameTaken = (name: string, exceptId?: string) => {
+    const key = name.trim().toLowerCase();
+    return salles.some((s) => s.id !== exceptId && s.name.trim().toLowerCase() === key);
+  };
+
+  const handleCreateSalle = (day?: Day) => {
+    const name = newSalleName.trim();
+    if (!name) return;
+    if (salleNameTaken(name)) {
+      alert(`La salle « ${name} » existe déjà — choisissez-la dans la liste ou donnez un autre nom.`);
+      return;
+    }
     const newId = uid("salle");
-    push("salles", { id: newId, name: newSalleName });
-    setSalleId(newId);
+    push("salles", { id: newId, name });
+    if (day) setDaySalle(day, newId);
+    else {
+      setSalleId(newId);
+      if (orderedDays.length === 1) setDaySalle(orderedDays[0], newId);
+    }
     setNewSalleName("");
     setShowAddSalle(false);
   };
@@ -615,6 +681,22 @@ export function PlannerPage() {
   };
 
   /**
+   * What the form writes about the ROOMS. `salleId` keeps the first day's room —
+   * everything that only needs "roughly where" reads it — and `daySalles`
+   * carries the per-day override. An emploi that keeps the same room all week
+   * stores no override at all.
+   */
+  const sallePayload = () => {
+    const first = orderedDays[0];
+    const base = (first && daySalles[first]) || salleId || "";
+    const perDay = Object.fromEntries(
+      orderedDays.map((d) => [d, daySalles[d] || base]),
+    ) as Partial<Record<Day, string>>;
+    const uniform = orderedDays.every((d) => perDay[d] === base);
+    return { salleId: base, daySalles: uniform ? undefined : perDay };
+  };
+
+  /**
    * Only the days are required — an emploi du temps that runs on no day never
    * occurs, and the salle availability has nothing to check against. Classe,
    * module, groupe, salle and enseignant can all be filled in later.
@@ -633,8 +715,8 @@ export function PlannerPage() {
       classId,
       moduleId,
       groupId,
-      salleId,
       teacherId,
+      ...sallePayload(),
       ...timingPayload(),
       title: title.trim() || undefined,
     };
@@ -658,8 +740,8 @@ export function PlannerPage() {
       classId,
       moduleId,
       groupId,
-      salleId,
       teacherId,
+      ...sallePayload(),
       ...timingPayload(),
       title: title.trim() || undefined,
     };
@@ -688,8 +770,12 @@ export function PlannerPage() {
     setGroupId("");
     setSalleId("");
     setTeacherId("");
+    setTeacherSearch("");
     setSelectedDays([]);
     setDayTimes({});
+    setDaySalles({});
+    setShowAddSalle(false);
+    setNewSalleName("");
     setSelectedSession(null);
     resetPricing();
   };
@@ -702,7 +788,15 @@ export function PlannerPage() {
     setGroupId(s.groupId);
     setSalleId(s.salleId);
     setTeacherId(s.teacherId);
+    setTeacherSearch("");
     setSelectedDays(s.days);
+    // Un jour sans salle propre retombe sur celle de l'emploi : le formulaire
+    // s'ouvre donc toujours avec une salle en face de chaque jour coché.
+    setDaySalles(
+      Object.fromEntries(s.days.map((d) => [d, sessionSalleOn(s, d)])) as Partial<
+        Record<Day, string>
+      >,
+    );
     // Days that carry no override fall back on the emploi's default hours, so
     // the form always opens with a real pair in front of every selected day.
     setDayTimes(
@@ -931,22 +1025,196 @@ export function PlannerPage() {
   );
 
   /**
-   * The salle, chosen LAST.
+   * L'enseignant, CHERCHÉ PAR SON NOM.
    *
-   * It stays locked until every selected day carries a coherent créneau —
-   * without that there is nothing to check a room against. Once unlocked, each
-   * salle says whether it is free on those créneaux or which emploi already
-   * occupies it, so a clash is seen before it is booked, not after.
+   * Une école qui compte quarante enseignants ne les retrouve pas dans une
+   * liste déroulante : on tape deux lettres du nom (ou du téléphone) et on
+   * clique. Celui qui est déjà choisi reste affiché en tête, avec de quoi le
+   * retirer d'un clic.
+   */
+  const renderTeacherField = () => {
+    const q = teacherSearch.trim().toLowerCase();
+    const picked = teachers.find((t) => t.id === teacherId);
+    const matches = teachers
+      .filter((t) =>
+        q ? `${t.firstName} ${t.lastName} ${t.phone ?? ""}`.toLowerCase().includes(q) : true,
+      )
+      .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`))
+      .slice(0, 40);
+
+    return (
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+          <label className="block text-xs font-semibold text-muted font-sans">Enseignant</label>
+          <Badge tone="neutral" className="text-[9px] font-bold">
+            {teachers.length} enseignant(s)
+          </Badge>
+        </div>
+
+        {picked && (
+          <div className="mb-1.5 flex items-center justify-between gap-2 rounded-xl border border-primary bg-primary/10 p-2.5">
+            <span className="min-w-0">
+              <strong className="block text-xs text-ink truncate">
+                {picked.firstName} {picked.lastName}
+                {picked.isPassager && (
+                  <Badge tone="warning" className="ml-1.5 text-[9px]">
+                    passager
+                  </Badge>
+                )}
+              </strong>
+              <span className="block text-[10px] text-muted">{picked.phone || "—"}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setTeacherId("")}
+              className="shrink-0 rounded-lg border border-line px-2 py-1 text-[10px] font-bold text-danger hover:bg-danger/10"
+            >
+              Retirer
+            </button>
+          </div>
+        )}
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <Input
+            value={teacherSearch}
+            onChange={(e) => setTeacherSearch(e.target.value)}
+            placeholder="Rechercher un enseignant par son nom…"
+            className="pl-9"
+          />
+        </div>
+
+        {teachers.length === 0 ? (
+          <p className="mt-1.5 rounded-xl border border-dashed border-line bg-canvas/40 p-3 text-[11px] text-muted">
+            Aucun enseignant enregistré — créez-en un depuis l&apos;écran Enseignants.
+          </p>
+        ) : (
+          <div className="mt-1.5 max-h-44 space-y-1 overflow-y-auto pr-0.5">
+            {matches.length === 0 ? (
+              <p className="p-2 text-[11px] italic text-muted">Aucun enseignant ne correspond.</p>
+            ) : (
+              matches.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTeacherId(teacherId === t.id ? "" : t.id)}
+                  className={`flex w-full items-center justify-between gap-2 rounded-xl border p-2 text-start transition-colors ${
+                    teacherId === t.id
+                      ? "border-primary bg-primary/10 ring-2 ring-primary/25"
+                      : "border-line bg-surface hover:bg-primary-50/40"
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <strong className="block truncate text-xs text-ink">
+                      {t.firstName} {t.lastName}
+                    </strong>
+                    <span className="block text-[10px] text-muted">{t.phone || "—"}</span>
+                  </span>
+                  {t.isPassager && (
+                    <Badge tone="warning" className="shrink-0 text-[9px]">
+                      passager
+                    </Badge>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /** Une salle dans la liste : son nom, son état et ce qui l'occupe déjà. */
+  const renderSalleOption = (
+    sa: SalleAvailability,
+    picked: boolean,
+    onPick: () => void,
+  ) => (
+    <button
+      key={sa.id}
+      type="button"
+      onClick={onPick}
+      className={`w-full text-start rounded-xl border p-2.5 transition-all ${
+        picked
+          ? "border-primary bg-primary/10 ring-2 ring-primary/25"
+          : sa.free
+            ? "border-line bg-surface hover:bg-primary-50/40"
+            : "border-danger/30 bg-danger/5"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-bold text-ink truncate">{sa.name}</span>
+        <Badge tone={sa.free ? "success" : "danger"} className="text-[9px] font-bold shrink-0">
+          {sa.free ? "Disponible" : "Occupée"}
+        </Badge>
+      </div>
+      {!sa.free && (
+        <div className="mt-1 space-y-0.5">
+          {sa.clashes.map((c) => (
+            <span key={c.sessionId} className="block text-[10px] leading-snug text-danger">
+              {c.label} · {formatDays(c.days)} · {c.timeLabel}
+            </span>
+          ))}
+        </div>
+      )}
+    </button>
+  );
+
+  /** Le formulaire « + Nouvelle salle », partagé par les deux modes. */
+  const renderAddSalle = (day?: Day) => (
+    <div className="flex gap-2">
+      <Input
+        value={newSalleName}
+        onChange={(e) => setNewSalleName(e.target.value)}
+        placeholder="Nom de la salle"
+        className="flex-1"
+      />
+      <Button size="sm" onClick={() => handleCreateSalle(day)}>Créer</Button>
+      <Button size="sm" variant="outline" onClick={() => { setShowAddSalle(false); setNewSalleName(""); }}>
+        Annuler
+      </Button>
+    </div>
+  );
+
+  /**
+   * La salle, choisie EN DERNIER.
+   *
+   * Elle reste verrouillée tant que chaque jour coché ne porte pas un créneau
+   * cohérent — sans cela il n'y a rien à confronter à une salle. Puis :
+   *
+   *  - UN seul jour  : la liste habituelle, chaque salle disant si elle est
+   *    libre sur ce créneau ou quel emploi l'occupe déjà ;
+   *  - PLUSIEURS jours : une salle PAR JOUR, chacune vérifiée sur le créneau de
+   *    CE jour-là. Samedi en Salle A et Mardi en Salle B est un seul emploi du
+   *    temps, et une salle occupée le samedi reste libre le mardi.
    */
   const renderSalleField = () => (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-        <label className="block text-xs font-semibold text-muted font-sans">Salle</label>
+        <label className="block text-xs font-semibold text-muted font-sans">
+          {orderedDays.length > 1 ? "Salle de chaque jour" : "Salle"}
+        </label>
         {timingReady && (
           <div className="flex items-center gap-2">
-            <Badge tone={freeSalleCount ? "success" : "danger"} className="text-[9px] font-bold">
-              {freeSalleCount} / {salles.length} libre(s)
-            </Badge>
+            {daysWithoutSalle.length > 0 && (
+              <Badge tone="warning" className="text-[9px] font-bold">
+                {formatDays(daysWithoutSalle)} sans salle
+              </Badge>
+            )}
+            {orderedDays.length <= 1 && (
+              <Badge tone={freeSalleCount ? "success" : "danger"} className="text-[9px] font-bold">
+                {freeSalleCount} / {salles.length} libre(s)
+              </Badge>
+            )}
+            {orderedDays.length > 1 && (
+              <button
+                type="button"
+                onClick={applyFirstSalleToAll}
+                className="text-[10px] font-semibold text-primary hover:underline"
+              >
+                Même salle tous les jours
+              </button>
+            )}
             <button
               onClick={() => setShowAddSalle(!showAddSalle)}
               className="text-xs text-primary hover:underline"
@@ -963,58 +1231,66 @@ export function PlannerPage() {
           l&apos;<strong className="text-ink">heure de début et de fin de chaque jour</strong>. Les
           salles disponibles sur ces créneaux s&apos;afficheront ici.
         </div>
-      ) : showAddSalle ? (
-        <div className="flex gap-2">
-          <Input
-            value={newSalleName}
-            onChange={(e) => setNewSalleName(e.target.value)}
-            placeholder="Nom de la salle"
-            className="flex-1"
-          />
-          <Button size="sm" onClick={handleCreateSalle}>Créer</Button>
-        </div>
-      ) : salles.length === 0 ? (
+      ) : salles.length === 0 && !showAddSalle ? (
         <div className="rounded-xl border border-dashed border-line bg-canvas/40 p-3 text-[11px] text-muted">
           Aucune salle enregistrée — créez-en une avec « + Nouvelle salle ».
         </div>
-      ) : (
+      ) : showAddSalle && orderedDays.length <= 1 ? (
+        renderAddSalle(orderedDays[0])
+      ) : orderedDays.length <= 1 ? (
         <div className="space-y-1.5 max-h-64 overflow-y-auto pr-0.5">
-          {salleAvailability.map((sa) => {
-            const picked = salleId === sa.id;
-            return (
-              <button
-                key={sa.id}
-                type="button"
-                onClick={() => setSalleId(picked ? "" : sa.id)}
-                className={`w-full text-start rounded-xl border p-2.5 transition-all ${
-                  picked
-                    ? "border-primary bg-primary/10 ring-2 ring-primary/25"
-                    : sa.free
-                      ? "border-line bg-surface hover:bg-primary-50/40"
-                      : "border-danger/30 bg-danger/5"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-ink truncate">{sa.name}</span>
-                  <Badge tone={sa.free ? "success" : "danger"} className="text-[9px] font-bold shrink-0">
-                    {sa.free ? "Disponible" : "Occupée"}
-                  </Badge>
-                </div>
-                {!sa.free && (
-                  <div className="mt-1 space-y-0.5">
-                    {sa.clashes.map((c) => (
-                      <span key={c.sessionId} className="block text-[10px] leading-snug text-danger">
-                        {c.label} · {formatDays(c.days)} · {c.timeLabel}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </button>
-            );
-          })}
+          {salleAvailability.map((sa) =>
+            renderSalleOption(sa, salleId === sa.id, () => {
+              const next = salleId === sa.id ? "" : sa.id;
+              setSalleId(next);
+              if (orderedDays[0]) setDaySalle(orderedDays[0], next);
+            }),
+          )}
           <p className="pt-1 text-[10px] leading-relaxed text-muted">
             Une salle occupée reste sélectionnable — l&apos;école peut vouloir doubler un créneau —
             mais le conflit est affiché avant l&apos;enregistrement.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {showAddSalle && renderAddSalle()}
+          {orderedDays.map((day) => {
+            const rows = availabilityFor(day);
+            const free = rows.filter((r) => r.free).length;
+            const chosen = daySalles[day] || "";
+            const t = dayTimes[day] ?? DEFAULT_DAY_TIME;
+            return (
+              <div key={day} className="rounded-xl border border-line bg-surface p-2.5">
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">
+                    {WEEKDAYS.find((w) => w.key === day)?.label}{" "}
+                    <span className="font-mono font-normal text-muted">
+                      {t.startTime}–{t.endTime}
+                    </span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <Badge tone={free ? "success" : "danger"} className="text-[9px] font-bold">
+                      {free} / {salles.length} libre(s)
+                    </Badge>
+                    <Badge tone={chosen ? "primary" : "warning"} className="text-[9px] font-bold">
+                      {chosen ? getSalleName(chosen) : "Aucune salle"}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="space-y-1.5 max-h-44 overflow-y-auto pr-0.5">
+                  {rows.map((sa) =>
+                    renderSalleOption(sa, chosen === sa.id, () =>
+                      setDaySalle(day, chosen === sa.id ? "" : sa.id),
+                    ),
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <p className="text-[10px] leading-relaxed text-muted">
+            Chaque jour porte sa propre salle, vérifiée sur SON créneau : une salle prise le samedi
+            reste proposée le mardi. Une salle occupée reste sélectionnable — le conflit est
+            simplement affiché avant l&apos;enregistrement.
           </p>
         </div>
       )}
@@ -1812,17 +2088,7 @@ export function PlannerPage() {
 
             {renderSalleField()}
 
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Enseignant</label>
-              <Select value={teacherId} onChange={(e) => setTeacherId(e.target.value)} className="w-full">
-                <option value="">Sélectionner un enseignant</option>
-                {teachers.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.firstName} {t.lastName}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {renderTeacherField()}
           </div>
 
           {/* Right panel - days & times */}
@@ -2004,17 +2270,7 @@ export function PlannerPage() {
 
             {renderSalleField()}
 
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Enseignant</label>
-              <Select value={teacherId} onChange={(e) => setTeacherId(e.target.value)} className="w-full">
-                <option value="">Sélectionner un enseignant</option>
-                {teachers.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.firstName} {t.lastName}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {renderTeacherField()}
           </div>
 
           <div className="space-y-4">

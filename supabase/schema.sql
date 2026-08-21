@@ -407,8 +407,13 @@ create table if not exists public.class_groups (          -- collection `groups`
 
 create table if not exists public.salles (
   id    text primary key,
+  -- Deux salles ne peuvent pas porter le même nom : l'écran Emploi du temps
+  -- choisit une salle par son nom, et deux « Salle 3 » rendraient ce choix
+  -- indécidable. L'unicité ignore la casse et les espaces de bord.
   name  text not null default ''
 );
+create unique index if not exists idx_salles_name_unique
+  on public.salles (lower(btrim(name)));
 
 create table if not exists public.classes (
   id              text primary key,
@@ -540,6 +545,7 @@ create table if not exists public.schedule_sessions (
   start_time   text not null default '',        -- horaire par défaut de l'emploi
   end_time     text not null default '',
   day_times    jsonb,                            -- horaires jour par jour : {"saturday":{"startTime":"08:00","endTime":"10:00"}}
+  day_salles   jsonb,                            -- salle jour par jour : {"saturday":"salle-1","tuesday":"salle-2"}
   is_open      boolean,                          -- séance libre
   title        text,
   period_start text,

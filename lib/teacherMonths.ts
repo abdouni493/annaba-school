@@ -21,10 +21,13 @@ import type {
   IndependentSession,
   ScheduleSession,
   Student,
+  StudentCase,
   Subscription,
 } from "@/lib/types";
 import {
   consumesSeance,
+  currentCycleCode,
+  cycleOf,
   cycleSizeOf,
   dayKeyOf,
   enrollmentCycles,
@@ -42,6 +45,8 @@ import {
   studentListPrice,
   studentName,
   studentSoldDebtRows,
+  studentSchoolPerSeance,
+  studentTeacherPerSeance,
   teacherPerSeanceOf,
 } from "@/lib/helpers";
 
@@ -97,8 +102,18 @@ export interface TeacherMonthStudent {
   presents: number;
   absents: number;
   cancelled: number;
+  /** son cas de facturation, tel qu'il est stocké sur sa fiche */
+  caseKind: StudentCase;
+  /** l'enseignant est son père et sa scolarité sort de ce salaire */
+  isTeacherChild: boolean;
   /** prix d'une séance pour lui, remise comprise */
   unitPrice: number;
+  /** prix plein d'une séance de cet emploi, AVANT son cas et sa remise */
+  listPrice: number;
+  /** ce que l'école garde sur une de ses séances (cas appliqué) */
+  schoolPerSeance: number;
+  /** ce que l'enseignant gagne sur une de ses séances (cas appliqué) */
+  teacherPerSeance: number;
   /** ce que le mois complet lui coûte */
   expected: number;
   /** ce que ses séances ont déjà mangé sur son solde */
@@ -229,8 +244,20 @@ function recordMonths(
   return out;
 }
 
-/** Les élèves inscrits sur l'emploi, plus ceux qui y ont été pointés. */
-function rosterOf(db: Database, session: ScheduleSession, sub?: Subscription): Student[] {
+/**
+ * Les élèves inscrits sur l'emploi, plus ceux qui y ont été pointés.
+ *
+ * Un élève « école seule » dont CET enseignant fait partie des non-payés n'y
+ * figure pas : l'école est payée pour lui, l'enseignant ne l'est délibérément
+ * pas, donc l'afficher sur une feuille de paie qui ne lui rapportera jamais
+ * rien ne ferait qu'inviter une erreur de calcul.
+ */
+function rosterOf(
+  db: Database,
+  session: ScheduleSession,
+  teacherId: string,
+  sub?: Subscription,
+): Student[] {
   const ids = new Set<string>();
   if (sub) {
     for (const st of db.students) if (st.subscriptionIds.includes(sub.id)) ids.add(st.id);
@@ -238,6 +265,12 @@ function rosterOf(db: Database, session: ScheduleSession, sub?: Subscription): S
   for (const a of db.attendance) if (a.sessionId === session.id) ids.add(a.studentId);
   return db.students
     .filter((st) => ids.has(st.id))
+    .filter(
+      (st) =>
+        !(
+          st.studentCase === "school_only" && (st.unpaidTeacherIds ?? []).includes(teacherId)
+        ),
+    )
     .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
 }
 
@@ -246,6 +279,7 @@ function emptyMonthStudent(
   student: Student,
   size: number,
   unitPrice: number,
+  rates: { listPrice: number; schoolPerSeance: number; teacherPerSeance: number },
 ): TeacherMonthStudent {
   return {
     studentId: student.id,
@@ -253,6 +287,8 @@ function emptyMonthStudent(
     registrationNumber: registrationNumberOf(db, student),
     phone: student.phone,
     caseLabel: studentCaseLabel(student),
+    caseKind: student.studentCase ?? "normal",
+    isTeacherChild: student.studentCase === "teacher_child",
     isFree: !!student.isFree,
     done: 0,
     size,
@@ -261,6 +297,9 @@ function emptyMonthStudent(
     absents: 0,
     cancelled: 0,
     unitPrice,
+    listPrice: rates.listPrice,
+    schoolPerSeance: rates.schoolPerSeance,
+    teacherPerSeance: rates.teacherPerSeance,
     expected: size * unitPrice,
     consumed: 0,
     credited: 0,
@@ -294,7 +333,7 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
   const size = cycleSizeOf(sub);
   const perSeance = teacherPerSeanceOf(sub);
   const listPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
-  const roster = rosterOf(db, session, sub);
+  const roster = rosterOf(db, session, teacherId, sub);
 
   // ---- le mois de chaque présence, élève par élève -------------------------
   const recordsByStudent = new Map<string, AttendanceRecord[]>();
@@ -535,7 +574,11 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     // Son tarif à LUI : un « école seule » ne paie que la part de l'école, donc
     // son mois ne coûte pas le prix affiché de l'emploi du temps.
     const own = studentListPrice(st, sub, listPrice);
-    const row = emptyMonthStudent(db, st, size, netPriceFor(own, discount));
+    const row = emptyMonthStudent(db, st, size, netPriceFor(own, discount), {
+      listPrice,
+      schoolPerSeance: studentSchoolPerSeance(st, sub),
+      teacherPerSeance: studentTeacherPerSeance(st, sub, session.teacherId),
+    });
 
     const cycle = cycles[index];
     if (cycle) {
@@ -770,4 +813,135 @@ export function unpaidStudents(emplois: TeacherEmploi[]): UnpaidStudentRow[] {
     }
   }
   return out.sort((a, b) => b.debt - a.debt || a.name.localeCompare(b.name));
+}
+
+// ---------------------------------------------------------------------------
+// Les arriérés d'un élève SUR UN EMPLOI — ce que le règlement précédent a laissé
+// ---------------------------------------------------------------------------
+
+/** Ce que les mois PRÉCÉDENTS doivent encore à l'enseignant pour un élève. */
+export interface StudentArrears {
+  /** débloqué : l'élève a payé depuis, la part est due maintenant */
+  payable: number;
+  /** encore retenu : il doit toujours de l'argent */
+  withheld: number;
+  /** les mois concernés, dans l'ordre ("M1", "M2" …) */
+  months: string[];
+  /** les identifiants des parts débloquées, à joindre au règlement */
+  dueIds: string[];
+}
+
+const NO_ARREARS: StudentArrears = { payable: 0, withheld: 0, months: [], dueIds: [] };
+
+/**
+ * Les parts que les mois d'AVANT `index` doivent encore à l'enseignant pour cet
+ * élève.
+ *
+ * C'est le cas que la réception vit tous les mois : l'élève n'avait pas payé
+ * son M2, l'enseignant a donc été réglé du M2 sans sa part à lui ; l'élève
+ * s'acquitte ensuite, et au moment de régler le M3 cette part de M2 doit
+ * réapparaître. Elle est ici, `payable`, avec le mois qui l'a générée.
+ */
+export function studentArrearsBefore(
+  emploi: TeacherEmploi,
+  studentId: string,
+  index: number,
+): StudentArrears {
+  if (index <= 0) return NO_ARREARS;
+  const out: StudentArrears = { payable: 0, withheld: 0, months: [], dueIds: [] };
+  for (const m of emploi.months) {
+    if (m.index >= index) continue;
+    let touched = false;
+    for (const d of m.dues) {
+      if (d.studentId !== studentId || d.paid) continue;
+      touched = true;
+      if (d.withheld) out.withheld += d.amount;
+      else {
+        out.payable += d.amount;
+        out.dueIds.push(d.id);
+      }
+    }
+    if (touched) out.months.push(m.code);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Les enfants de l'enseignant, scolarisés sur son salaire
+// ---------------------------------------------------------------------------
+
+/** Un mois d'un emploi du temps que l'enfant doit encore. */
+export interface TeacherChildLine {
+  subscriptionId: string;
+  label: string;
+  monthCode: string;
+  /** séances qu'il a suivies sur ce mois */
+  seances: number;
+  /** prix d'une de ses séances */
+  unitPrice: number;
+  amount: number;
+  /** ce mois-ci, par opposition à un arriéré */
+  current: boolean;
+}
+
+/** Un enfant de l'enseignant : ce qu'il a étudié, et ce qui sort du salaire. */
+export interface TeacherChildRow {
+  studentId: string;
+  studentName: string;
+  registrationNumber: string;
+  caseLabel: string;
+  lines: TeacherChildLine[];
+  /** ce que le mois EN COURS de chaque emploi lui coûte encore */
+  currentAmount: number;
+  /** ce que les mois d'avant ont laissé impayé */
+  previousAmount: number;
+  /** séances suivies sur les mois en cours */
+  currentSeances: number;
+  /** total retenu sur le salaire du père */
+  amount: number;
+}
+
+/**
+ * Les enfants d'un enseignant et ce que leur scolarité prend sur son salaire :
+ * combien de séances chacun a suivies, sur quel mois de quel emploi du temps, ce
+ * que le mois en cours coûte encore et ce que les mois précédents ont laissé.
+ */
+export function teacherChildRows(db: Database, teacherId: string): TeacherChildRow[] {
+  return db.students
+    .filter((st) => st.studentCase === "teacher_child" && st.teacherFatherId === teacherId)
+    .map((st) => {
+      const debts = studentSoldDebtRows(db, st.id);
+      const lines: TeacherChildLine[] = debts.map((r) => {
+        const sub = db.subscriptions.find((s) => s.id === r.subscriptionId);
+        const cycle = cycleOf(db, st.id, r.subscriptionId, r.code);
+        const current = currentCycleCode(db, st.id, r.subscriptionId) === r.code;
+        return {
+          subscriptionId: r.subscriptionId,
+          label: r.label,
+          monthCode: r.code,
+          seances: cycle.done,
+          unitPrice: netPriceFor(
+            studentListPrice(st, sub),
+            db.enrollments.find((e) => e.studentId === st.id && e.subscriptionId === r.subscriptionId)
+              ?.discount ?? st.subscriptionDiscounts?.[r.subscriptionId],
+          ),
+          amount: r.debt,
+          current,
+        };
+      });
+      const currentLines = lines.filter((l) => l.current);
+      return {
+        studentId: st.id,
+        studentName: studentName(st),
+        registrationNumber: registrationNumberOf(db, st),
+        caseLabel: studentCaseLabel(st),
+        lines,
+        currentAmount: currentLines.reduce((s, l) => s + l.amount, 0),
+        previousAmount: lines.filter((l) => !l.current).reduce((s, l) => s + l.amount, 0),
+        currentSeances: currentLines.reduce((s, l) => s + l.seances, 0),
+        amount: lines.reduce((s, l) => s + l.amount, 0),
+      };
+    })
+    .filter((c) => c.lines.length > 0)
+    .sort((a, b) => b.amount - a.amount || a.studentName.localeCompare(b.studentName));
 }

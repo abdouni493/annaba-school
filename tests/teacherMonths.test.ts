@@ -6,6 +6,7 @@ import {
   teacherEmplois,
   unpaidStudents,
 } from "@/lib/teacherMonths";
+import { cycleOf, schoolPerSeanceOf } from "@/lib/helpers";
 
 /**
  * La paie de l'enseignant suit EXACTEMENT l'horloge des élèves : un mois d'un
@@ -300,7 +301,7 @@ describe("les cas particuliers des élèves", () => {
     expect(emploi().months[0].gross).toBe(0);
   });
 
-  it("« école seule » : l'école encaisse, l'enseignant listé n'est pas payé", async () => {
+  it("« école seule » : l'école encaisse, l'enseignant listé n'est ni payé ni listé", async () => {
     const sub = board(4);
     useData.setState({
       students: useData.getState().students.map((st) =>
@@ -309,14 +310,19 @@ describe("les cas particuliers des élèves", () => {
           : st,
       ),
     });
-    await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: sub.pricePerSession * 4, monthCode: "M1" });
+    // Il ne paie que la part de l'école : 4 séances au tarif « école seule ».
+    const owed = schoolPerSeanceOf(useData.getState().subscriptions.find((s) => s.id === SUB)) * 4;
+    await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: owed, monthCode: "M1" });
     for (const day of scheduledDays(4)) await attend(day);
 
-    // L'élève a bien payé ses séances…
-    expect(emploi().months[0].collected).toBe(sub.pricePerSession * 4);
-    expect(emploi().months[0].studentsDebt).toBe(0);
-    // … mais cet enseignant-là ne touche rien dessus.
+    // L'élève a bien payé ses séances : son solde est à jour sur SA fiche…
+    expect(cycleOf(useData.getState(), STU, SUB, "M1").credited).toBe(owed);
+    expect(cycleOf(useData.getState(), STU, SUB, "M1").balance).toBe(0);
+    // … mais cet enseignant-là ne touche rien dessus, et l'écran de paie ne le
+    // liste même pas : une ligne à 0 DA n'inviterait qu'à une erreur de calcul.
     expect(emploi().months[0].gross).toBe(0);
+    expect(emploi().months[0].students.map((s) => s.studentId)).not.toContain(STU);
+    expect(sub.pricePerSession).toBeGreaterThan(0);
   });
 
   it("« réduction » : l'enseignant ne supporte que SA part de la remise", async () => {

@@ -59,6 +59,11 @@ export interface PayslipStudent {
   fees: number;
   /** what they earn the teacher */
   total: number;
+  /** part enseignant d'un mois PRÉCÉDENT, débloquée par un versement récent de
+   *  l'élève et réglée avec ce bulletin */
+  arrears?: number;
+  /** les mois d'où viennent ces arriérés ("M2", "M2, M3" …) */
+  arrearsMonths?: string;
 }
 
 /** One emploi du temps of the teacher, over the settled period. */
@@ -136,6 +141,7 @@ const LABELS = {
     presents: "Présences",
     fees: "Montant généré",
     share: "Part enseignant",
+    arrears: "Arriérés débloqués",
     subtotal: "Sous-total",
     grandTotal: "TOTAL DES SÉANCES (BRUT)",
     casesTitle: "Cas particuliers des élèves",
@@ -195,6 +201,7 @@ const LABELS = {
     presents: "الحضور",
     fees: "المبلغ المحقق",
     share: "نصيب الأستاذ",
+    arrears: "متأخرات مفرج عنها",
     subtotal: "المجموع الجزئي",
     grandTotal: "إجمالي الحصص (الخام)",
     casesTitle: "حالات خاصة للتلاميذ",
@@ -269,6 +276,11 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
                 </td>
                 <td class="ctr"><strong>${st.presents}</strong></td>
                 <td class="num">${da(st.fees)}</td>
+                <td class="num">${
+                  st.arrears
+                    ? `<span style="color:#15803d;font-weight:700;">${da(st.arrears)}</span>${st.arrearsMonths ? `<br/><span style="font-size:0.75em;color:#5c567a;">${esc(st.arrearsMonths)}</span>` : ""}`
+                    : "—"
+                }</td>
                 <td class="num" style="color:#7c3aed;">${st.withheld ? "—" : da(st.total)}</td>
               </tr>`,
             )
@@ -289,17 +301,19 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
                 <tr>
                   <th class="ctr" style="width:9%;">${L.number}</th>
                   <th>${L.student}</th>
-                  <th class="ctr" style="width:12%;">${L.presents}</th>
-                  <th class="num" style="width:18%;">${L.fees}</th>
-                  <th class="num" style="width:18%;">${L.share}</th>
+                  <th class="ctr" style="width:10%;">${L.presents}</th>
+                  <th class="num" style="width:16%;">${L.fees}</th>
+                  <th class="num" style="width:16%;">${L.arrears}</th>
+                  <th class="num" style="width:16%;">${L.share}</th>
                 </tr>
               </thead>
-              <tbody>${rows || `<tr><td colspan="5" class="ctr">—</td></tr>`}</tbody>
+              <tbody>${rows || `<tr><td colspan="6" class="ctr">—</td></tr>`}</tbody>
               <tfoot>
                 <tr style="background:#fcfbff;border-top:2px solid #c0b6e9;">
                   <td colspan="2" style="font-weight:800;text-transform:uppercase;">${L.subtotal}</td>
                   <td class="ctr" style="font-weight:800;">${e.presents}</td>
                   <td class="num" style="font-weight:800;">${da(e.fees)}</td>
+                  <td class="num" style="font-weight:800;color:#15803d;">${da(e.students.reduce((s, st) => s + (st.arrears ?? 0), 0))}</td>
                   <td class="num" style="font-weight:800;color:#7c3aed;">${da(e.total)}</td>
                 </tr>
               </tfoot>

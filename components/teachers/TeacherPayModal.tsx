@@ -1,19 +1,29 @@
 "use client";
 
 /**
- * Le règlement d'un enseignant — organisé PAR EMPLOI DU TEMPS et PAR MOIS.
+ * Le règlement d'un enseignant — UN GRAND TABLEAU PAR GROUPE, mois par mois.
  *
- * On ne paie plus « des créneaux » en vrac : on paie LE MOIS d'un emploi du
- * temps, exactement le mois que l'école compte déjà pour les élèves (M1, M2 …,
- * ouvert par la première présence, fermé par la séance qui complète le pack).
+ * L'écran se lit exactement comme la feuille de présence d'un groupe, parce que
+ * c'est la même question posée à l'envers : la feuille demande « qui est venu ? »,
+ * la paie demande « qui a payé, et combien cela rapporte-t-il à l'enseignant ? ».
+ * Un emploi du temps = un bloc ; un mois = un tableau ; une ligne = un élève,
+ * avec ses séances S1…Sn, ce qu'il a versé sur le mois, ce qu'il traîne des mois
+ * précédents, et la part qui revient à l'enseignant.
  *
- * Conséquences, et c'est tout l'intérêt :
+ * On ne paie pas « des créneaux » en vrac : on paie LE MOIS d'un emploi du temps,
+ * exactement le mois que l'école compte déjà pour les élèves (M1, M2 …, ouvert
+ * par la première présence, fermé par la séance qui complète le pack).
+ *
  *  - l'écran s'ouvre sur le dernier mois CLOS non réglé, jamais sur le mois en
  *    cours : si le groupe en est à la 3ᵉ séance d'un mois de 4, c'est le mois
  *    précédent qu'on règle,
- *  - chaque mois montre qui a payé et qui n'a pas payé, avec le détail,
  *  - la part d'un élève en dette est RETENUE : elle ne disparaît pas, elle
- *    revient au règlement suivant dès que l'élève s'est acquitté,
+ *    revient au règlement suivant dès que l'élève s'est acquitté — et la colonne
+ *    « arriérés débloqués » la montre noir sur blanc,
+ *  - les cas d'élèves sont appliqués à la source : un « école seule » n'est même
+ *    pas listé (l'enseignant n'est délibérément pas payé pour lui), un
+ *    « cas spécial » ne rapporte rien, une « réduction » ne lui coûte que SA
+ *    moitié de la remise, et un « fils d'enseignant » sort du salaire du père,
  *  - la formule « par groupe » lit le tarif de l'abonnement (part enseignant du
  *    mois ÷ séances) déjà figé sur chaque présence, donc rien à saisir.
  */
@@ -28,10 +38,11 @@ import { Input } from "@/components/ui/SearchInput";
 import { printHtmlDocument } from "@/lib/print";
 import { formatDA } from "@/lib/utils";
 import {
+  cycleLead,
+  cycleSlots,
   formatDateFr,
-  registrationNumberOf,
+  slotCountFor,
   studentCaseLabel,
-  studentSoldDebtRows,
 } from "@/lib/helpers";
 import {
   buildTeacherPayslip,
@@ -40,20 +51,27 @@ import {
 } from "@/lib/reports/teacherPayslip";
 import {
   defaultPayableMonthKeys,
+  studentArrearsBefore,
+  teacherChildRows,
   teacherEmplois,
   type MonthPayState,
+  type TeacherChildRow,
   type TeacherDue,
   type TeacherEmploi,
   type TeacherMonth,
+  type TeacherMonthStudent,
 } from "@/lib/teacherMonths";
 import {
   AlertTriangle,
   CalendarClock,
   DollarSign,
+  GraduationCap,
   Percent,
+  Receipt,
   Users,
 } from "lucide-react";
 import type {
+  AttendanceStatus,
   Teacher,
   TeacherChildCharge,
   TeacherPaymentDeduction,
@@ -69,6 +87,14 @@ const PAY_STATE: Record<MonthPayState, { label: string; tone: Tone }> = {
   unpaid: { label: "Impayé", tone: "danger" },
   pending: { label: "Rien encore", tone: "neutral" },
   free: { label: "Gratuit", tone: "primary" },
+};
+
+/** Les mêmes pastilles que la feuille de présence — même écran, même langage. */
+const STATUS_STYLE: Record<AttendanceStatus, { label: string; short: string; cls: string }> = {
+  present: { label: "Présent", short: "P", cls: "bg-success/15 text-success border-success/40" },
+  late: { label: "Retard", short: "R", cls: "bg-warning/15 text-warning border-warning/40" },
+  absent: { label: "Absent", short: "A", cls: "bg-danger/15 text-danger border-danger/40" },
+  cancelled: { label: "Annulée", short: "×", cls: "bg-primary/15 text-primary border-primary/40" },
 };
 
 export function TeacherPayModal({
@@ -108,7 +134,6 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
     teacher.paymentType === "monthly" ? teacher.monthlyAmount ?? 0 : 0,
   );
   const [percentage, setPercentage] = useState<number>(teacher.percentage ?? 50);
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [expenseIds, setExpenseIds] = useState<string[]>(() =>
     db.teacherExpenses.filter((e) => e.teacherId === teacher.id && !e.paid).map((e) => e.id),
   );
@@ -142,30 +167,33 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 
   const unpaidExpenses = teacherExpenses.filter((e) => e.teacherId === teacher.id && !e.paid);
   const unpaidAcomptes = acomptes.filter((a) => a.teacherId === teacher.id && !a.paid);
-  /** Les enfants de l'enseignant, scolarisés sur son salaire. */
-  const childCharges: TeacherChildCharge[] = useMemo(
-    () =>
-      students
-        .filter((st) => st.studentCase === "teacher_child" && st.teacherFatherId === teacher.id)
-        .map((st) => {
-          const lines = studentSoldDebtRows(db, st.id).map((r) => ({
-            subscriptionId: r.subscriptionId,
-            label: r.label,
-            monthCode: r.code,
-            amount: r.debt,
-          }));
-          return {
-            studentId: st.id,
-            studentName: `${st.firstName} ${st.lastName}`,
-            registrationNumber: registrationNumberOf(db, st),
-            lines,
-            amount: lines.reduce((s, l) => s + l.amount, 0),
-          };
-        })
-        .filter((c) => c.lines.length > 0),
+
+  /** Ses enfants, scolarisés sur son salaire — avec ce qu'ils ont étudié. */
+  const childRows: TeacherChildRow[] = useMemo(
+    () => teacherChildRows(db, teacher.id),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [teacher, students, db.enrollments, db.payments],
+    [teacher, students, db.enrollments, db.payments, db.attendance, db.subscriptions],
   );
+
+  /** Les élèves à réduction croisés sur ces mois : leur remise se lit en clair. */
+  const reductionRows = useMemo(() => {
+    const seen = new Map<
+      string,
+      { student: TeacherMonthStudent; emploi: string; months: string[] }
+    >();
+    for (const e of owingEmplois) {
+      for (const m of e.months) {
+        for (const st of m.students) {
+          if (st.caseKind !== "reduction" && st.caseKind !== "special") continue;
+          const key = `${e.sessionId}|${st.studentId}`;
+          const row = seen.get(key);
+          if (row) row.months.push(m.code);
+          else seen.set(key, { student: st, emploi: e.title, months: [m.code] });
+        }
+      }
+    }
+    return [...seen.values()];
+  }, [owingEmplois]);
 
   // ---- ce qui est coché --------------------------------------------------
   const allMonths = owingEmplois.flatMap((e) => e.months);
@@ -194,14 +222,34 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 
   const monthShare = (m: TeacherMonth) => payableDuesOf(m).reduce((s, d) => s + dueShare(d), 0);
 
+  /** Ce qu'un élève rapporte sur CE mois, une fois la formule appliquée. */
+  const studentShare = (m: TeacherMonth, studentId: string) =>
+    m.dues
+      .filter((d) => d.studentId === studentId && !d.paid && !d.withheld)
+      .reduce((s, d) => s + dueShare(d), 0);
+
   const chosenExpenses = unpaidExpenses.filter((e) => expenseIds.includes(e.id));
   const chosenAcomptes = unpaidAcomptes.filter((a) => acompteIds.includes(a.id));
-  const chosenChildren = childCharges.filter((c) => childIds.includes(c.studentId));
+  const chosenChildren = childRows.filter((c) => childIds.includes(c.studentId));
   const expensesTotal = chosenExpenses.reduce((s, e) => s + e.amount, 0);
   const acomptesTotal = chosenAcomptes.reduce((s, a) => s + a.amount, 0);
   const childrenTotal = chosenChildren.reduce((s, c) => s + c.amount, 0);
   const deductionsTotal = expensesTotal + acomptesTotal + childrenTotal;
   const net = gross - deductionsTotal;
+
+  /** La forme figée que le règlement enregistre pour les enfants. */
+  const childCharges: TeacherChildCharge[] = chosenChildren.map((c) => ({
+    studentId: c.studentId,
+    studentName: c.studentName,
+    registrationNumber: c.registrationNumber,
+    lines: c.lines.map((l) => ({
+      subscriptionId: l.subscriptionId,
+      label: l.label,
+      monthCode: l.monthCode,
+      amount: l.amount,
+    })),
+    amount: c.amount,
+  }));
 
   const withheldTotal = chosenWithheldDues.reduce((s, d) => s + d.amount, 0);
   const withheldStudents = new Set(chosenWithheldDues.map((d) => d.studentId)).size;
@@ -258,6 +306,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
             const stu = students.find((x) => x.id === d.studentId);
             let row = rows.get(d.studentId);
             if (!row) {
+              const arrears = studentArrearsBefore(e, d.studentId, m.index);
               row = {
                 studentId: d.studentId,
                 name: d.studentName,
@@ -268,6 +317,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                 presents: 0,
                 fees: 0,
                 total: 0,
+                arrears: arrears.payable || undefined,
+                arrearsMonths: arrears.months.length ? arrears.months.join(", ") : undefined,
               };
               rows.set(d.studentId, row);
             }
@@ -415,7 +466,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
         description: `Règlement ${chosen.map((m) => m.code).join(", ")} — ${teacher.firstName} ${teacher.lastName}`,
         expenseIds: chosenExpenses.map((e) => e.id),
         acompteIds: chosenAcomptes.map((a) => a.id),
-        childCharges: chosenChildren,
+        childCharges,
       });
 
       if (!res.ok) {
@@ -438,7 +489,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
             emplois: payslipEmplois,
             expenses: expenseLines,
             acomptes: acompteLines,
-            childCharges: chosenChildren,
+            childCharges,
             gross,
             net,
             withheld: { count: withheldStudents, amount: withheldTotal },
@@ -451,7 +502,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
   };
 
   return (
-    <Modal open onClose={onClose} title="Règlement de l'enseignant — mois par mois" full>
+    <Modal open onClose={onClose} title="Règlement de l'enseignant — groupe par groupe" full>
       <div className="space-y-4">
         {/* ---- en-tête ------------------------------------------------- */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-canvas p-4">
@@ -628,14 +679,14 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
               )}
             </div>
 
-            {/* ---- les emplois du temps, mois par mois ------------------ */}
-            <div className="max-h-[42vh] space-y-3 overflow-y-auto pr-1">
+            {/* ---- UN GRAND TABLEAU PAR GROUPE ------------------------- */}
+            <div className="space-y-4">
               {owingEmplois.map((e) => (
                 <div key={e.sessionId} className="overflow-hidden rounded-2xl border border-line">
-                  <div className="flex flex-wrap items-center justify-between gap-2 bg-canvas/40 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-primary-50/60 p-3">
                     <div className="min-w-0">
-                      <strong className="block text-xs text-ink">
-                        📚 {e.title}
+                      <strong className="block text-sm text-ink">
+                        📚 {e.title} — Groupe {e.groupName}
                         {e.isOpen && (
                           <Badge tone="success" className="ml-1.5 text-[9px]">
                             Séance libre
@@ -643,16 +694,19 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                         )}
                       </strong>
                       <span className="block text-[10px] text-muted">
-                        {e.className} · Gr. {e.groupName} · {e.daysLabel} ·{" "}
+                        {e.className} · Salle {e.salleName} · {e.daysLabel} ·{" "}
                         <span className="font-mono">{e.timeLabel}</span>
                       </span>
                       <span className="block text-[10px] text-muted">
                         {e.size} séances / mois ·{" "}
                         {e.priced ? (
-                          <>part enseignant {formatDA(e.perSeance)} / séance</>
+                          <>
+                            part enseignant <strong className="text-primary">{formatDA(e.perSeance)}</strong>{" "}
+                            / séance · {formatDA(e.perSeance * e.size)} le mois complet
+                          </>
                         ) : (
                           <span className="font-semibold text-warning">
-                            aucune part enseignant définie
+                            aucune part enseignant définie sur cet abonnement
                           </span>
                         )}
                       </span>
@@ -663,31 +717,47 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                         Mois en cours {e.currentCode} · séance{" "}
                         {Math.min(Math.max(e.currentHeld, 0), e.size)}/{e.size}
                       </Badge>
+                      <Badge tone="success" className="font-mono text-[10px] font-bold">
+                        {formatDA(e.payable)} payable
+                      </Badge>
                       <Button size="sm" variant="outline" onClick={() => toggleEmploi(e)}>
                         Tout cocher / décocher
                       </Button>
                     </div>
                   </div>
 
-                  <div className="divide-y divide-line/60">
+                  <div className="divide-y-4 divide-canvas">
                     {e.months.map((m) => (
-                      <MonthLine
+                      <MonthBoard
                         key={m.key}
+                        emploi={e}
                         month={m}
                         checked={selectedKeys.includes(m.key)}
-                        expanded={expandedKey === m.key}
+                        selectedKeys={selectedKeys}
                         share={selectedKeys.includes(m.key) ? monthShare(m) : 0}
                         method={method}
                         pct={pct}
-                        dueShare={dueShare}
+                        studentShare={studentShare}
                         onToggle={() => toggleMonth(m.key)}
-                        onExpand={() => setExpandedKey(expandedKey === m.key ? null : m.key)}
                       />
                     ))}
                   </div>
                 </div>
               ))}
             </div>
+
+            {/* ---- les cas particuliers -------------------------------- */}
+            <SpecialCases
+              childRows={childRows}
+              childIds={childIds}
+              onToggleChild={(id) =>
+                setChildIds((prev) =>
+                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                )
+              }
+              reductionRows={reductionRows}
+              childrenTotal={childrenTotal}
+            />
 
             {/* ---- les élèves qui n'ont pas payé ----------------------- */}
             {unpaidRows.length > 0 && (
@@ -701,8 +771,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                     {formatDA(unpaidRows.reduce((s, r) => s + r.student.debt, 0))}
                   </Badge>
                 </div>
-                <div className="max-h-44 overflow-y-auto rounded-xl border border-line bg-surface">
-                  <table className="w-full text-[11px]">
+                <div className="max-h-44 overflow-x-auto overflow-y-auto rounded-xl border border-line bg-surface">
+                  <table className="w-full min-w-[640px] text-[11px]">
                     <thead className="bg-canvas/60">
                       <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
                         <th className="px-2 py-1.5">N°</th>
@@ -756,125 +826,114 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
               </div>
             )}
 
-            {/* ---- retenues -------------------------------------------- */}
-            <div className="space-y-3 rounded-2xl border border-warning/30 bg-warning/5 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-warning">
-                  Retenues sur ce règlement
-                </span>
-                <Badge tone="danger" className="font-mono font-bold">
-                  − {formatDA(deductionsTotal)}
-                </Badge>
-              </div>
+            {/* ---- les dépenses de l'enseignant ------------------------ */}
+            <DeductionTable
+              title="Dépenses avancées par l'école pour cet enseignant"
+              icon={Receipt}
+              empty="Aucune dépense en attente pour cet enseignant."
+              total={expensesTotal}
+              rows={unpaidExpenses.map((e) => ({
+                id: e.id,
+                date: e.date,
+                label: e.name,
+                description: e.description ?? "",
+                amount: e.amount,
+              }))}
+              selected={expenseIds}
+              onToggle={(id) =>
+                setExpenseIds((prev) =>
+                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                )
+              }
+            />
 
-              {unpaidExpenses.length === 0 &&
-              unpaidAcomptes.length === 0 &&
-              childCharges.length === 0 ? (
-                <p className="text-[11px] italic text-muted">
-                  Aucune dépense, aucun acompte et aucun enfant à charge en attente.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                  <DeductionBox
-                    title={`Dépenses (${unpaidExpenses.length})`}
-                    total={expensesTotal}
-                    empty="Aucune dépense en attente."
-                    rows={unpaidExpenses.map((e) => ({
-                      id: e.id,
-                      title: e.name,
-                      sub: `${formatDateFr(e.date)}${e.description ? ` · ${e.description}` : ""}`,
-                      amount: e.amount,
-                    }))}
-                    selected={expenseIds}
-                    onToggle={(id) =>
-                      setExpenseIds((prev) =>
-                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                      )
-                    }
-                  />
-                  <DeductionBox
-                    title={`Acomptes (${unpaidAcomptes.length})`}
-                    total={acomptesTotal}
-                    empty="Aucun acompte en attente."
-                    rows={unpaidAcomptes.map((a) => ({
-                      id: a.id,
-                      title: "Acompte",
-                      sub: `${formatDateFr(a.date.slice(0, 10))}${a.description ? ` · ${a.description}` : ""}`,
-                      amount: a.amount,
-                    }))}
-                    selected={acompteIds}
-                    onToggle={(id) =>
-                      setAcompteIds((prev) =>
-                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                      )
-                    }
-                  />
-                  <DeductionBox
-                    title={`Scolarité enfants (${childCharges.length})`}
-                    total={childrenTotal}
-                    empty="Aucun enfant à charge en dette."
-                    rows={childCharges.map((c) => ({
-                      id: c.studentId,
-                      title: c.studentName,
-                      sub: `N° ${c.registrationNumber} · ${c.lines
-                        .map((l) => `${l.label} ${l.monthCode} ${formatDA(l.amount)}`)
-                        .join(" · ")}`,
-                      amount: c.amount,
-                    }))}
-                    selected={childIds}
-                    onToggle={(id) =>
-                      setChildIds((prev) =>
-                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                      )
-                    }
-                  />
-                </div>
-              )}
-            </div>
+            <DeductionTable
+              title="Acomptes déjà versés"
+              icon={DollarSign}
+              empty="Aucun acompte en attente."
+              total={acomptesTotal}
+              rows={unpaidAcomptes.map((a) => ({
+                id: a.id,
+                date: a.date.slice(0, 10),
+                label: "Acompte",
+                description: a.description ?? "",
+                amount: a.amount,
+              }))}
+              selected={acompteIds}
+              onToggle={(id) =>
+                setAcompteIds((prev) =>
+                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                )
+              }
+            />
 
             {/* ---- net à verser ---------------------------------------- */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-success/40 bg-success/5 p-4">
-              <div>
-                <span className="block text-[10px] font-bold uppercase text-muted">
-                  Net à verser
-                </span>
-                <strong className={`text-xl font-black ${net < 0 ? "text-danger" : "text-success"}`}>
-                  {formatDA(net)}
-                </strong>
-                <span className="mt-0.5 block text-[10px] text-muted">
-                  Brut {formatDA(gross)}
-                  {deductionsTotal > 0 && (
-                    <>
-                      {" "}
-                      − retenues {formatDA(deductionsTotal)}
-                      <span className="text-[9px]">
-                        {" "}
-                        (dépenses {expensesTotal} · acomptes {acomptesTotal} · enfants{" "}
-                        {childrenTotal})
-                      </span>
-                    </>
-                  )}
-                </span>
-                <span className="mt-0.5 block text-[10px] text-muted">
-                  {chosen.map((m) => m.code).join(", ") || "aucun mois"} ·{" "}
-                  {chosenDues.length} présence(s)
-                  {chosenPassagers.length > 0 && ` · ${chosenPassagers.length} passager(s)`}
-                </span>
-                {withheldTotal > 0 && (
-                  <span className="mt-1 block rounded-lg bg-danger/10 px-2 py-1 text-[10px] font-semibold text-danger">
-                    ⏳ {chosenWithheldDues.length} présence(s) de {withheldStudents} élève(s) en
-                    dette — {formatDA(withheldTotal)} non réglés. Ils réapparaîtront au prochain
-                    paiement une fois la dette payée.
-                  </span>
-                )}
+            <div className="space-y-3 rounded-2xl border-2 border-success/40 bg-success/5 p-4">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-success">
+                Récapitulatif du règlement
+              </span>
+              <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+                <table className="w-full min-w-[420px] text-xs">
+                  <tbody>
+                    <SummaryLine
+                      label={`Total des élèves (${chosenDues.length} présence(s) sur ${chosen.length} mois)`}
+                      value={formatDA(gross)}
+                      tone="text-success"
+                    />
+                    <SummaryLine
+                      label={`Dépenses (${chosenExpenses.length})`}
+                      value={`− ${formatDA(expensesTotal)}`}
+                      tone="text-danger"
+                    />
+                    <SummaryLine
+                      label={`Acomptes (${chosenAcomptes.length})`}
+                      value={`− ${formatDA(acomptesTotal)}`}
+                      tone="text-danger"
+                    />
+                    <SummaryLine
+                      label={`Scolarité de ses enfants (${chosenChildren.length})`}
+                      value={`− ${formatDA(childrenTotal)}`}
+                      tone="text-danger"
+                    />
+                    <tr className="border-t-2 border-success/40 bg-success/10">
+                      <td className="px-3 py-2.5 text-sm font-black uppercase text-ink">
+                        Net à verser
+                      </td>
+                      <td
+                        className={`px-3 py-2.5 text-right font-mono text-xl font-black ${
+                          net < 0 ? "text-danger" : "text-success"
+                        }`}
+                      >
+                        {formatDA(net)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={onClose}>
-                  Annuler
-                </Button>
-                <Button onClick={submit} disabled={saving || gross <= 0 || chosen.length === 0}>
-                  {saving ? "Enregistrement..." : `Payer ${formatDA(net)}`}
-                </Button>
+
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="text-[10px] text-muted">
+                  <span className="block">
+                    {chosen.map((m) => m.code).join(", ") || "aucun mois"} ·{" "}
+                    {chosenDues.length} présence(s)
+                    {chosenPassagers.length > 0 && ` · ${chosenPassagers.length} passager(s)`}
+                  </span>
+                  {withheldTotal > 0 && (
+                    <span className="mt-1 block rounded-lg bg-danger/10 px-2 py-1 font-semibold text-danger">
+                      ⏳ {chosenWithheldDues.length} présence(s) de {withheldStudents} élève(s) en
+                      dette — {formatDA(withheldTotal)} non réglés. Ils réapparaîtront au prochain
+                      paiement une fois la dette payée.
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={onClose}>
+                    Annuler
+                  </Button>
+                  <Button onClick={submit} disabled={saving || gross <= 0 || chosen.length === 0}>
+                    {saving ? "Enregistrement..." : `Payer ${formatDA(net)}`}
+                  </Button>
+                </div>
               </div>
             </div>
           </>
@@ -892,6 +951,15 @@ function Stat({ label, value, tone = "text-ink" }: { label: string; value: strin
       <span className="block text-[10px] font-semibold uppercase text-muted">{label}</span>
       <strong className={`font-mono text-base ${tone}`}>{value}</strong>
     </div>
+  );
+}
+
+function SummaryLine({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <tr className="border-t border-line/60">
+      <td className="px-3 py-2 text-muted">{label}</td>
+      <td className={`px-3 py-2 text-right font-mono font-bold ${tone}`}>{value}</td>
+    </tr>
   );
 }
 
@@ -925,31 +993,48 @@ function MethodCard({
   );
 }
 
-function MonthLine({
+/**
+ * UN MOIS D'UN GROUPE — la feuille de présence, lue du côté de la paie.
+ *
+ * Une ligne par élève, ses séances S1…Sn comme sur la feuille, puis les trois
+ * colonnes d'argent qui décident du règlement : ce qu'il a payé sur CE mois, ce
+ * qu'il traîne des mois précédents, et les arriérés que sa dette bloquait et
+ * qu'un versement récent vient de débloquer.
+ */
+function MonthBoard({
+  emploi,
   month,
   checked,
-  expanded,
+  selectedKeys,
   share,
   method,
   pct,
-  dueShare,
+  studentShare,
   onToggle,
-  onExpand,
 }: {
+  emploi: TeacherEmploi;
   month: TeacherMonth;
   checked: boolean;
-  expanded: boolean;
+  selectedKeys: string[];
   share: number;
   method: PayMethod;
   pct: number;
-  dueShare: (d: TeacherDue) => number;
+  studentShare: (m: TeacherMonth, studentId: string) => number;
   onToggle: () => void;
-  onExpand: () => void;
 }) {
+  const db = useData();
+  const subId = emploi.subscriptionId;
   const closed = month.state === "done";
+
+  /** Autant de colonnes que la feuille de présence en montrerait ce mois-là. */
+  const slotCount = subId
+    ? slotCountFor(db, subId, month.students.map((s) => s.studentId), month.code)
+    : month.size;
+
   return (
-    <div className={month.isCurrent ? "bg-primary-50/20" : ""}>
-      <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+    <div className={checked ? "bg-primary-50/25" : "bg-surface"}>
+      {/* ---- la barre du mois ------------------------------------------ */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line p-3">
         <label className="flex min-w-0 cursor-pointer items-start gap-2.5">
           <input
             type="checkbox"
@@ -961,7 +1046,9 @@ function MonthLine({
             <strong className="block text-xs text-ink">
               {month.code}
               <Badge tone={closed ? "primary" : "warning"} className="ml-1.5 text-[9px]">
-                {closed ? "Mois clos" : `En cours — séance ${Math.min(month.held, month.size)}/${month.size}`}
+                {closed
+                  ? "Mois clos"
+                  : `En cours — séance ${Math.min(month.held, month.size)}/${month.size}`}
               </Badge>
               {month.isCurrent && (
                 <Badge tone="neutral" className="ml-1.5 text-[9px]">
@@ -997,14 +1084,12 @@ function MonthLine({
               → {formatDA(share)}
             </Badge>
           )}
-          <Button size="sm" variant="outline" onClick={onExpand}>
-            {expanded ? "Masquer" : "Détails élèves"}
-          </Button>
         </div>
       </div>
 
-      {expanded && (
-        <div className="space-y-2 border-t border-line bg-surface p-3">
+      {/* ---- les alertes du mois --------------------------------------- */}
+      {month.alerts.length > 0 && (
+        <div className="space-y-1 px-3 pt-2">
           {month.alerts.map((a, i) => (
             <p
               key={i}
@@ -1021,173 +1106,536 @@ function MonthLine({
               {a.text}
             </p>
           ))}
+        </div>
+      )}
 
-          {month.dates.length > 0 && (
-            <p className="text-[10px] text-muted">
-              <strong className="text-ink">Séances :</strong>{" "}
-              {month.dates.map((d, i) => (
-                <span key={d} className="font-mono">
-                  {i > 0 ? " · " : ""}S{i + 1} {formatDateFr(d)}
-                </span>
+      {month.dates.length > 0 && (
+        <p className="px-3 pt-2 text-[10px] text-muted">
+          <strong className="text-ink">Séances :</strong>{" "}
+          {month.dates.map((d, i) => (
+            <span key={d} className="font-mono">
+              {i > 0 ? " · " : ""}S{i + 1} {formatDateFr(d)}
+            </span>
+          ))}
+        </p>
+      )}
+
+      {/* ---- LE TABLEAU, comme la feuille de présence ------------------- */}
+      <div className="overflow-x-auto p-3">
+        <table className="w-full min-w-[1080px] text-xs">
+          <thead className="bg-canvas/60">
+            <tr className="text-left text-[10px] uppercase tracking-wide text-muted">
+              <th className="px-2 py-2.5">N°</th>
+              <th className="px-2 py-2.5">Élève</th>
+              {Array.from({ length: slotCount }, (_, i) => (
+                <th key={i} className="px-1 py-2.5 text-center" title={`Séance ${i + 1} du mois`}>
+                  S{i + 1}
+                </th>
               ))}
-            </p>
-          )}
+              <th className="px-2 py-2.5 text-right">Son tarif</th>
+              <th className="px-2 py-2.5">Payé {month.code} ?</th>
+              <th className="px-2 py-2.5">Mois préc. impayés</th>
+              <th className="px-2 py-2.5">Arriérés débloqués</th>
+              <th className="px-2 py-2.5 text-right">
+                Part prof{" "}
+                {method === "percent"
+                  ? `(${pct}%)`
+                  : method === "group"
+                    ? "(tarif du groupe)"
+                    : "(réparti)"}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {month.students.length === 0 && month.passagers.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={slotCount + 7}
+                  className="px-3 py-8 text-center text-xs italic text-muted"
+                >
+                  Aucun élève sur ce mois.
+                </td>
+              </tr>
+            ) : (
+              month.students.map((st) => (
+                <StudentPayRow
+                  key={st.studentId}
+                  emploi={emploi}
+                  month={month}
+                  student={st}
+                  subId={subId}
+                  slotCount={slotCount}
+                  selectedKeys={selectedKeys}
+                  share={studentShare(month, st.studentId)}
+                />
+              ))
+            )}
+            {month.passagers.map((p) => (
+              <tr key={p.id} className="border-t border-line/50">
+                <td className="px-2 py-2 font-mono text-muted">—</td>
+                <td className="px-2 py-2">
+                  <strong className="text-ink">{p.name}</strong>
+                  <Badge tone="warning" className="ml-1.5 text-[8px]">
+                    Passager
+                  </Badge>
+                </td>
+                <td colSpan={slotCount} className="px-2 py-2 text-center text-[10px] text-muted">
+                  séance libre du {formatDateFr(p.dateKey)}
+                </td>
+                <td className="px-2 py-2 text-right font-mono text-muted">{formatDA(p.price)}</td>
+                <td className="px-2 py-2">
+                  <Badge tone="success" className="text-[9px]">
+                    Payé
+                  </Badge>
+                </td>
+                <td className="px-2 py-2 text-center text-success">✅</td>
+                <td className="px-2 py-2 text-center text-muted">—</td>
+                <td className="px-2 py-2 text-right font-mono text-muted">—</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
-          <div className="overflow-x-auto">
+/** Une ligne d'élève sur un mois — l'exact pendant payant de la feuille. */
+function StudentPayRow({
+  emploi,
+  month,
+  student,
+  subId,
+  slotCount,
+  selectedKeys,
+  share,
+}: {
+  emploi: TeacherEmploi;
+  month: TeacherMonth;
+  student: TeacherMonthStudent;
+  subId?: string;
+  slotCount: number;
+  selectedKeys: string[];
+  share: number;
+}) {
+  const db = useData();
+  const badge = PAY_STATE[student.status];
+
+  const slots = subId ? cycleSlots(db, student.studentId, subId, month.code) : [];
+  const lead = subId ? cycleLead(db, student.studentId, subId, month.code) : 0;
+
+  /** Ce que les mois d'AVANT doivent encore pour lui à l'enseignant. */
+  const arrears = studentArrearsBefore(emploi, student.studentId, month.index);
+  const arrearsTicked = arrears.months.every((code) =>
+    selectedKeys.includes(`${emploi.sessionId}|${code}`),
+  );
+
+  return (
+    <tr className={`border-t border-line/60 align-middle ${student.debt > 0 ? "bg-danger/5" : ""}`}>
+      <td className="px-2 py-2 font-mono text-[11px] text-muted">{student.registrationNumber}</td>
+      <td className="px-2 py-2">
+        <strong className="block text-ink">{student.name}</strong>
+        {student.caseLabel && (
+          <Badge
+            tone={student.caseKind === "teacher_child" ? "primary" : "warning"}
+            className="mt-0.5 text-[9px]"
+          >
+            {student.caseLabel}
+          </Badge>
+        )}
+      </td>
+
+      {Array.from({ length: slotCount }, (_, i) => {
+        // Les séances tenues avant son inscription ne sont pas les siennes.
+        const before = i < lead;
+        const rec = before ? undefined : slots[i - lead];
+        return (
+          <td key={i} className="px-1 py-2 text-center">
+            <span
+              title={
+                before
+                  ? `Séance tenue avant son inscription (inscrit à la séance ${lead + 1})`
+                  : rec
+                    ? `${STATUS_STYLE[rec.status].label} — ${formatDateFr(rec.timestamp.slice(0, 10))}`
+                    : "Pas encore pointé"
+              }
+              className={`inline-flex h-6 w-6 items-center justify-center rounded-lg border text-[11px] font-black ${
+                before
+                  ? "border-dashed border-line bg-canvas/40 text-muted/40"
+                  : rec
+                    ? STATUS_STYLE[rec.status].cls
+                    : "border-line bg-canvas text-muted/50"
+              }`}
+            >
+              {before ? "" : rec ? STATUS_STYLE[rec.status].short : "–"}
+            </span>
+          </td>
+        );
+      })}
+
+      {/* son tarif */}
+      <td className="px-2 py-2 text-right font-mono text-muted">
+        {formatDA(student.unitPrice)}
+        <span className="block text-[8px]">
+          séance · {formatDA(student.expected)} / mois
+          {student.teacherPerSeance > 0 && (
+            <>
+              <br />
+              prof {formatDA(student.teacherPerSeance)} / séance
+            </>
+          )}
+        </span>
+      </td>
+
+      {/* payé ce mois ? */}
+      <td className="px-2 py-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={badge.tone} className="text-[9px]">
+            {badge.label}
+          </Badge>
+          <Badge tone="success" className="font-mono text-[9px]" title={`Versé sur ${month.code}`}>
+            {formatDA(student.credited)}
+          </Badge>
+          {student.debt > 0 && (
+            <Badge tone="danger" className="font-mono text-[9px]" title="Reste dû sur ce mois">
+              reste {formatDA(student.debt)}
+            </Badge>
+          )}
+        </div>
+        <span className="mt-0.5 block text-[9px] text-muted">
+          {student.done}/{Math.max(0, student.size - lead)} séance(s) · {student.presents} P /{" "}
+          {student.absents} A
+          {student.cancelled > 0 ? ` / ${student.cancelled} ×` : ""}
+        </span>
+      </td>
+
+      {/* mois précédents impayés */}
+      <td className="px-2 py-2">
+        {student.previousDebt > 0 ? (
+          <span className="rounded-lg border border-danger/40 bg-danger/10 px-2 py-1 font-mono text-[10px] font-bold text-danger">
+            {formatDA(student.previousDebt)}
+          </span>
+        ) : (
+          <span className="text-sm" title="Rien en retard sur les mois précédents">
+            ✅
+          </span>
+        )}
+        {student.otherDebt > 0 && (
+          <span className="mt-0.5 block text-[9px] text-warning">
+            + {formatDA(student.otherDebt)} sur ses autres emplois
+          </span>
+        )}
+      </td>
+
+      {/* arriérés débloqués : payés depuis, donc dus à l'enseignant */}
+      <td className="px-2 py-2">
+        {arrears.payable > 0 ? (
+          <>
+            <span className="rounded-lg border border-success/40 bg-success/10 px-2 py-1 font-mono text-[10px] font-bold text-success">
+              {formatDA(arrears.payable)}
+            </span>
+            <span className="mt-0.5 block text-[9px] text-muted">
+              {arrears.months.join(", ")} —{" "}
+              {arrearsTicked ? (
+                <span className="font-semibold text-success">inclus dans ce règlement</span>
+              ) : (
+                <span className="font-semibold text-warning">cochez ce mois pour le régler</span>
+              )}
+            </span>
+          </>
+        ) : arrears.withheld > 0 ? (
+          <>
+            <span className="rounded-lg border border-warning/40 bg-warning/10 px-2 py-1 font-mono text-[10px] font-bold text-warning">
+              {formatDA(arrears.withheld)}
+            </span>
+            <span className="mt-0.5 block text-[9px] text-muted">
+              {arrears.months.join(", ")} — encore bloqués par sa dette
+            </span>
+          </>
+        ) : (
+          <span className="text-sm" title="Aucun arriéré de part enseignant">
+            —
+          </span>
+        )}
+      </td>
+
+      {/* part prof de ce mois */}
+      <td className="px-2 py-2 text-right font-mono font-bold text-primary">
+        {student.open > 0 && share === 0 ? "— (dette)" : formatDA(share)}
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * LES CAS PARTICULIERS, en bas du règlement, là où on les vérifie une dernière
+ * fois avant de payer :
+ *  - ses ENFANTS, scolarisés sur son salaire : ce que chacun a étudié ce mois-ci,
+ *    ce qu'il traîne des mois d'avant, et le total retenu ;
+ *  - les élèves à RÉDUCTION : le prix d'origine, ce que l'école garde après sa
+ *    part de remise, ce que l'enseignant touche après la sienne ;
+ *  - les élèves « école seule », rappelés mais jamais listés : l'enseignant
+ *    n'est délibérément pas payé pour eux.
+ */
+function SpecialCases({
+  childRows,
+  childIds,
+  onToggleChild,
+  reductionRows,
+  childrenTotal,
+}: {
+  childRows: TeacherChildRow[];
+  childIds: string[];
+  onToggleChild: (id: string) => void;
+  reductionRows: { student: TeacherMonthStudent; emploi: string; months: string[] }[];
+  childrenTotal: number;
+}) {
+  return (
+    <div className="space-y-3 rounded-2xl border border-warning/30 bg-warning/5 p-4">
+      <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-warning">
+        <GraduationCap className="h-3.5 w-3.5" /> Cas particuliers de ce règlement
+      </span>
+
+      {/* ---- ses enfants ------------------------------------------------ */}
+      <div className="rounded-xl border border-primary/30 bg-surface p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <strong className="text-[11px] text-ink">
+            Ses enfants, scolarisés sur son salaire ({childRows.length})
+          </strong>
+          <Badge tone="danger" className="font-mono font-bold">
+            − {formatDA(childrenTotal)}
+          </Badge>
+        </div>
+        {childRows.length === 0 ? (
+          <p className="text-[10px] italic text-muted">
+            Aucun enfant à charge en dette sur ce salaire.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-line">
             <table className="w-full min-w-[720px] text-[11px]">
-              <thead>
+              <thead className="bg-canvas/60">
                 <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
-                  <th className="py-1">N°</th>
-                  <th className="py-1">Élève</th>
-                  <th className="py-1 text-right">Son tarif</th>
-                  <th className="py-1 text-center">Séances</th>
-                  <th className="py-1 text-center">P / A</th>
-                  <th className="py-1 text-right">Versé</th>
-                  <th className="py-1 text-right">Reste dû</th>
-                  <th className="py-1">Statut</th>
-                  <th className="py-1 text-right">
-                    Part prof{" "}
-                    {method === "percent"
-                      ? `(${pct}%)`
-                      : method === "group"
-                        ? "(tarif du groupe)"
-                        : "(réparti)"}
-                  </th>
+                  <th className="px-2 py-1.5">Retenir</th>
+                  <th className="px-2 py-1.5">Enfant</th>
+                  <th className="px-2 py-1.5">Emploi du temps</th>
+                  <th className="px-2 py-1.5">Mois</th>
+                  <th className="px-2 py-1.5 text-center">Séances suivies</th>
+                  <th className="px-2 py-1.5 text-right">Prix / séance</th>
+                  <th className="px-2 py-1.5 text-right">Montant</th>
                 </tr>
               </thead>
               <tbody>
-                {month.students.map((st) => {
-                  const badge = PAY_STATE[st.status];
-                  const dues = month.dues.filter((d) => d.studentId === st.studentId && !d.paid);
-                  const payable = dues.filter((d) => !d.withheld);
-                  return (
-                    <tr
-                      key={st.studentId}
-                      className={`border-t border-line/50 ${st.debt > 0 ? "bg-danger/5" : ""}`}
-                    >
-                      <td className="py-1.5 font-mono text-muted">{st.registrationNumber}</td>
-                      <td className="py-1.5">
-                        <strong className="text-ink">{st.name}</strong>
-                        {st.caseLabel && (
-                          <Badge tone="warning" className="ml-1.5 text-[8px]">
-                            {st.caseLabel}
+                {childRows.map((c) =>
+                  c.lines.map((l, i) => (
+                    <tr key={`${c.studentId}-${l.subscriptionId}-${l.monthCode}`} className="border-t border-line/50">
+                      {i === 0 && (
+                        <td rowSpan={c.lines.length} className="px-2 py-1.5 align-top">
+                          <input
+                            type="checkbox"
+                            checked={childIds.includes(c.studentId)}
+                            onChange={() => onToggleChild(c.studentId)}
+                            className="h-4 w-4"
+                          />
+                        </td>
+                      )}
+                      {i === 0 && (
+                        <td rowSpan={c.lines.length} className="px-2 py-1.5 align-top">
+                          <strong className="block text-ink">{c.studentName}</strong>
+                          <span className="block font-mono text-[9px] text-muted">
+                            N° {c.registrationNumber}
+                          </span>
+                        </td>
+                      )}
+                      <td className="px-2 py-1.5 text-muted">{l.label}</td>
+                      <td className="px-2 py-1.5">
+                        <span className="font-mono">{l.monthCode}</span>
+                        {l.current ? (
+                          <Badge tone="primary" className="ml-1.5 text-[8px]">
+                            mois en cours
+                          </Badge>
+                        ) : (
+                          <Badge tone="danger" className="ml-1.5 text-[8px]">
+                            arriéré
                           </Badge>
                         )}
-                        {st.previousDebt > 0 && (
-                          <span className="block text-[9px] text-danger">
-                            + {formatDA(st.previousDebt)} d&apos;arriérés
-                          </span>
-                        )}
                       </td>
-                      <td className="py-1.5 text-right font-mono text-muted">
-                        {formatDA(st.unitPrice)}
-                        <span className="block text-[8px]">séance · {formatDA(st.expected)} / mois</span>
+                      <td className="px-2 py-1.5 text-center font-mono">{l.seances}</td>
+                      <td className="px-2 py-1.5 text-right font-mono text-muted">
+                        {formatDA(l.unitPrice)}
                       </td>
-                      <td className="py-1.5 text-center font-mono">
-                        {st.done}/{st.size}
-                      </td>
-                      <td className="py-1.5 text-center font-mono text-muted">
-                        {st.presents} / {st.absents}
-                      </td>
-                      <td className="py-1.5 text-right font-mono text-success">
-                        {formatDA(st.credited)}
-                      </td>
-                      <td className="py-1.5 text-right font-mono">
-                        {st.debt > 0 ? (
-                          <strong className="text-danger">{formatDA(st.debt)}</strong>
-                        ) : (
-                          <span className="text-success">0</span>
-                        )}
-                      </td>
-                      <td className="py-1.5">
-                        <Badge tone={badge.tone} className="text-[9px]">
-                          {badge.label}
-                        </Badge>
-                      </td>
-                      <td className="py-1.5 text-right font-mono font-bold text-primary">
-                        {payable.length === 0 && dues.length > 0
-                          ? "— (dette)"
-                          : formatDA(payable.reduce((s, d) => s + dueShare(d), 0))}
+                      <td className="px-2 py-1.5 text-right font-mono font-bold text-danger">
+                        {formatDA(l.amount)}
                       </td>
                     </tr>
-                  );
-                })}
-                {month.passagers.map((p) => (
-                  <tr key={p.id} className="border-t border-line/50">
-                    <td className="py-1.5 font-mono text-muted">—</td>
-                    <td className="py-1.5">
-                      <strong className="text-ink">{p.name}</strong>
-                      <Badge tone="warning" className="ml-1.5 text-[8px]">
-                        Passager
+                  )),
+                )}
+              </tbody>
+              <tfoot>
+                {childRows.map((c) => (
+                  <tr key={`total-${c.studentId}`} className="border-t border-line bg-canvas/40">
+                    <td colSpan={4} className="px-2 py-1.5 text-[10px] font-bold uppercase text-muted">
+                      {c.studentName} — mois en cours {formatDA(c.currentAmount)} ·{" "}
+                      {c.currentSeances} séance(s) · arriérés {formatDA(c.previousAmount)}
+                    </td>
+                    <td colSpan={3} className="px-2 py-1.5 text-right font-mono font-black text-danger">
+                      total à retenir {formatDA(c.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tfoot>
+            </table>
+          </div>
+        )}
+        <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
+          Cet argent ne passe jamais par la caisse : l&apos;école est payée en versant
+          <strong className="text-ink"> moins</strong> à l&apos;enseignant, et le solde de
+          l&apos;enfant revient à zéro sur les mois cochés.
+        </p>
+      </div>
+
+      {/* ---- réductions & cas spéciaux ---------------------------------- */}
+      <div className="rounded-xl border border-line bg-surface p-3">
+        <strong className="mb-2 block text-[11px] text-ink">
+          Réductions et cas spéciaux sur ces mois ({reductionRows.length})
+        </strong>
+        {reductionRows.length === 0 ? (
+          <p className="text-[10px] italic text-muted">
+            Aucun élève à réduction ni cas spécial sur les mois listés.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-line">
+            <table className="w-full min-w-[720px] text-[11px]">
+              <thead className="bg-canvas/60">
+                <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                  <th className="px-2 py-1.5">Élève</th>
+                  <th className="px-2 py-1.5">Emploi du temps</th>
+                  <th className="px-2 py-1.5">Mois</th>
+                  <th className="px-2 py-1.5">Cas</th>
+                  <th className="px-2 py-1.5 text-right">Prix d&apos;origine</th>
+                  <th className="px-2 py-1.5 text-right">Il paie</th>
+                  <th className="px-2 py-1.5 text-right">Part école</th>
+                  <th className="px-2 py-1.5 text-right">Part enseignant</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reductionRows.map(({ student, emploi, months }) => (
+                  <tr key={`${emploi}-${student.studentId}`} className="border-t border-line/50">
+                    <td className="px-2 py-1.5">
+                      <strong className="text-ink">{student.name}</strong>
+                      <span className="block font-mono text-[9px] text-muted">
+                        N° {student.registrationNumber}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-muted">{emploi}</td>
+                    <td className="px-2 py-1.5 font-mono">{months.join(", ")}</td>
+                    <td className="px-2 py-1.5">
+                      <Badge tone={student.caseKind === "special" ? "success" : "warning"} className="text-[9px]">
+                        {student.caseLabel}
                       </Badge>
                     </td>
-                    <td className="py-1.5 text-right font-mono text-muted">{formatDA(p.price)}</td>
-                    <td className="py-1.5 text-center font-mono">1</td>
-                    <td className="py-1.5 text-center font-mono text-muted">1 / 0</td>
-                    <td className="py-1.5 text-right font-mono text-success">
-                      {formatDA(p.price)}
+                    <td className="px-2 py-1.5 text-right font-mono text-muted line-through">
+                      {formatDA(student.listPrice)}
                     </td>
-                    <td className="py-1.5 text-right font-mono text-success">0</td>
-                    <td className="py-1.5">
-                      <Badge tone="success" className="text-[9px]">
-                        Payé
-                      </Badge>
+                    <td className="px-2 py-1.5 text-right font-mono font-bold text-ink">
+                      {formatDA(student.unitPrice)}
                     </td>
-                    <td className="py-1.5 text-right font-mono text-muted">—</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-success">
+                      {formatDA(student.schoolPerSeance)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono font-bold text-primary">
+                      {formatDA(student.teacherPerSeance)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+        <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
+          La remise se partage : l&apos;école en accorde sa moitié sur SA part, l&apos;enseignant la
+          sienne sur LA SIENNE — les deux colonnes rendent donc exactement ce que l&apos;élève paie.
+          Un <strong className="text-ink">cas spécial</strong> ne rapporte rien à personne, et un
+          élève <strong className="text-ink">« école seule »</strong> n&apos;est volontairement pas
+          listé sur cette paie : l&apos;enseignant n&apos;est pas payé pour lui.
+        </p>
+      </div>
     </div>
   );
 }
 
-function DeductionBox({
+/** Une retenue tabulée — dépenses ou acomptes, même lecture, même total. */
+function DeductionTable({
   title,
-  total,
+  icon: Icon,
   empty,
+  total,
   rows,
   selected,
   onToggle,
 }: {
   title: string;
-  total: number;
+  icon: typeof DollarSign;
   empty: string;
-  rows: { id: string; title: string; sub: string; amount: number }[];
+  total: number;
+  rows: { id: string; date: string; label: string; description: string; amount: number }[];
   selected: string[];
   onToggle: (id: string) => void;
 }) {
   return (
-    <div className="rounded-xl border border-line bg-surface p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase text-muted">{title}</span>
-        <strong className="text-xs text-danger">− {formatDA(total)}</strong>
+    <div className="space-y-2 rounded-2xl border border-danger/25 bg-danger/5 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-danger">
+          <Icon className="h-3.5 w-3.5" /> {title} ({rows.length})
+        </span>
+        <Badge tone="danger" className="font-mono font-bold">
+          − {formatDA(total)}
+        </Badge>
       </div>
       {rows.length === 0 ? (
-        <p className="text-[10px] italic text-muted">{empty}</p>
+        <p className="text-[11px] italic text-muted">{empty}</p>
       ) : (
-        <div className="max-h-40 space-y-1.5 overflow-y-auto">
-          {rows.map((r) => (
-            <label
-              key={r.id}
-              className="flex cursor-pointer items-start gap-2 rounded-lg border border-line/60 p-2 text-[11px] hover:bg-primary-50/40"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(r.id)}
-                onChange={() => onToggle(r.id)}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0"
-              />
-              <span className="min-w-0 flex-1">
-                <strong className="block text-ink">{r.title}</strong>
-                <span className="block text-[10px] text-muted">{r.sub}</span>
-              </span>
-              <strong className="shrink-0 font-mono text-danger">{formatDA(r.amount)}</strong>
-            </label>
-          ))}
+        <div className="max-h-56 overflow-x-auto overflow-y-auto rounded-xl border border-line bg-surface">
+          <table className="w-full min-w-[560px] text-[11px]">
+            <thead className="bg-canvas/60">
+              <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                <th className="px-2 py-1.5">Retenir</th>
+                <th className="px-2 py-1.5">Date</th>
+                <th className="px-2 py-1.5">Intitulé</th>
+                <th className="px-2 py-1.5">Description</th>
+                <th className="px-2 py-1.5 text-right">Montant</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-line/50">
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(r.id)}
+                      onChange={() => onToggle(r.id)}
+                      className="h-4 w-4"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 font-mono text-muted">{formatDateFr(r.date)}</td>
+                  <td className="px-2 py-1.5 font-semibold text-ink">{r.label}</td>
+                  <td className="px-2 py-1.5 text-muted">{r.description || "—"}</td>
+                  <td className="px-2 py-1.5 text-right font-mono font-bold text-danger">
+                    {formatDA(r.amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-danger/30 bg-canvas/40">
+                <td colSpan={4} className="px-2 py-1.5 text-[10px] font-bold uppercase text-muted">
+                  Total retenu
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono font-black text-danger">
+                  − {formatDA(total)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       )}
     </div>

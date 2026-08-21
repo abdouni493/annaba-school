@@ -65,6 +65,32 @@ export function sessionTimeLabel(session: ScheduleSession, day?: Day): string {
   return [...seen].join(" · ");
 }
 
+/**
+ * The salle ONE day of an emploi du temps runs in.
+ *
+ * An emploi may occupy a different room depending on the day — Samedi in Salle
+ * A, Mardi in Salle B, still one emploi. `daySalles` holds those overrides and
+ * `salleId` remains the default, so a timing that keeps the same room all week
+ * stores nothing extra.
+ */
+export function sessionSalleOn(session: ScheduleSession, day?: Day): string {
+  const override = day ? session.daySalles?.[day] : undefined;
+  return override || session.salleId || "";
+}
+
+/** Every salle an emploi occupies over its week, without duplicates. */
+export function sessionSalleIds(session: ScheduleSession): string[] {
+  if (session.isOpen && session.salleIds?.length) return [...new Set(session.salleIds)];
+  const ids = (session.days ?? []).map((d) => sessionSalleOn(session, d)).filter(Boolean);
+  const out = ids.length > 0 ? ids : [session.salleId].filter(Boolean);
+  return [...new Set(out)];
+}
+
+/** Does the emploi keep the same salle every day it runs? */
+export function hasUniformSalles(session: ScheduleSession): boolean {
+  return sessionSalleIds(session).length <= 1;
+}
+
 /** Does the emploi keep the same hours every day it runs? */
 export function hasUniformTimes(session: ScheduleSession): boolean {
   const seen = new Set<string>();
@@ -90,15 +116,25 @@ export function timesOverlap(a: DayTime, b: DayTime): boolean {
 /**
  * The days on which two emplois du temps collide in time — used to tell the
  * desk which salle is already taken before it picks one.
+ *
+ * `salleId` narrows the check to ONE room: an emploi that runs Samedi in Salle A
+ * and Mardi in Salle B only blocks Salle A on the Samedi. Without it every
+ * shared day that overlaps in time is returned, whatever room each holds.
  */
 export function clashingDays(
   a: { days: Day[]; startTime: string; endTime: string; dayTimes?: Partial<Record<Day, DayTime>> },
   b: ScheduleSession,
+  salleId?: string,
 ): Day[] {
   const shared = (a.days ?? []).filter((d) => (b.days ?? []).includes(d));
-  return shared.filter((d) =>
-    timesOverlap(sessionTimesOn(a as ScheduleSession, d), sessionTimesOn(b, d)),
-  );
+  return shared.filter((d) => {
+    // Une séance libre occupe toutes ses salles tous ses jours : elle n'a pas
+    // de salle « du jour » à comparer.
+    if (salleId && !(b.isOpen && b.salleIds?.length)) {
+      if (sessionSalleOn(b, d) !== salleId) return false;
+    }
+    return timesOverlap(sessionTimesOn(a as ScheduleSession, d), sessionTimesOn(b, d));
+  });
 }
 
 export const teacherName = (db: Database, id: string) => {
@@ -264,12 +300,86 @@ export function schoolPerSeanceOf(sub?: Subscription): number {
 }
 
 /**
- * The LIST price of one séance for one student — before his own reduction.
+ * The teacher's pay for ONE séance, WITHOUT the student's case applied — the
+ * complement of `schoolPerSeanceOf` on the same split. Falls back to 0 when the
+ * emploi carries no monthly split (the school then keeps everything).
+ */
+export function teacherSeanceShareOf(sub?: Subscription): number {
+  if (!sub) return 0;
+  const n = sub.monthlySeances ?? 0;
+  if (n <= 0) return 0;
+  return teacherPerSeanceOf(sub);
+}
+
+/**
+ * What ONE side of the split grants on a « cas réduction ».
  *
- * Everybody pays the emploi's séance price, with ONE exception: an
- * « école seule » student pays only what the school keeps, because the teacher
- * is deliberately not paid for him. Charging him the full price would collect
- * a teacher's share nobody is ever going to hand over.
+ * The two values of `caseReduction` are independent: the school knocks
+ * `schoolValue` off ITS part, the teacher knocks `teacherValue` off HIS. A
+ * percentage applies to that side's part, a fixed amount is taken off it —
+ * never below zero, and never more than the part itself.
+ */
+export function caseReductionCut(
+  student: Student | undefined,
+  side: "school" | "teacher",
+  part: number,
+): number {
+  const base = Math.max(0, Math.round(part || 0));
+  if (!student || student.studentCase !== "reduction" || base <= 0) return 0;
+  const red = student.caseReduction;
+  if (!red) return 0;
+  const value = Math.max(0, side === "school" ? red.schoolValue || 0 : red.teacherValue || 0);
+  if (value <= 0) return 0;
+  const cut =
+    red.type === "percent" ? Math.round((base * Math.min(value, 100)) / 100) : Math.round(value);
+  return Math.min(base, cut);
+}
+
+/**
+ * What the SCHOOL actually keeps on one séance of this student: its part of the
+ * split, minus the school's half of a « cas réduction ».
+ */
+export function studentSchoolPerSeance(student: Student | undefined, sub?: Subscription): number {
+  const part = schoolPerSeanceOf(sub);
+  return Math.max(0, part - caseReductionCut(student, "school", part));
+}
+
+/**
+ * What the TEACHER actually earns on one séance of this student: his part of
+ * the split, minus his own half of a « cas réduction ». A « cas spécial » and an
+ * « école seule » élève (for the listed teachers) earn him nothing — the same
+ * rule `teacherDueFor` writes on every présence.
+ */
+export function studentTeacherPerSeance(
+  student: Student | undefined,
+  sub?: Subscription,
+  teacherId?: string,
+): number {
+  if (!sub) return 0;
+  if (student?.isFree || student?.studentCase === "special") return 0;
+  if (
+    student?.studentCase === "school_only" &&
+    teacherId &&
+    (student.unpaidTeacherIds ?? []).includes(teacherId)
+  ) {
+    return 0;
+  }
+  const part = teacherSeanceShareOf(sub);
+  return Math.max(0, part - caseReductionCut(student, "teacher", part));
+}
+
+/**
+ * The LIST price of one séance for one student — before his per-module remise.
+ *
+ * Everybody pays the emploi's séance price, with TWO exceptions:
+ *  - an « école seule » élève pays only what the school keeps, because the
+ *    teacher is deliberately not paid for him: charging him the full price
+ *    would collect a teacher's share nobody is ever going to hand over;
+ *  - a « cas réduction » élève pays the price MINUS the two halves of his
+ *    reduction — the school grants its part, the teacher grants his, and the
+ *    family only ever hands over what is left. `teacherDueFor` takes the very
+ *    same teacher half off the part enseignant, so the two sides always add
+ *    back up to what was actually paid.
  */
 export function studentListPrice(
   student: Student | undefined,
@@ -278,9 +388,23 @@ export function studentListPrice(
 ): number {
   const base = Math.max(0, Math.round(sub?.pricePerSession ?? fallback));
   if (!student || !sub) return base;
-  if (student.studentCase !== "school_only") return base;
-  const schoolPart = schoolPerSeanceOf(sub);
-  return schoolPart > 0 ? schoolPart : base;
+  if (student.studentCase === "school_only") {
+    const schoolPart = schoolPerSeanceOf(sub);
+    return schoolPart > 0 ? schoolPart : base;
+  }
+  if (student.studentCase === "reduction") {
+    // Sans répartition mensuelle, l'emploi ne porte pas de « part enseignant » :
+    // `schoolPerSeanceOf` rend alors le prix entier et `teacherSeanceShareOf`
+    // rend 0, si bien que seule la moitié « école » de la remise sort d'ici. La
+    // moitié « enseignant » est retirée là où elle a un sens dans ce cas-là :
+    // sur le pourcentage que `teacherDueFor` lui verse. Elle n'est donc jamais
+    // comptée deux fois.
+    return Math.max(
+      0,
+      studentSchoolPerSeance(student, sub) + studentTeacherPerSeance(student, sub),
+    );
+  }
+  return base;
 }
 
 /** What a full month of an emploi costs one student — his séance price × the
@@ -289,6 +413,9 @@ export function studentMonthPrice(student: Student | undefined, sub?: Subscripti
   if (!sub) return 0;
   if (student?.studentCase === "school_only") {
     return Math.max(0, Math.round(schoolMonthShareOf(sub)));
+  }
+  if (student?.studentCase === "reduction") {
+    return Math.max(0, studentListPrice(student, sub) * cycleSizeOf(sub));
   }
   return monthlyPriceOf(sub) || Math.round((sub.pricePerSession ?? 0) * cycleSizeOf(sub));
 }

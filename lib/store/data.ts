@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { emptyDatabase, loadDatabase, loadSchool } from "@/lib/supabase/load";
 import {
+  caseReductionCut,
   cycleSizeOf,
   currentCycleCode,
   joinPointFor,
@@ -680,13 +681,10 @@ function teacherDueFor(
       ? Math.max(0, Math.round(perSeance))
       : teacherShare(db, session.teacherId, base);
 
-  const reduction = student?.studentCase === "reduction" ? student.caseReduction : undefined;
-  if (!reduction || gross <= 0) return gross;
-  const off =
-    reduction.type === "percent"
-      ? Math.round((gross * (reduction.teacherValue || 0)) / 100)
-      : Math.round(reduction.teacherValue || 0);
-  return Math.max(0, gross - off);
+  // La moitié « enseignant » de la remise, calculée par le MÊME helper que
+  // celui qui l'affiche sur la paie et qui la retire du prix de l'élève : les
+  // deux côtés du partage ne peuvent donc pas diverger.
+  return Math.max(0, gross - caseReductionCut(student, "teacher", gross));
 }
 
 function teacherShare(db: Database, teacherId: string | undefined, base: number): number {

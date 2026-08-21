@@ -252,6 +252,15 @@ export interface ScheduleSession {
    * so the fallback stays in one place.
    */
   dayTimes?: Partial<Record<Day, DayTime>>;
+  /**
+   * Per-day salle. An emploi that runs Samedi in Salle A and Mardi in Salle B is
+   * still ONE emploi: each day simply carries the room it occupies. A day absent
+   * from the map falls back on `salleId`, which always holds the first day's
+   * room so anything that only needs "roughly where" can read it directly.
+   * Read it through `sessionSalleOn()` — never directly, so the fallback stays
+   * in one place.
+   */
+  daySalles?: Partial<Record<Day, string>>;
   /** "séance libre" timing: several classes/groups/salles over a date period */
   isOpen?: boolean;
   /** explicit, readable name — only set for séance libre timings */

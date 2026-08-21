@@ -81,6 +81,7 @@ import {
   registrationNumberOf,
   schoolPerSeanceOf,
   salleName,
+  sessionSalleOn,
   sessionTimesOn,
   slotCountFor,
   soldFor,
@@ -135,8 +136,8 @@ export function PresenceSheet({
   const [leaving, setLeaving] = useState<Student | null>(null);
   /** inscrire un élève DÉJÀ dans la base sur cet emploi du temps */
   const [addOpen, setAddOpen] = useState(false);
-  /** pointer tout le monde présent d'un coup */
-  const [allPresentOpen, setAllPresentOpen] = useState(false);
+  /** pointer tout le monde d'un coup — présents, ou séance annulée pour tous */
+  const [bulkStatus, setBulkStatus] = useState<"present" | "cancelled" | null>(null);
   /** l'historique des paiements d'un élève sur cet emploi — modifiable */
   const [history, setHistory] = useState<Student | null>(null);
 
@@ -263,21 +264,34 @@ export function PresenceSheet({
     });
   };
 
-  // ---- marking the WHOLE list présent ------------------------------------
-  const markAllPresent = async (ids: string[]) => {
+  // ---- marking the WHOLE list at once ------------------------------------
+  /**
+   * « Tout présent » et « Séance annulée pour tous » écrivent la même chose sur
+   * toute la liste, avec deux différences de fond : une présence consomme une
+   * séance et débite le solde, une séance ANNULÉE ne coûte rien à personne — ni
+   * séance, ni argent, ni part enseignant — et n'avance pas le mois du groupe.
+   *
+   * Une annulation, elle, RÉÉCRIT un pointage déjà saisi : la séance n'a pas eu
+   * lieu, donc la présence notée par erreur doit être reprise (et le solde
+   * rendu). Un « tout présent » respecte au contraire ce qui a déjà été choisi.
+   */
+  const markAll = async (ids: string[], status: "present" | "cancelled") => {
     for (const id of ids) {
       const student = db.students.find((s) => s.id === id);
       if (!student) continue;
-      // Un élève déjà pointé ce jour-là n'est pas réécrit : son statut reste
-      // celui que la réception a choisi (absent, annulée…).
-      if (attendanceOn(db, id, session.id, date)) continue;
-      await setPresence({ studentId: id, sessionId: session.id, date, status: "present" });
+      const already = attendanceOn(db, id, session.id, date);
+      if (status === "present" && already) continue;
+      if (status === "cancelled" && already?.status === "cancelled") continue;
+      await setPresence({ studentId: id, sessionId: session.id, date, status });
     }
-    setAllPresentOpen(false);
+    setBulkStatus(null);
     addToast({
       type: "success",
-      title: "Présences enregistrées",
-      message: `${ids.length} élève(s) marqué(s) présents le ${formatDateFr(date)}.`,
+      title: status === "present" ? "Présences enregistrées" : "Séance annulée pour le groupe",
+      message:
+        status === "present"
+          ? `${ids.length} élève(s) marqué(s) présents le ${formatDateFr(date)}.`
+          : `${ids.length} élève(s) — séance du ${formatDateFr(date)} annulée : aucune séance consommée, aucun solde débité.`,
     });
   };
 
@@ -302,10 +316,15 @@ export function PresenceSheet({
       addToast({ type: "danger", title: "Échec", message: "Le paiement n'a pas pu être enregistré." });
       return;
     }
+    const left = res.balance ?? 0;
     addToast({
       type: "success",
       title: "Paiement encaissé",
-      message: `${formatDA(amount)} sur ${pay.label} (${pay.monthCode}) — nouveau solde ${formatDA(res.balance ?? 0)}`,
+      message:
+        `${formatDA(amount)} sur ${pay.label} (${pay.monthCode}) — ` +
+        (left < 0
+          ? `il doit encore ${formatDA(-left)}`
+          : `${formatDA(left)} d'avance conservés sur cet emploi du temps`),
       studentName: studentName(pay.student),
     });
     setReceipt(
@@ -378,7 +397,8 @@ export function PresenceSheet({
         <div className="min-w-0">
           <h3 className="text-base font-black text-ink sm:text-lg">{title}</h3>
           <p className="text-[11px] text-muted sm:text-xs">
-            Groupe {groupName(db, session.groupId)} · Salle {salleName(db, session.salleId)} ·{" "}
+            Groupe {groupName(db, session.groupId)} · Salle{" "}
+            {salleName(db, sessionSalleOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]))} ·{" "}
             {sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).startTime}–
             {sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).endTime}
           </p>
@@ -420,8 +440,12 @@ export function PresenceSheet({
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} className="gap-1.5">
             <UserRoundPlus className="h-3.5 w-3.5" /> Élève existant
           </Button>
-          <Button size="sm" variant="success" onClick={() => setAllPresentOpen(true)} className="gap-1.5">
+          <Button size="sm" variant="success" onClick={() => setBulkStatus("present")} className="gap-1.5">
             <CheckCheck className="h-3.5 w-3.5" /> Tout présent
+          </Button>
+          {/* La séance n'a pas eu lieu : personne ne consomme rien. */}
+          <Button size="sm" variant="outline" onClick={() => setBulkStatus("cancelled")} className="gap-1.5">
+            <Slash className="h-3.5 w-3.5 text-primary" /> Séance annulée pour tous
           </Button>
           <Button size="sm" variant="outline" onClick={printSheet} className="gap-1.5">
             <Printer className="h-3.5 w-3.5" /> Feuille de présence
@@ -595,6 +619,47 @@ export function PresenceSheet({
                 Régler la totalité ({formatDA(pay.suggestion)})
               </button>
             )}
+
+            {/* Ce que ce versement laisse derrière lui. Un élève qui donne 2000
+                sur un mois à 1800 ne « perd » pas les 200 : ils restent sur le
+                solde de CET emploi du temps et paieront ses séances suivantes. */}
+            {(() => {
+              const amount = Math.max(0, Math.round(pay.amount || 0));
+              if (amount <= 0) return null;
+              const balanceNow = soldFor(db, pay.student.id, pay.subscriptionId);
+              const after = balanceNow + amount;
+              const rest = Math.max(0, pay.suggestion - amount);
+              const advance = Math.max(0, amount - pay.suggestion);
+              return (
+                <div
+                  className={`rounded-xl border p-2.5 text-[11px] leading-relaxed ${
+                    rest > 0
+                      ? "border-warning/40 bg-warning/10 text-warning"
+                      : "border-success/40 bg-success/10 text-success"
+                  }`}
+                >
+                  {rest > 0 ? (
+                    <>
+                      Il restera <strong>{formatDA(rest)}</strong> à payer sur {pay.monthCode}.
+                    </>
+                  ) : advance > 0 ? (
+                    <>
+                      {pay.monthCode} est soldé et <strong>{formatDA(advance)}</strong> restent
+                      d&apos;avance : cet argent est gardé sur le solde de cet emploi du temps et
+                      paiera ses prochaines séances.
+                    </>
+                  ) : (
+                    <>{pay.monthCode} sera exactement soldé.</>
+                  )}
+                  <span className="mt-0.5 block text-[10px] opacity-80">
+                    Solde de l&apos;emploi après encaissement :{" "}
+                    <strong>
+                      {after < 0 ? `${formatDA(-after)} dus` : `${formatDA(after)} d'avance`}
+                    </strong>
+                  </span>
+                </div>
+              );
+            })()}
             <div>
               <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
                 Description (optionnel)
@@ -681,14 +746,15 @@ export function PresenceSheet({
         />
       )}
 
-      {/* ---- tout le monde présent ------------------------------------------ */}
-      {allPresentOpen && (
-        <MarkAllPresentModal
+      {/* ---- tout le monde d'un coup : présent, ou séance annulée ----------- */}
+      {bulkStatus && (
+        <MarkAllModal
+          status={bulkStatus}
           students={roster}
           session={session}
           date={date}
-          onConfirm={markAllPresent}
-          onClose={() => setAllPresentOpen(false)}
+          onConfirm={(ids) => markAll(ids, bulkStatus)}
+          onClose={() => setBulkStatus(null)}
         />
       )}
 
@@ -806,17 +872,25 @@ function AddExistingStudentModal({
 }
 
 /**
- * « Tout présent » — le raccourci du matin. La liste s'ouvre entièrement cochée,
- * la recherche permet d'en décocher un ou deux, et les élèves déjà pointés ce
- * jour-là sont laissés tels quels.
+ * Le raccourci du matin, dans ses deux sens :
+ *
+ *  - « Tout présent » — la liste s'ouvre cochée sur ceux qui n'ont pas encore
+ *    de pointage, et les élèves déjà pointés sont laissés tels quels ;
+ *  - « Séance annulée pour tous » — la séance n'a pas eu lieu : TOUT LE MONDE
+ *    est coché, y compris ceux déjà pointés, parce qu'une présence notée sur une
+ *    séance qui n'a pas eu lieu doit être reprise. Rien n'est consommé, aucun
+ *    solde n'est débité, aucune part enseignant n'est due, et le mois du groupe
+ *    n'avance pas.
  */
-function MarkAllPresentModal({
+function MarkAllModal({
+  status,
   students,
   session,
   date,
   onConfirm,
   onClose,
 }: {
+  status: "present" | "cancelled";
   students: Student[];
   session: ScheduleSession;
   date: string;
@@ -824,9 +898,12 @@ function MarkAllPresentModal({
   onClose: () => void;
 }) {
   const db = useData();
+  const cancelling = status === "cancelled";
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<string[]>(() =>
-    students.filter((st) => !attendanceOn(db, st.id, session.id, date)).map((st) => st.id),
+    students
+      .filter((st) => cancelling || !attendanceOn(db, st.id, session.id, date))
+      .map((st) => st.id),
   );
   const [busy, setBusy] = useState(false);
 
@@ -835,12 +912,30 @@ function MarkAllPresentModal({
     setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   return (
-    <Modal open onClose={onClose} title="Marquer tout le groupe présent">
+    <Modal
+      open
+      onClose={onClose}
+      title={cancelling ? "Annuler la séance pour tout le groupe" : "Marquer tout le groupe présent"}
+    >
       <div className="space-y-3">
-        <div className="rounded-xl bg-success/10 p-3 text-[11px] text-muted">
-          Tous les élèves cochés seront pointés <strong className="text-success">présents</strong>{" "}
-          le {formatDateFr(date)}. Ceux qui portent déjà un pointage ce jour-là ne sont pas
-          réécrits — corrigez-les depuis leur ligne.
+        <div
+          className={`rounded-xl p-3 text-[11px] text-muted ${cancelling ? "bg-primary-50/60" : "bg-success/10"}`}
+        >
+          {cancelling ? (
+            <>
+              La séance du {formatDateFr(date)} sera marquée{" "}
+              <strong className="text-primary">annulée</strong> pour tous les élèves cochés :
+              aucune séance consommée, aucun solde débité, aucune part enseignant due, et le mois du
+              groupe n&apos;avance pas. Un pointage déjà saisi ce jour-là est{" "}
+              <strong className="text-ink">repris</strong> et le solde rendu.
+            </>
+          ) : (
+            <>
+              Tous les élèves cochés seront pointés <strong className="text-success">présents</strong>{" "}
+              le {formatDateFr(date)}. Ceux qui portent déjà un pointage ce jour-là ne sont pas
+              réécrits — corrigez-les depuis leur ligne.
+            </>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[200px] flex-1">
@@ -905,7 +1000,7 @@ function MarkAllPresentModal({
               Annuler
             </Button>
             <Button
-              variant="success"
+              variant={cancelling ? "primary" : "success"}
               disabled={busy || picked.length === 0}
               onClick={async () => {
                 setBusy(true);
@@ -914,8 +1009,12 @@ function MarkAllPresentModal({
               }}
               className="gap-1.5"
             >
-              <CheckCheck className="h-4 w-4" />
-              {busy ? "Enregistrement…" : `Marquer ${picked.length} présent(s)`}
+              {cancelling ? <Slash className="h-4 w-4" /> : <CheckCheck className="h-4 w-4" />}
+              {busy
+                ? "Enregistrement…"
+                : cancelling
+                  ? `Annuler pour ${picked.length} élève(s)`
+                  : `Marquer ${picked.length} présent(s)`}
             </Button>
           </div>
         </div>

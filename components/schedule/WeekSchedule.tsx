@@ -2,7 +2,15 @@
 
 import { useData } from "@/lib/store/data";
 import { useTranslation } from "@/lib/i18n/useTranslation";
-import { moduleName, teacherName, groupName, salleName, minutesOf, sessionTimesOn } from "@/lib/helpers";
+import {
+  moduleName,
+  teacherName,
+  groupName,
+  salleName,
+  minutesOf,
+  sessionSalleOn,
+  sessionTimesOn,
+} from "@/lib/helpers";
 import { DAYS, type Day, type ScheduleSession } from "@/lib/types";
 import { todayDayKey } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -55,7 +63,7 @@ export function WeekSchedule({ sessions }: { sessions: ScheduleSession[] }) {
                     {startTime}–{endTime}
                   </p>
                   <p className="mt-1 text-[11px] text-muted">
-                    {groupName(db, s.groupId)} · {salleName(db, s.salleId)}
+                    {groupName(db, s.groupId)} · {salleName(db, sessionSalleOn(s, day))}
                   </p>
                   <p className="text-[11px] text-primary">{teacherName(db, s.teacherId)}</p>
                 </div>

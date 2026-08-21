@@ -104,8 +104,8 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   sessions: {
     table: "schedule_sessions", pk: "id", pkField: "id",
     fields: ["id", "classId", "moduleId", "groupId", "salleId", "teacherId", "days",
-             "startTime", "endTime", "dayTimes", "isOpen", "title", "periodStart",
-             "periodEnd", "classIds", "groupIds", "salleIds", "openPrice"],
+             "startTime", "endTime", "dayTimes", "daySalles", "isOpen", "title",
+             "periodStart", "periodEnd", "classIds", "groupIds", "salleIds", "openPrice"],
   },
   subscriptions: {
     table: "subscriptions", pk: "id", pkField: "id",
