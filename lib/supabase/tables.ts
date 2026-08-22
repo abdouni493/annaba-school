@@ -115,7 +115,8 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   students: {
     table: "students", pk: "id", pkField: "id",
     fields: ["id", "registrationNumber", "firstName", "lastName", "birthDate", "phone",
-             "email", "rfid", "isFree", "studentCase", "teacherFatherId", "caseReduction",
+             "email", "rfid", "isFree", "studentCase", "freeSubscriptionIds",
+             "teacherFatherId", "caseReduction",
              "unpaidTeacherIds", "parentId", "subscriptionIds", "subscriptionDates",
              "subscriptionDiscounts", "registrationDue"],
   },
@@ -133,8 +134,8 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "payments", pk: "id", pkField: "id",
     fields: ["id", "studentId", "enrollmentId", "subscriptionId", "monthCode",
              "seancesPurchased", "unitPrice", "grossTotal", "plan", "discountType",
-             "discountValue", "netTotal", "amountPaid", "rest", "type", "date",
-             "description"],
+             "discountValue", "netTotal", "amountPaid", "rest", "type", "paidFrom",
+             "date", "description"],
   },
   attendance: {
     table: "attendance_records", pk: "id", pkField: "id",

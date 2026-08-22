@@ -50,6 +50,12 @@ Aucune donnée de démonstration n'est insérée.
 >    `schedule_sessions.day_salles` (la **salle de chaque jour**) et rend les **noms de salles
 >    uniques** (les doublons déjà en base sont renommés, jamais supprimés). La paie « groupe par
 >    groupe » et la « situation d'un élève » n'ont besoin d'aucune colonne de plus.
+> 6. **`supabase/update-2026-08-23-gratuite-par-emploi-et-dettes-avancees.sql`** — ajoute
+>    `students.free_subscription_ids` (la **gratuité emploi du temps par emploi du temps**),
+>    `payments.paid_from` (d'où vient l'argent : la famille, le salaire du père, ou la caisse de
+>    l'école) et le type de mouvement `cash_transactions.type = 'student_debt'` (les **dettes
+>    d'élèves avancées par l'école**). Aucune donnée existante n'est modifiée : une fiche sans
+>    liste reste entièrement offerte, exactement comme avant.
 >
 > Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
 > erreur.
@@ -410,7 +416,7 @@ M3 — au règlement suivant      -> la part de M2 réapparaît, débloquée,
 | Cas | L'élève paie | L'école garde | L'enseignant touche |
 | --- | ------------ | ------------- | ------------------- |
 | **Normal** | le prix de la séance | sa part du mois ÷ séances | la sienne |
-| **Cas spécial** (gratuit) | rien | rien | rien |
+| **Cas spécial** (gratuit) | rien **sur les emplois du temps offerts**, le prix plein sur les autres | rien sur les offerts | rien sur les offerts |
 | **École seule** | la seule part de l'école | tout ce qu'il verse | rien — et il **n'apparaît pas** sur la paie de cet enseignant |
 | **Réduction** | prix − les deux remises | sa part − sa remise | la sienne − sa remise |
 | **Fils d'enseignant** | rien au comptoir | oui | sa scolarité est **retenue sur le salaire du père** |
@@ -423,9 +429,76 @@ mois à 2000 DA, 4 séances, l'école garde 800   ->  séance 500 = école 200 +
 réduction 50% école / 10% enseignant           ->  séance 370 = école 100 + enseignant 270
 ```
 
+### La gratuité se coche emploi du temps par emploi du temps
+
+Un « cas spécial » n'est plus tout-ou-rien. La réception coche l'élève en cas spécial, puis, pour
+**chaque** emploi du temps qu'il suit, laisse la case **« Offert »** cochée ou la décoche :
+
+| La case | L'élève paie | L'école garde | L'enseignant touche |
+| ------- | ------------ | ------------- | ------------------- |
+| **Offert** (coché, par défaut) | rien | rien | rien |
+| **Payant** (décoché) | le prix de la séance | sa part du mois | la sienne |
+
+Un même enfant peut donc suivre l'anglais gratuitement et payer les maths, sans qu'il faille lui
+créer deux fiches. Le choix se lit partout où l'argent se lit : sur sa fiche, sur sa carte, sur la
+« situation d'un élève », et sur la paie de l'enseignant — où le module offert ne rapporte rien et
+le module payant lui rapporte sa part comme pour n'importe quel élève.
+
+> Une fiche **déjà en base** n'a pas de liste : elle est **entièrement offerte**, exactement comme
+> le cas se lisait avant. Rien à reprendre. La liste n'est écrite que le jour où la réception
+> rouvre la fiche.
+
+Un cas spécial dont **au moins un** emploi du temps reste payant doit les **frais d'inscription** ;
+celui dont tout est offert n'en doit aucun.
+
+### Le fils d'enseignant peut payer AVANT son père
+
 Le **fils d'enseignant** apparaît en bas du règlement de son père : ce qu'il a **étudié ce mois-ci**
 (séances et montant), ce qu'il traîne des **mois précédents**, et le **total retenu** sur le
 salaire. Cet argent ne passe jamais par la caisse — l'école est payée en versant *moins*.
+
+Mais rien ne l'oblige à attendre : sa famille peut **régler au guichet quand elle veut**, depuis sa
+fiche ou directement depuis le règlement du père (bouton **« Encaisser »** sur sa ligne). L'argent
+passe alors par la caisse comme n'importe quel versement d'élève, et le mois **cesse d'être retenu
+sur le salaire**. Chaque mois porte donc son propre statut :
+
+| Statut | Ce qu'il veut dire | Retenu sur le salaire ? |
+| ------ | ------------------ | ----------------------- |
+| **À retenir** | rien n'a été versé | oui |
+| **Payé par la famille** | la famille a réglé elle-même, **avant** la paie | **non** |
+| **Retenu sur le salaire** | déjà pris sur un règlement précédent | c'est fait |
+| **Avancé par l'école** | l'école a couvert ce mois sur sa caisse | non |
+
+Un mois déjà payé par la famille **reste affiché** — sinon personne ne saurait qu'il a été soldé —
+mais sa case « Retenir » est verrouillée : le retenir une seconde fois ferait payer la scolarité
+deux fois.
+
+### L'école peut avancer la dette d'un élève
+
+Tant qu'un élève doit de l'argent, la part que ses séances rapportent à l'enseignant est **retenue**
+et ne se règle pas. Le règlement de l'enseignant liste donc, en un seul bloc, **tous ses élèves en
+dette** — mois en cours **et** mois précédents — avec ce que chacun doit et la part qu'il bloque.
+
+Chaque ligne porte un bouton **« Payer de la caisse »** : l'école avance la dette sur sa propre
+caisse, et la part redevient payable dans la seconde. Tout ce qui retient la part est couvert — les
+mois dans le rouge, les restes d'anciens paiements **et** les frais d'inscription — parce que rien
+de moins ne la libérerait. La même alerte, avec le même bouton, reste visible sur la ligne de
+l'élève dans le tableau de son mois.
+
+La caisse enregistre **deux** mouvements, et c'est voulu :
+
+```
++ 2000 DA   Paiement élève        « Dette M2 de Amine Benali réglée par l'école »
+− 2000 DA   Dette élève avancée   « Caisse école → dette M2 de Amine Benali »
+────────────────────────────────────────────────────────────────────────────────
+      0     le solde de la caisse ne bouge pas : l'école n'a rien encaissé,
+            elle a avancé. Seul le règlement de l'enseignant le fera bouger.
+```
+
+N'écrire que l'entrée ferait croire à un versement qui n'a pas eu lieu ; n'écrire que la sortie
+ferait croire à un décaissement qui n'a pas eu lieu non plus. Les deux ensemble, le solde reste
+juste — et l'écran **Caisse** affiche les deux lignes, dans l'onglet « Paiements Élèves », avec le
+total avancé rappelé sous le compteur.
 
 ### Alertes
 

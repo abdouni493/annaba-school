@@ -311,6 +311,55 @@ export function teacherSeanceShareOf(sub?: Subscription): number {
   return teacherPerSeanceOf(sub);
 }
 
+// ---- Cas spécial : la gratuité, emploi du temps par emploi du temps --------
+/**
+ * L'élève est-il un « cas spécial (gratuit) » ?
+ *
+ * Répond de son CAS, pas de ce qu'il paie : un cas spécial peut très bien
+ * régler l'un de ses emplois du temps (voir `isFreeSub`).
+ */
+export function studentIsFreeCase(student?: Student): boolean {
+  return !!student && (student.isFree || student.studentCase === "special");
+}
+
+/**
+ * CET emploi du temps est-il offert à CET élève ?
+ *
+ * La gratuité se coche module par module sur la fiche : les emplois listés dans
+ * `freeSubscriptionIds` ne coûtent rien — ni à l'élève, ni en part école, ni en
+ * part enseignant — et les autres sont facturés au tarif ordinaire.
+ *
+ * Une fiche SANS liste est entièrement offerte : c'est ainsi que le cas se
+ * lisait avant d'être détaillé, et les élèves déjà en base gardent donc
+ * exactement le comportement qu'ils avaient.
+ */
+export function isFreeSub(student: Student | undefined, subscriptionId?: string): boolean {
+  if (!studentIsFreeCase(student)) return false;
+  const list = student!.freeSubscriptionIds;
+  if (!list) return true;
+  // Sans emploi du temps sous les yeux, la question devient « est-il offert
+  // quelque part ? » — la seule réponse qui ait un sens hors contexte.
+  if (!subscriptionId) return list.length > 0;
+  return list.includes(subscriptionId);
+}
+
+/** Toute sa scolarité est-elle offerte ? (aucun emploi du temps facturé) */
+export function studentFullyFree(student: Student | undefined, subIds?: string[]): boolean {
+  if (!studentIsFreeCase(student)) return false;
+  const list = student!.freeSubscriptionIds;
+  if (!list) return true;
+  const followed = subIds ?? student!.subscriptionIds ?? [];
+  return followed.length > 0 && followed.every((id) => list.includes(id));
+}
+
+/** Les emplois du temps qu'un « cas spécial » paie malgré tout. */
+export function paidSubIdsOf(student: Student | undefined): string[] {
+  if (!studentIsFreeCase(student)) return student?.subscriptionIds ?? [];
+  const list = student!.freeSubscriptionIds;
+  if (!list) return [];
+  return (student!.subscriptionIds ?? []).filter((id) => !list.includes(id));
+}
+
 /**
  * What ONE side of the split grants on a « cas réduction ».
  *
@@ -340,6 +389,8 @@ export function caseReductionCut(
  * split, minus the school's half of a « cas réduction ».
  */
 export function studentSchoolPerSeance(student: Student | undefined, sub?: Subscription): number {
+  // Un emploi du temps offert ne rapporte rien à l'école non plus.
+  if (isFreeSub(student, sub?.id)) return 0;
   const part = schoolPerSeanceOf(sub);
   return Math.max(0, part - caseReductionCut(student, "school", part));
 }
@@ -356,7 +407,7 @@ export function studentTeacherPerSeance(
   teacherId?: string,
 ): number {
   if (!sub) return 0;
-  if (student?.isFree || student?.studentCase === "special") return 0;
+  if (isFreeSub(student, sub.id)) return 0;
   if (
     student?.studentCase === "school_only" &&
     teacherId &&
@@ -388,6 +439,8 @@ export function studentListPrice(
 ): number {
   const base = Math.max(0, Math.round(sub?.pricePerSession ?? fallback));
   if (!student || !sub) return base;
+  // Emploi du temps offert : la séance ne coûte rien à la famille.
+  if (isFreeSub(student, sub.id)) return 0;
   if (student.studentCase === "school_only") {
     const schoolPart = schoolPerSeanceOf(sub);
     return schoolPart > 0 ? schoolPart : base;
@@ -411,6 +464,7 @@ export function studentListPrice(
  *  séances of the pack, or the pack price when he pays the ordinary tariff. */
 export function studentMonthPrice(student: Student | undefined, sub?: Subscription): number {
   if (!sub) return 0;
+  if (isFreeSub(student, sub.id)) return 0;
   if (student?.studentCase === "school_only") {
     return Math.max(0, Math.round(schoolMonthShareOf(sub)));
   }
@@ -1002,6 +1056,81 @@ export function studentSoldDebtRows(db: Database, studentId: string): SoldDebtRo
   return out;
 }
 
+/**
+ * TOUT ce qu'un élève doit, dans le détail que l'écran de règlement demande :
+ * les mois dans le rouge emploi par emploi, les restes laissés par d'anciens
+ * paiements, et les frais d'inscription jamais réglés.
+ *
+ * C'est exactement l'ensemble que `studentHasDebt` regarde pour retenir la part
+ * de l'enseignant : couvrir ce total, et rien de moins, débloque sa paie.
+ */
+export interface StudentDebtSummary {
+  /** les mois dans le rouge, emploi par emploi */
+  soldRows: SoldDebtRow[];
+  /** ce que ces mois totalisent */
+  soldDebt: number;
+  /** ce que d'anciens paiements ont laissé impayé */
+  rests: number;
+  /** les frais d'inscription encore dus */
+  registrationDue: number;
+  total: number;
+}
+
+export function studentDebtSummary(db: Database, studentId: string): StudentDebtSummary {
+  const soldRows = studentSoldDebtRows(db, studentId);
+  const soldDebt = soldRows.reduce((s, r) => s + r.debt, 0);
+  const rests = studentUnpaidPayments(db, studentId).reduce((s, p) => s + p.rest, 0);
+  const registrationDue = Math.max(
+    0,
+    Math.round(db.students.find((s) => s.id === studentId)?.registrationDue ?? 0),
+  );
+  return {
+    soldRows,
+    soldDebt,
+    rests,
+    registrationDue,
+    total: soldDebt + rests + registrationDue,
+  };
+}
+
+/**
+ * D'OÙ vient l'argent versé sur UN mois d'UN emploi du temps.
+ *
+ * Un « fils d'enseignant » peut payer lui-même AVANT que son père ne soit
+ * réglé : ces versements-là sont de la famille, et ils ne doivent plus être
+ * retenus une seconde fois sur le salaire. Ceux qui sortent du salaire portent
+ * `paidFrom: "teacher_salary"`, ceux que l'école a couverts `"school_cash"`.
+ */
+export interface CycleCredits {
+  /** versé par la famille, au guichet */
+  family: number;
+  /** retenu sur le salaire d'un enseignant père */
+  salary: number;
+  /** couvert par la caisse de l'école */
+  school: number;
+  total: number;
+}
+
+export function cycleCredits(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+  code: string,
+): CycleCredits {
+  const out: CycleCredits = { family: 0, salary: 0, school: 0, total: 0 };
+  for (const p of db.payments) {
+    if (p.studentId !== studentId || p.subscriptionId !== subscriptionId) continue;
+    if ((p.monthCode || "M1") !== code) continue;
+    const amount = Math.max(0, Math.round(p.amountPaid || 0));
+    if (amount <= 0) continue;
+    if (p.paidFrom === "teacher_salary") out.salary += amount;
+    else if (p.paidFrom === "school_cash") out.school += amount;
+    else out.family += amount;
+    out.total += amount;
+  }
+  return out;
+}
+
 /** A student's outstanding debt grouped by month code, emplois merged. */
 export function studentDebtByMonth(db: Database, studentId: string): Record<string, number> {
   const out: Record<string, number> = {};
@@ -1200,8 +1329,17 @@ export function studentMatches(db: Database, student: Student, query: string): b
 /** Short label of a student's billing case, shown next to his solde. */
 export function studentCaseLabel(student: Student): string {
   switch (student.studentCase) {
-    case "special":
+    case "special": {
+      // La gratuité se coche emploi par emploi : une fiche partiellement
+      // offerte doit se lire comme telle, sinon la paie se lit à l'envers.
+      const free = student.freeSubscriptionIds;
+      if (free && !studentFullyFree(student)) {
+        return free.length > 0
+          ? `Cas spécial · ${free.length} emploi(s) offert(s)`
+          : "Cas spécial · aucun emploi offert";
+      }
       return "Cas spécial · gratuit";
+    }
     case "teacher_child":
       return "Fils d'enseignant";
     case "reduction":

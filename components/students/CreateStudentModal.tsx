@@ -15,6 +15,11 @@
  * now: that money becomes the opening SOLDE of that emploi. Saving offers the
  * bon d'inscription, which prints the identity, the emplois and every solde.
  *
+ * La GRATUITÉ se coche emploi du temps par emploi du temps : un « cas spécial »
+ * arrive avec tous ses emplois cochés « offert », et décocher l'un d'eux le
+ * rend payant — l'école et l'enseignant sont alors réglés pour ce module-là
+ * comme pour n'importe quel élève.
+ *
  * A child never starts an emploi at its séance 1: he comes in WHERE THE GROUP
  * STANDS. Registered while the group lives its 2nd month on its 3rd séance, he
  * is written on M2 · séance 3 — his solde is credited to M2, the two séances
@@ -29,7 +34,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
-import { BookOpen, Check, Trash2, Wallet } from "lucide-react";
+import { BookOpen, Check, Gift, Trash2, Wallet } from "lucide-react";
 import { createRoleUser, resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
 import { formatDA } from "@/lib/utils";
 import { inscriptionVoucherHtml } from "@/lib/reports/documents";
@@ -152,6 +157,16 @@ function StudentFiche({
 
   // inscriptions + the solde paid on each of them
   const [subIds, setSubIds] = useState<string[]>(editing?.subscriptionIds ?? defaultSubIds);
+  /**
+   * « Cas spécial » : les emplois du temps OFFERTS.
+   *
+   * Une fiche existante démarre sur ce qu'elle porte ; une fiche qui n'a jamais
+   * détaillé sa gratuité (ou un élève qu'on bascule en cas spécial maintenant)
+   * démarre TOUT COCHÉ — c'est ainsi que le cas se lisait avant d'être détaillé.
+   */
+  const [freeSubIds, setFreeSubIds] = useState<string[]>(
+    () => editing?.freeSubscriptionIds ?? editing?.subscriptionIds ?? defaultSubIds,
+  );
   const [solds, setSolds] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
 
@@ -163,7 +178,14 @@ function StudentFiche({
   const nextNumber = useMemo(() => nextRegistrationNumber(db), [db.students]);
   const shownNumber = editing ? registrationNumberOf(db, editing) : nextNumber;
   const isFree = studentCase === "special";
-  const totalSold = subIds.reduce((s, id) => s + (solds[id] || 0), 0);
+  /** Cet emploi du temps est-il offert à l'élève tel que la fiche est cochée ? */
+  const freeOn = (subId: string) => isFree && freeSubIds.includes(subId);
+  /** Ce que la fiche enregistrera : rien à écrire hors du cas spécial. */
+  const freeList = isFree ? subIds.filter((id) => freeSubIds.includes(id)) : undefined;
+  const paidSubIds = subIds.filter((id) => !freeOn(id));
+  // Un emploi offert n’encaisse rien : il ne compte pas dans le total, même si
+  // un montant y avait été saisi avant qu’on ne le passe en « offert ».
+  const totalSold = paidSubIds.reduce((s, id) => s + (solds[id] || 0), 0);
 
   /** The day he comes in on — what the sheet was showing, or today. */
   const arrivalDay = joinDate || todayIso();
@@ -198,18 +220,28 @@ function StudentFiche({
     setCaseRedTeacher(0);
     setUnpaidTeacherIds([]);
     setSubIds(defaultSubIds);
+    setFreeSubIds(defaultSubIds);
     setSolds({});
   };
 
   const toggleTiming = (option: ClassTimingOption) => {
     const next = toggleTimingSelection(subIds, option);
+    const added = next.filter((id) => !subIds.includes(id));
     setSubIds(next);
+    // Un emploi qu'on vient de cocher sur un « cas spécial » arrive OFFERT :
+    // c'est ce que le cas promet, et le décocher le rend payant.
+    setFreeSubIds((prev) => [...new Set([...prev, ...added])].filter((id) => next.includes(id)));
     setSolds((prev) => {
       const clean: Record<string, number> = {};
       for (const id of next) clean[id] = prev[id] ?? 0;
       return clean;
     });
   };
+
+  const toggleFree = (subId: string) =>
+    setFreeSubIds((prev) =>
+      prev.includes(subId) ? prev.filter((id) => id !== subId) : [...prev, subId],
+    );
 
   /**
    * Suggested opening solde of an emploi: the price of one of its months FOR
@@ -219,7 +251,12 @@ function StudentFiche({
   const suggestFor = (subId: string) => {
     const sub = subscriptions.find((s) => s.id === subId);
     if (!sub) return 0;
-    const asStudent = { ...(editing ?? ({} as Student)), studentCase, isFree };
+    const asStudent = {
+      ...(editing ?? ({} as Student)),
+      studentCase,
+      isFree,
+      freeSubscriptionIds: freeList,
+    };
     return (
       studentMonthPrice(asStudent as Student, sub) ||
       sub.pricePerSession * cycleSizeOf(sub)
@@ -275,6 +312,7 @@ function StudentFiche({
           rfid: editRfid.trim() || editing.rfid,
           isFree,
           studentCase,
+          freeSubscriptionIds: freeList,
           teacherFatherId: studentCase === "teacher_child" ? teacherFatherId : undefined,
           caseReduction:
             studentCase === "reduction"
@@ -299,8 +337,8 @@ function StudentFiche({
         }
 
         // Un montant saisi ici est un VERSEMENT de plus, jamais une réécriture
-        // de ce qui a déjà été encaissé.
-        for (const subId of subIds) {
+        // de ce qui a déjà été encaissé. Un emploi offert n’encaisse rien.
+        for (const subId of paidSubIds) {
           const amount = Math.max(0, Math.round(solds[subId] || 0));
           if (amount <= 0) continue;
           await addSold({
@@ -359,7 +397,10 @@ function StudentFiche({
         joinSlotIndex: point.slotIndex,
       };
     }
-    const registrationDue = subIds.length > 0 && !isFree ? school?.registrationFee || 0 : 0;
+    // Les frais d'inscription ne sont dus que si l'élève PAIE quelque chose :
+    // un cas spécial dont un seul emploi reste payant les doit, un cas spécial
+    // entièrement offert ne les doit pas.
+    const registrationDue = paidSubIds.length > 0 ? school?.registrationFee || 0 : 0;
 
     setBusy(true);
     try {
@@ -388,6 +429,7 @@ function StudentFiche({
         rfid,
         isFree,
         studentCase,
+        freeSubscriptionIds: freeList,
         teacherFatherId: studentCase === "teacher_child" ? teacherFatherId : undefined,
         caseReduction:
           studentCase === "reduction"
@@ -407,7 +449,8 @@ function StudentFiche({
 
       // Each solde is credited on its own emploi, on the month he COMES IN on:
       // a child registered during M2 pays for M2, never for a month he missed.
-      for (const subId of subIds) {
+      // Les emplois offerts sont sautes : il n’y a rien a encaisser dessus.
+      for (const subId of paidSubIds) {
         const amount = Math.max(0, Math.round(solds[subId] || 0));
         if (amount <= 0) continue;
         await addSold({
@@ -438,11 +481,14 @@ function StudentFiche({
           registrationFee: registrationDue,
           lines: subIds.map((subId) => {
             const sub = subscriptions.find((s) => s.id === subId);
+            const offered = freeOn(subId);
             return {
-              label: subLabel(subId),
+              // Le bon d’inscription dit ce que la famille paie réellement :
+              // un emploi offert y apparaît à 0 DA et le dit en toutes lettres.
+              label: offered ? `${subLabel(subId)} (offert)` : subLabel(subId),
               monthSeances: cycleSizeOf(sub),
-              unitPrice: sub?.pricePerSession ?? 0,
-              sold: Math.max(0, Math.round(solds[subId] || 0)),
+              unitPrice: offered ? 0 : sub?.pricePerSession ?? 0,
+              sold: offered ? 0 : Math.max(0, Math.round(solds[subId] || 0)),
               monthCode: joinPointOf(subId).monthCode,
             };
           }),
@@ -555,8 +601,20 @@ function StudentFiche({
             </div>
 
             {studentCase === "special" && (
-              <p className="rounded-lg bg-primary-50/50 p-2 text-[10px] text-muted">
-                Études gratuites : ni l&apos;école ni l&apos;enseignant ne sont payés pour cet élève.
+              <p className="rounded-lg bg-primary-50/50 p-2 text-[10px] leading-relaxed text-muted">
+                Études gratuites, <strong className="text-ink">emploi du temps par emploi du
+                temps</strong> : chaque emploi coché ci-dessous arrive « Offert » — ni l&apos;école
+                ni l&apos;enseignant ne sont payés pour lui. Décochez « Offert » sur un emploi et
+                l&apos;élève le paie normalement.
+                {subIds.length > 0 && (
+                  <>
+                    {" "}
+                    <strong className="text-primary">
+                      {freeList?.length ?? 0} offert(s)
+                    </strong>{" "}
+                    · <strong className="text-ink">{paidSubIds.length} payant(s)</strong>.
+                  </>
+                )}
               </p>
             )}
 
@@ -683,19 +741,36 @@ function StudentFiche({
                 </span>
                 {subIds.map((subId) => {
                   const sub = subscriptions.find((s) => s.id === subId);
-                  const suggestion = suggestFor(subId);
-                  const unit = sub?.pricePerSession ?? 0;
+                  const offered = freeOn(subId);
+                  const suggestion = offered ? 0 : suggestFor(subId);
+                  const listUnit = sub?.pricePerSession ?? 0;
+                  const unit = offered ? 0 : listUnit;
                   const paid = solds[subId] || 0;
                   const seances = unit > 0 ? Math.floor(paid / unit) : 0;
                   const point = joinPointOf(subId);
                   return (
-                    <div key={subId} className="rounded-xl border border-line bg-surface p-2.5">
+                    <div
+                      key={subId}
+                      className={`rounded-xl border p-2.5 ${
+                        offered ? "border-success/40 bg-success/5" : "border-line bg-surface"
+                      }`}
+                    >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <strong className="block text-[11px] text-ink">{subLabel(subId)}</strong>
                           <span className="text-[10px] text-muted">
-                            {cycleSizeOf(sub)} séances / mois · séance à {formatDA(unit)}
-                            {suggestion > 0 ? ` · mois à ${formatDA(suggestion)}` : ""}
+                            {cycleSizeOf(sub)} séances / mois ·{" "}
+                            {offered ? (
+                              <>
+                                <span className="line-through">{formatDA(listUnit)}</span>{" "}
+                                <strong className="text-success">offert</strong>
+                              </>
+                            ) : (
+                              <>
+                                séance à {formatDA(unit)}
+                                {suggestion > 0 ? ` · mois à ${formatDA(suggestion)}` : ""}
+                              </>
+                            )}
                           </span>
                           <Badge tone="primary" className="mt-1 text-[9px]">
                             {isEdit && editing?.subscriptionIds.includes(subId)
@@ -711,33 +786,76 @@ function StudentFiche({
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-end gap-2">
-                        <div>
-                          <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                            {isEdit ? "Solde à ajouter (DA)" : "Solde payé (DA)"}
-                          </label>
-                          <Input
-                            type="number"
-                            min={0}
-                            value={paid || ""}
-                            onChange={(e) =>
-                              setSolds({ ...solds, [subId]: Math.max(0, Number(e.target.value) || 0) })
-                            }
-                            placeholder="0"
-                            className="w-36"
+
+                      {/* La gratuité, emploi par emploi — cochée par défaut */}
+                      {isFree && (
+                        <label
+                          className={`mt-2 flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+                            offered ? "border-success/40 bg-success/10" : "border-line bg-canvas/40"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={offered}
+                            onChange={() => toggleFree(subId)}
+                            className="mt-0.5 h-4 w-4 shrink-0"
                           />
-                        </div>
-                        {suggestion > 0 && (
-                          <button
-                            onClick={() => setSolds({ ...solds, [subId]: suggestion })}
-                            className="pb-2.5 text-[10px] font-bold text-primary hover:underline"
-                          >
-                            Un mois ({formatDA(suggestion)})
-                          </button>
+                          <span className="min-w-0">
+                            <strong
+                              className={`flex items-center gap-1 text-[11px] ${
+                                offered ? "text-success" : "text-ink"
+                              }`}
+                            >
+                              <Gift className="h-3 w-3" />
+                              {offered ? "Emploi du temps OFFERT" : "Emploi du temps PAYANT"}
+                            </strong>
+                            <span className="block text-[9px] leading-relaxed text-muted">
+                              {offered
+                                ? "L’élève ne paie rien pour cet emploi : ni l’école ni l’enseignant ne sont réglés pour ses séances."
+                                : `L’élève paie cet emploi normalement — ${formatDA(listUnit)} la séance, et l’enseignant touche sa part.`}
+                            </span>
+                          </span>
+                        </label>
+                      )}
+
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        {offered ? (
+                          <span className="text-[10px] font-semibold text-success">
+                            Rien à encaisser sur cet emploi du temps.
+                          </span>
+                        ) : (
+                          <>
+                            <div>
+                              <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                                {isEdit ? "Solde à ajouter (DA)" : "Solde payé (DA)"}
+                              </label>
+                              <Input
+                                type="number"
+                                min={0}
+                                value={paid || ""}
+                                onChange={(e) =>
+                                  setSolds({
+                                    ...solds,
+                                    [subId]: Math.max(0, Number(e.target.value) || 0),
+                                  })
+                                }
+                                placeholder="0"
+                                className="w-36"
+                              />
+                            </div>
+                            {suggestion > 0 && (
+                              <button
+                                onClick={() => setSolds({ ...solds, [subId]: suggestion })}
+                                className="pb-2.5 text-[10px] font-bold text-primary hover:underline"
+                              >
+                                Un mois ({formatDA(suggestion)})
+                              </button>
+                            )}
+                            <span className="pb-2.5 text-[10px] text-muted">
+                              ≈ {seances} séance(s) couverte(s)
+                            </span>
+                          </>
                         )}
-                        <span className="pb-2.5 text-[10px] text-muted">
-                          ≈ {seances} séance(s) couverte(s)
-                        </span>
                       </div>
                     </div>
                   );
@@ -756,7 +874,7 @@ function StudentFiche({
                   sur sa ligne et les mois précédents ne le comptent pas.
                 </p>
 
-                {!isFree && (school?.registrationFee ?? 0) > 0 && (
+                {paidSubIds.length > 0 && (school?.registrationFee ?? 0) > 0 && (
                   <p className="text-[10px] text-muted">
                     ℹ️ Frais d&apos;inscription uniques de{" "}
                     <strong className="text-ink">{formatDA(school!.registrationFee!)}</strong> ajoutés à sa

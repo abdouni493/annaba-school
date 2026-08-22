@@ -146,3 +146,12 @@ fix the interface of openning groupe make another button make if for make all th
 create new button on the dashboard make it for situation student make it when user click on it then let him search about the student with name or phone number of creation number let the user select it to display for him a table exacty like the table of open group from the interface of dashboard 
 make this table display all emploi du temps of that student and the statue of the currect mont if payed or not with possibility of create payment on the same interface and make user can go to the previous months to see the statue of the previous months and can create payement for them also 
 
+Fix the creation of students when user select the case of gratuit then make sure to make each time user select the rmploi du temps of that student let user check if that emploi du temps will be free, and the student will not pay to the school or the teacher and may possibility of uncheck to make the student pay to that emploi
+
+In the case of student of son teacher then make possibility of payment from that student before the payment of teacher and make sure to make if that student of this case of son of Teacher pay before the payment of the teacher is Father then make sure to make it display on the interface of payment with a different statue
+
+Fix the interface of create payment for Teacher for the students that have debts on current month not payed or on the previous months not payed then make button action for them user can pay the debts from school caisse to pay for the teacher and make sure to make it still display debts with alert on the card of students make sure to make it still display there with alert and user can pay the debt from debts button action 
+And make sure to make this transactions display on the history on caisse if user pay student debts from school money
+
+
+Give me sql code that i have to run for this updates if needed and push all updates to repo

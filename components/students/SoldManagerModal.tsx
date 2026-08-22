@@ -29,7 +29,7 @@ import {
   ClassTimingPicker,
   toggleTimingSelection,
 } from "@/components/students/ClassTimingPicker";
-import { AlertTriangle, CheckCircle2, Clock, Plus, Wallet } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Gift, Plus, Wallet } from "lucide-react";
 import type { Student } from "@/lib/types";
 import {
   cycleOf,
@@ -38,6 +38,7 @@ import {
   enrollmentCycles,
   formatDays,
   groupName,
+  isFreeSub,
   monthCodeLabel,
   moduleName as moduleNameOf,
   registrationNumberOf,
@@ -56,6 +57,8 @@ const ALERTS: Record<string, { label: string; tone: "danger" | "warning" | "succ
   empty: { label: "Solde épuisé", tone: "warning", icon: AlertTriangle },
   low: { label: "Bientôt épuisé", tone: "warning", icon: Clock },
   ok: { label: "À jour", tone: "success", icon: CheckCircle2 },
+  /** la gratuité se coche emploi par emploi : celui-ci est offert */
+  offered: { label: "Offert", tone: "success", icon: Gift },
 };
 
 export function SoldManagerModal({
@@ -100,7 +103,10 @@ export function SoldManagerModal({
         // Son tarif à LUI : « école seule » ne paie que la part de l'école.
         const unit = studentListPrice(student, sub);
         const monthPrice = studentMonthPrice(student, sub);
-        const status = student.isFree ? "ok" : soldStatus(sold, unit);
+        // Un emploi du temps OFFERT n'a rien à recharger : son solde est « à
+        // jour » par construction, quoi qu'il porte.
+        const offered = isFreeSub(student, subId);
+        const status = offered ? "ok" : soldStatus(sold, unit);
         return [
           {
             subId,
@@ -113,6 +119,7 @@ export function SoldManagerModal({
             code,
             cycle,
             status,
+            offered,
             monthsInDebt: enrollmentCycles(db, student.id, subId).filter((c) => c.balance < 0),
           },
         ];
@@ -226,7 +233,7 @@ export function SoldManagerModal({
           ) : (
             <div className="space-y-2">
               {rows.map((r) => {
-                const alert = ALERTS[r.status];
+                const alert = ALERTS[r.offered ? "offered" : r.status];
                 const AlertIcon = alert.icon;
                 const monthDebt = Math.max(0, -r.cycle.balance);
                 return (
@@ -241,8 +248,17 @@ export function SoldManagerModal({
                         </span>
                         <span className="block text-[10px] text-muted">
                           {teacherName(db, r.session.teacherId)} · {cycleSizeOf(r.sub)} séances /
-                          mois · séance à {formatDA(r.unit)}
-                          {r.monthPrice > 0 ? ` · mois à ${formatDA(r.monthPrice)}` : ""}
+                          mois ·{" "}
+                          {r.offered ? (
+                            <strong className="text-success">
+                              offert — rien à encaisser sur cet emploi du temps
+                            </strong>
+                          ) : (
+                            <>
+                              séance à {formatDA(r.unit)}
+                              {r.monthPrice > 0 ? ` · mois à ${formatDA(r.monthPrice)}` : ""}
+                            </>
+                          )}
                         </span>
                       </div>
                       <Badge tone={alert.tone} className="gap-1 shrink-0">

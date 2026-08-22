@@ -27,13 +27,15 @@ import type {
 import {
   consumesSeance,
   currentCycleCode,
-  cycleOf,
+  cycleCredits,
+
   cycleSizeOf,
   dayKeyOf,
   enrollmentCycles,
   enrollmentStart,
   formatDays,
   groupName,
+  isFreeSub,
   moduleName,
   monthlyPriceOf,
   netPriceFor,
@@ -41,10 +43,12 @@ import {
   salleName,
   sessionTimeLabel,
   studentCaseLabel,
+  studentDebtSummary,
   studentHasDebt,
   studentListPrice,
   studentName,
-  studentSoldDebtRows,
+  studentSubscriptionHistory,
+  subscriptionLabel,
   studentSchoolPerSeance,
   studentTeacherPerSeance,
   teacherPerSeanceOf,
@@ -94,6 +98,8 @@ export interface TeacherMonthStudent {
   registrationNumber: string;
   phone: string;
   caseLabel: string;
+  /** CET emploi du temps lui est offert (la gratuité se coche module par
+   *  module : il peut très bien payer les autres) */
   isFree: boolean;
   /** séances du mois déjà consommées */
   done: number;
@@ -127,6 +133,9 @@ export interface TeacherMonthStudent {
   previousDebt: number;
   /** ce qu'il doit sur ses AUTRES emplois du temps */
   otherDebt: number;
+  /** TOUT ce qu'il doit, restes et frais d'inscription compris : le montant
+   *  exact que l'école doit avancer pour débloquer la part de l'enseignant */
+  totalDebt: number;
   status: MonthPayState;
   /** part enseignant générée par cet élève sur ce mois */
   gross: number;
@@ -280,6 +289,8 @@ function emptyMonthStudent(
   size: number,
   unitPrice: number,
   rates: { listPrice: number; schoolPerSeance: number; teacherPerSeance: number },
+  /** CET emploi du temps lui est-il offert ? */
+  free: boolean,
 ): TeacherMonthStudent {
   return {
     studentId: student.id,
@@ -289,7 +300,7 @@ function emptyMonthStudent(
     caseLabel: studentCaseLabel(student),
     caseKind: student.studentCase ?? "normal",
     isTeacherChild: student.studentCase === "teacher_child",
-    isFree: !!student.isFree,
+    isFree: free,
     done: 0,
     size,
     complete: false,
@@ -307,7 +318,8 @@ function emptyMonthStudent(
     debt: 0,
     previousDebt: 0,
     otherDebt: 0,
-    status: student.isFree ? "free" : "pending",
+    totalDebt: 0,
+    status: free ? "free" : "pending",
     gross: 0,
     settled: 0,
     open: 0,
@@ -574,11 +586,18 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     // Son tarif à LUI : un « école seule » ne paie que la part de l'école, donc
     // son mois ne coûte pas le prix affiché de l'emploi du temps.
     const own = studentListPrice(st, sub, listPrice);
-    const row = emptyMonthStudent(db, st, size, netPriceFor(own, discount), {
-      listPrice,
-      schoolPerSeance: studentSchoolPerSeance(st, sub),
-      teacherPerSeance: studentTeacherPerSeance(st, sub, session.teacherId),
-    });
+    const row = emptyMonthStudent(
+      db,
+      st,
+      size,
+      netPriceFor(own, discount),
+      {
+        listPrice,
+        schoolPerSeance: studentSchoolPerSeance(st, sub),
+        teacherPerSeance: studentTeacherPerSeance(st, sub, session.teacherId),
+      },
+      isFreeSub(st, sub?.id),
+    );
 
     const cycle = cycles[index];
     if (cycle) {
@@ -598,9 +617,14 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     }
 
     row.previousDebt = cycles.slice(0, index).reduce((s, c) => s + Math.max(0, -c.balance), 0);
-    row.otherDebt = studentSoldDebtRows(db, st.id)
+    const summary = studentDebtSummary(db, st.id);
+    row.otherDebt = summary.soldRows
       .filter((r) => r.subscriptionId !== sub?.id)
       .reduce((s, r) => s + r.debt, 0);
+    // Ce que l'école doit avancer pour débloquer sa part : la dette ENTIÈRE,
+    // restes et frais d'inscription compris — c'est ce que `studentHasDebt`
+    // regarde, et donc ce qui retient l'enseignant.
+    row.totalDebt = summary.total;
     row.hasDebt = studentHasDebt(db, st.id);
 
     for (const d of duesByStudent.get(st.id) ?? []) {
@@ -612,7 +636,7 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
       }
     }
 
-    row.status = st.isFree
+    row.status = row.isFree
       ? "free"
       : row.debt > 0
         ? row.credited > 0
@@ -870,7 +894,18 @@ export function studentArrearsBefore(
 // Les enfants de l'enseignant, scolarisés sur son salaire
 // ---------------------------------------------------------------------------
 
-/** Un mois d'un emploi du temps que l'enfant doit encore. */
+/**
+ * L'ÉTAT d'un mois d'un enfant d'enseignant :
+ *  - `due`      : rien n'a été versé, le montant sort du salaire du père ;
+ *  - `family`   : LA FAMILLE A PAYÉ ELLE-MÊME, avant que le père ne soit réglé —
+ *                 il n'y a plus rien à retenir sur son salaire ;
+ *  - `salary`   : déjà retenu sur un règlement précédent ;
+ *  - `school`   : l'école a avancé la dette de sa caisse ;
+ *  - `pending`  : le mois n'a rien consommé encore.
+ */
+export type ChildLineState = "due" | "family" | "salary" | "school" | "pending";
+
+/** Un mois d'un emploi du temps d'un enfant d'enseignant. */
 export interface TeacherChildLine {
   subscriptionId: string;
   label: string;
@@ -879,7 +914,17 @@ export interface TeacherChildLine {
   seances: number;
   /** prix d'une de ses séances */
   unitPrice: number;
+  /** ce que le mois lui coûte (ce que ses séances ont mangé) */
+  expected: number;
+  /** ce que la FAMILLE a versé d'elle-même sur ce mois */
+  paidByFamily: number;
+  /** ce qu'un règlement du père a déjà retenu */
+  paidFromSalary: number;
+  /** ce que la caisse de l'école a avancé */
+  paidBySchool: number;
+  /** ce qui reste à retenir sur le salaire (0 dès que le mois est soldé) */
   amount: number;
+  state: ChildLineState;
   /** ce mois-ci, par opposition à un arriéré */
   current: boolean;
 }
@@ -890,7 +935,10 @@ export interface TeacherChildRow {
   studentName: string;
   registrationNumber: string;
   caseLabel: string;
+  /** tous ses mois, réglés ou non — l'écran les montre avec leur statut */
   lines: TeacherChildLine[];
+  /** ceux qui doivent encore quelque chose : la seule retenue possible */
+  dueLines: TeacherChildLine[];
   /** ce que le mois EN COURS de chaque emploi lui coûte encore */
   currentAmount: number;
   /** ce que les mois d'avant ont laissé impayé */
@@ -899,48 +947,95 @@ export interface TeacherChildRow {
   currentSeances: number;
   /** total retenu sur le salaire du père */
   amount: number;
+  /** ce que la famille a déjà versé elle-même, AVANT le règlement du père */
+  paidByFamily: number;
+  /** ce que des règlements précédents ont déjà retenu */
+  paidFromSalary: number;
+  /** l'enfant a payé d'avance : il ne reste rien à retenir sur ce salaire */
+  settledBeforePay: boolean;
 }
 
 /**
- * Les enfants d'un enseignant et ce que leur scolarité prend sur son salaire :
- * combien de séances chacun a suivies, sur quel mois de quel emploi du temps, ce
- * que le mois en cours coûte encore et ce que les mois précédents ont laissé.
+ * Les enfants d'un enseignant et ce que leur scolarité prend sur son salaire.
+ *
+ * Un enfant d'enseignant N'EST PAS obligé d'attendre la paie de son père : sa
+ * famille peut très bien régler au guichet avant. Ce module lit donc TOUS ses
+ * mois — pas seulement ceux qui sont dans le rouge — et dit, pour chacun, d'où
+ * l'argent est venu. Un mois payé par la famille reste affiché, avec son propre
+ * statut, et n'est plus retenu sur le salaire : le retenir une seconde fois
+ * ferait payer la scolarité deux fois.
  */
 export function teacherChildRows(db: Database, teacherId: string): TeacherChildRow[] {
   return db.students
     .filter((st) => st.studentCase === "teacher_child" && st.teacherFatherId === teacherId)
     .map((st) => {
-      const debts = studentSoldDebtRows(db, st.id);
-      const lines: TeacherChildLine[] = debts.map((r) => {
-        const sub = db.subscriptions.find((s) => s.id === r.subscriptionId);
-        const cycle = cycleOf(db, st.id, r.subscriptionId, r.code);
-        const current = currentCycleCode(db, st.id, r.subscriptionId) === r.code;
-        return {
-          subscriptionId: r.subscriptionId,
-          label: r.label,
-          monthCode: r.code,
-          seances: cycle.done,
-          unitPrice: netPriceFor(
-            studentListPrice(st, sub),
-            db.enrollments.find((e) => e.studentId === st.id && e.subscriptionId === r.subscriptionId)
-              ?.discount ?? st.subscriptionDiscounts?.[r.subscriptionId],
-          ),
-          amount: r.debt,
-          current,
-        };
-      });
-      const currentLines = lines.filter((l) => l.current);
+      const lines: TeacherChildLine[] = [];
+
+      for (const subId of studentSubscriptionHistory(db, st)) {
+        const sub = db.subscriptions.find((x) => x.id === subId);
+        if (!sub) continue;
+        const label = subscriptionLabel(db, sub);
+        const currentCode = currentCycleCode(db, st.id, subId);
+        const unitPrice = netPriceFor(
+          studentListPrice(st, sub),
+          db.enrollments.find((e) => e.studentId === st.id && e.subscriptionId === subId)
+            ?.discount ?? st.subscriptionDiscounts?.[subId],
+        );
+
+        for (const cycle of enrollmentCycles(db, st.id, subId)) {
+          // Un mois qui n'a ni séance ni versement n'a rien à raconter.
+          if (cycle.consumed <= 0 && cycle.credited <= 0) continue;
+          const credits = cycleCredits(db, st.id, subId, cycle.code);
+          const debt = Math.max(0, -cycle.balance);
+          const state: ChildLineState =
+            debt > 0
+              ? "due"
+              : credits.family > 0
+                ? "family"
+                : credits.school > 0
+                  ? "school"
+                  : credits.salary > 0
+                    ? "salary"
+                    : "pending";
+          lines.push({
+            subscriptionId: subId,
+            label,
+            monthCode: cycle.code,
+            seances: cycle.done,
+            unitPrice,
+            expected: cycle.consumed,
+            paidByFamily: credits.family,
+            paidFromSalary: credits.salary,
+            paidBySchool: credits.school,
+            amount: debt,
+            state,
+            current: currentCode === cycle.code,
+          });
+        }
+      }
+
+      lines.sort(
+        (a, b) =>
+          a.label.localeCompare(b.label) || a.monthCode.localeCompare(b.monthCode),
+      );
+      const dueLines = lines.filter((l) => l.amount > 0);
+      const currentDue = dueLines.filter((l) => l.current);
+      const amount = dueLines.reduce((s, l) => s + l.amount, 0);
       return {
         studentId: st.id,
         studentName: studentName(st),
         registrationNumber: registrationNumberOf(db, st),
         caseLabel: studentCaseLabel(st),
         lines,
-        currentAmount: currentLines.reduce((s, l) => s + l.amount, 0),
-        previousAmount: lines.filter((l) => !l.current).reduce((s, l) => s + l.amount, 0),
-        currentSeances: currentLines.reduce((s, l) => s + l.seances, 0),
-        amount: lines.reduce((s, l) => s + l.amount, 0),
-      };
+        dueLines,
+        currentAmount: currentDue.reduce((s, l) => s + l.amount, 0),
+        previousAmount: dueLines.filter((l) => !l.current).reduce((s, l) => s + l.amount, 0),
+        currentSeances: lines.filter((l) => l.current).reduce((s, l) => s + l.seances, 0),
+        amount,
+        paidByFamily: lines.reduce((s, l) => s + l.paidByFamily, 0),
+        paidFromSalary: lines.reduce((s, l) => s + l.paidFromSalary, 0),
+        settledBeforePay: amount === 0 && lines.some((l) => l.paidByFamily > 0),
+      } satisfies TeacherChildRow;
     })
     .filter((c) => c.lines.length > 0)
     .sort((a, b) => b.amount - a.amount || a.studentName.localeCompare(b.studentName));

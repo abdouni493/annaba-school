@@ -56,6 +56,7 @@ import {
   soldFor,
   studentCaseLabel,
   studentCaseTone,
+  isFreeSub,
   studentListPrice,
   studentMatches,
   studentName,
@@ -91,6 +92,9 @@ interface SituationRow {
   lead: number;
   slots: AttendanceRecord[];
   unitPrice: number;
+  /** cet emploi du temps lui est OFFERT (la gratuité se coche module par
+   *  module : les autres restent payants) */
+  offered: boolean;
   done: number;
   presents: number;
   absents: number;
@@ -176,6 +180,7 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
         lead: cycleLead(db, student.id, subId, code),
         slots,
         unitPrice: studentListPrice(student, sub),
+        offered: isFreeSub(student, subId),
         done: cycle.done,
         presents: slots.filter((a) => a.status === "present" || a.status === "late").length,
         absents: slots.filter((a) => a.status === "absent").length,
@@ -426,8 +431,12 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                               Groupe {r.groupName} · {r.salleName} · {r.teacherName}
                             </span>
                             <span className="block text-[10px] text-muted">
-                              {r.daysLabel} · <span className="font-mono">{r.timeLabel}</span> ·
-                              séance à {formatDA(r.unitPrice)}
+                              {r.daysLabel} · <span className="font-mono">{r.timeLabel}</span> ·{" "}
+                              {r.offered ? (
+                                <strong className="text-success">offert</strong>
+                              ) : (
+                                <>séance à {formatDA(r.unitPrice)}</>
+                              )}
                             </span>
                             {!r.active && (
                               <Badge tone="warning" className="mt-0.5 gap-1 text-[9px]">

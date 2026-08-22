@@ -401,7 +401,9 @@ export interface ModuleAbsenceRule {
 /**
  * How a student is billed. `normal` is the default; the four other cases are
  * ticked at creation:
- *  - `special`: free education — neither the school nor the teacher is paid,
+ *  - `special`: free education, EMPLOI DU TEMPS PAR EMPLOI DU TEMPS — the
+ *     modules listed in `freeSubscriptionIds` cost nothing (neither the school
+ *     nor the teacher is paid for them) and the others are billed as usual,
  *  - `teacher_child`: the school is paid from the teacher-father's salary, not
  *     from the student directly (see `teacherFatherId`),
  *  - `reduction`: a reduction split between the school and the teacher (see
@@ -435,6 +437,18 @@ export interface Student {
   isFree: boolean;
   /** billing case — absent/"normal" means an ordinary paying student */
   studentCase?: StudentCase;
+  /**
+   * « Cas spécial (gratuit) »: WHICH emplois du temps are offered.
+   *
+   * La gratuité se coche emploi par emploi : un élève peut suivre trois modules
+   * dont deux offerts et un payant. Les emplois listés ici ne coûtent rien —
+   * ni à l'élève, ni à la charge de l'école, ni en part enseignant — et ceux
+   * qui n'y sont pas sont facturés au tarif ordinaire.
+   *
+   * ABSENT = toute sa scolarité est offerte, exactement comme le cas se lisait
+   * avant d'être détaillé : les fiches déjà en base ne changent pas de sens.
+   */
+  freeSubscriptionIds?: string[];
   /** teacher_child: the teacher whose salary settles this student */
   teacherFatherId?: string;
   /** reduction: how much the school and the teacher each knock off */
@@ -491,6 +505,17 @@ export interface Enrollment {
 export type PaymentType = "subscription_payment" | "debt_payment";
 
 /**
+ * WHERE the money of a movement came from:
+ *  - `cash`: the family handed it over at the desk (the default),
+ *  - `teacher_salary`: it was taken off a teacher-father's pay — no cash moved,
+ *  - `school_cash`: the SCHOOL covered the student's debt out of its own
+ *     caisse, so the teacher could be settled today. The caisse then carries
+ *     both movements: the payment booked on the student, and the outflow that
+ *     paid for it.
+ */
+export type PaymentSource = "cash" | "teacher_salary" | "school_cash";
+
+/**
  * One cash movement of a student: either a purchase of séances (with its
  * remise and the part left unpaid) or a settlement of an earlier debt.
  */
@@ -523,6 +548,8 @@ export interface Payment {
   /** netTotal − amountPaid: the debt this payment leaves behind */
   rest: number;
   type: PaymentType;
+  /** where the money came from — "cash" (the family) when absent */
+  paidFrom?: PaymentSource;
   date: string;
   description?: string;
 }
@@ -676,7 +703,10 @@ export type CashTxType =
   | "expense"
   | "student_payment"
   | "teacher_payment"
-  | "acompte";
+  | "acompte"
+  /** the school covered a student's debt from its own money: the outflow that
+   *  balances the `student_payment` booked on that student */
+  | "student_debt";
 export interface CashTransaction {
   id: string;
   type: CashTxType;

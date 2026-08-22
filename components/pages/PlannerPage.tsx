@@ -28,6 +28,7 @@ import type { DayTime, ScheduleSession, Day, Subscription, Teacher } from "@/lib
 import {
   clashingDays,
   formatDays,
+  isFreeSub,
   minutesOf,
   monthlyPriceOf,
   schoolMonthShareOf,
@@ -2563,12 +2564,15 @@ export function PlannerPage() {
                         {(() => {
                           const sub = subscriptions.find((x) => x.sessionId === selectedSession.id);
                           const sold = sub ? soldFor(db, stu.id, sub.id) : 0;
+                          // La gratuité se coche emploi par emploi : c'est CET
+                          // emploi-là qui est offert, ou non.
+                          const offered = isFreeSub(stu, sub?.id);
                           return (
                             <Badge
-                              tone={stu.isFree ? "success" : sold < 0 ? "danger" : sold === 0 ? "warning" : "primary"}
+                              tone={offered ? "success" : sold < 0 ? "danger" : sold === 0 ? "warning" : "primary"}
                               className="font-bold"
                             >
-                              {stu.isFree ? "Gratuit" : `Solde ${formatDA(sold)}`}
+                              {offered ? "Gratuit" : `Solde ${formatDA(sold)}`}
                             </Badge>
                           );
                         })()}

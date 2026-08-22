@@ -142,9 +142,17 @@ export function CashPage() {
   const periodNetFlow = periodInflows - periodOutflows;
 
   // 3. Specific breakdowns for filtered period
+  // Ce que les élèves ont réellement versé : une dette avancée par l'école
+  // s'annule d'elle-même (l'entrée portée à l'élève, la sortie qui l'a payée),
+  // et n'a donc jamais enrichi la caisse.
   const studentPaymentsPeriod = filteredTx
-    .filter((t) => t.type === "student_payment")
+    .filter((t) => t.type === "student_payment" || t.type === "student_debt")
     .reduce((sum, t) => sum + t.amount, 0);
+
+  /** Ce que l'école a avancé pour ses élèves sur la période (un positif). */
+  const coveredDebtsPeriod = filteredTx
+    .filter((t) => t.type === "student_debt")
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
   const teacherPaymentsPeriod = filteredTx
     .filter((t) => t.type === "teacher_payment" || t.type === "acompte")
@@ -158,7 +166,12 @@ export function CashPage() {
   const getTabFilteredTransactions = () => {
     switch (activeTab) {
       case "students":
-        return filteredTx.filter((t) => t.type === "student_payment");
+        // Une dette avancée par l'école écrit DEUX mouvements : le paiement
+        // porté au crédit de l'élève et la sortie qui l'a financé. Les deux
+        // appartiennent à l'élève, donc les deux se lisent ici.
+        return filteredTx.filter(
+          (t) => t.type === "student_payment" || t.type === "student_debt",
+        );
       case "teachers":
         return filteredTx.filter((t) => t.type === "teacher_payment" || t.type === "acompte");
       case "school_expenses":
@@ -209,7 +222,7 @@ export function CashPage() {
       return;
     }
 
-    const isOutflow = ["withdraw", "expense", "teacher_payment", "acompte"].includes(editType);
+    const isOutflow = ["withdraw", "expense", "teacher_payment", "acompte", "student_debt"].includes(editType);
     const signedAmount = isOutflow ? -Math.abs(editAmount) : Math.abs(editAmount);
 
     let isoDate = selectedTx.date;
@@ -262,6 +275,7 @@ export function CashPage() {
       student_payment: { label: "Paiement élève", style: "bg-primary-50 text-primary border border-primary/20" },
       teacher_payment: { label: "Règlement prof / staff", style: "bg-warning/15 text-warning border border-warning/30" },
       acompte: { label: "Acompte", style: "bg-warning/15 text-warning border border-warning/30" },
+      student_debt: { label: "Dette élève avancée", style: "bg-danger/15 text-danger border border-danger/30" },
       registration: { label: "Inscription", style: "bg-success/15 text-success border border-success/30" },
     };
     const info = labels[type] ?? { label: type, style: "bg-canvas text-ink border border-line" };
@@ -319,6 +333,11 @@ export function CashPage() {
                   <strong className="text-2xl font-black text-primary block mt-1.5">
                     {studentPaymentsPeriod} DA
                   </strong>
+                  {coveredDebtsPeriod > 0 && (
+                    <span className="text-[10px] text-danger font-bold block mt-0.5">
+                      dont {coveredDebtsPeriod} DA de dettes avancées par l&apos;école
+                    </span>
+                  )}
                 </div>
                 <div className="h-11 w-11 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
                   <UserCheck className="h-5 w-5" />
@@ -495,7 +514,7 @@ export function CashPage() {
         <div className="flex border-b border-line bg-canvas/30 px-4 pt-3 gap-1 scrollbar-none overflow-x-auto">
           {[
             { id: "all", label: "Toutes les Transactions", count: filteredTx.length },
-            { id: "students", label: "Paiements Élèves", count: filteredTx.filter((t) => t.type === "student_payment").length },
+            { id: "students", label: "Paiements Élèves", count: filteredTx.filter((t) => t.type === "student_payment" || t.type === "student_debt").length },
             { id: "teachers", label: "Règlements Profs/Staff", count: filteredTx.filter((t) => t.type === "teacher_payment" || t.type === "acompte").length },
             { id: "school_expenses", label: "Dépenses École", count: filteredTx.filter((t) => t.type === "expense").length },
             { id: "manual", label: "Dépôts & Retraits", count: filteredTx.filter((t) => t.type === "deposit" || t.type === "withdraw").length },
@@ -743,6 +762,7 @@ export function CashPage() {
               <option value="student_payment">Paiement élève</option>
               <option value="teacher_payment">Règlement prof / staff</option>
               <option value="acompte">Acompte prof</option>
+              <option value="student_debt">Dette élève avancée par l’école</option>
             </Select>
           </div>
           <div>

@@ -6,11 +6,13 @@ import {
   caseReductionCut,
   cycleSizeOf,
   currentCycleCode,
+  isFreeSub,
   joinPointFor,
   groupSeanceTotals,
   netPriceFor,
   sessionTimesOn,
   soldFor,
+  studentDebtSummary,
   studentHasDebt,
   studentListPrice,
 } from "@/lib/helpers";
@@ -37,6 +39,7 @@ import type {
   Notification,
   Parent,
   Payment,
+  PaymentSource,
   ReceptionStaff,
   Salle,
   School,
@@ -323,10 +326,41 @@ interface DataActions {
     amount: number;
     monthCode?: string;
     description?: string;
-    /** "teacher_salary": the school is paid out of a teacher-father's pay, so
-     *  the solde is credited but NO cash movement is posted. */
-    source?: "cash" | "teacher_salary";
+    /**
+     * WHERE the money comes from:
+     *  - `cash` (default): the family paid at the desk — one inflow in the till,
+     *  - `teacher_salary`: taken off a teacher-father's pay — NO cash movement,
+     *  - `school_cash`: the school covered it out of its own caisse — the till
+     *    carries BOTH the payment booked on the student and the outflow that
+     *    paid for it, so the balance stays exact and the history says so.
+     */
+    source?: PaymentSource;
   }) => Promise<{ ok: boolean; paymentId?: string; balance?: number; monthCode?: string }>;
+  /**
+   * L'ÉCOLE COUVRE LA DETTE D'UN ÉLÈVE, de sa propre caisse.
+   *
+   * Tant qu'un élève doit de l'argent, la part que ses séances rapportent à
+   * l'enseignant reste RETENUE : elle ne se règle pas. Quand l'école décide de
+   * ne pas faire attendre l'enseignant, elle avance elle-même ce que l'élève
+   * doit — et la paie se débloque immédiatement.
+   *
+   * Tout ce que `studentHasDebt` regarde est couvert : les mois dans le rouge,
+   * les restes d'anciens paiements et les frais d'inscription. Restreindre à un
+   * `subscriptionId` (et éventuellement à un `monthCode`) ne couvre que cette
+   * dette-là — les autres restent dues et continuent de retenir la part.
+   *
+   * Deux mouvements sont écrits dans la caisse par dette couverte : le paiement
+   * porté au crédit de l'élève, et la sortie qui l'a financé. Le solde de la
+   * caisse est donc juste, et l'historique montre exactement ce qui s'est passé.
+   */
+  coverStudentDebt: (args: {
+    studentId: string;
+    /** ne couvrir que cet emploi du temps (absent = toutes ses dettes) */
+    subscriptionId?: string;
+    /** ne couvrir que ce mois de cet emploi */
+    monthCode?: string;
+    description?: string;
+  }) => Promise<{ ok: boolean; amount?: number; rows?: number; messageKey?: string }>;
   cancelAttendance: (attendanceId: string) => Promise<ScanResult>;
   /** Corrects one presence (status / date-time / amount charged); the balance
    *  moves by exactly the same delta. */
@@ -652,7 +686,9 @@ function activeFreePeriod(
  * until the abonnement is given one — his fiche has no rate of its own.
  *
  * The STUDENT's case then has the last word, exactly as the fiche promises:
- *  - `special` (scolarité offerte): neither the school nor the teacher is paid,
+ *  - `special` (scolarité offerte SUR CET EMPLOI DU TEMPS): neither the school
+ *    nor the teacher is paid. La gratuité se coche module par module, donc un
+ *    même élève peut très bien rapporter sur un autre de ses emplois,
  *  - `school_only`: the school is paid, the listed teachers are not,
  *  - `reduction`: the teacher grants his own part of the remise, so it comes
  *    off his share and not off the school's.
@@ -665,7 +701,7 @@ function teacherDueFor(
   student?: Student,
 ): number {
   if (student) {
-    if (student.isFree || student.studentCase === "special") return 0;
+    if (isFreeSub(student, sub?.id)) return 0;
     if (
       student.studentCase === "school_only" &&
       session.teacherId &&
@@ -941,9 +977,12 @@ export const useData = create<DataStore>((set, get) => ({
 
     // A free period and a not-yet-started enrollment are both "offered": the
     // presence is written and NO séance is taken off the counter.
+    // Cet emploi du temps est-il offert à CET élève ? La gratuité se coche
+    // module par module, donc la question n'a de sens qu'avec l'abonnement.
+    const freeHere = isFreeSub(student, scannedSub?.id);
     const offered = isFreePeriod || beforeStart;
-    const waived = offered && !student.isFree ? price : 0;
-    const cost = student.isFree || offered ? 0 : price;
+    const waived = offered && !freeHere ? price : 0;
+    const cost = freeHere || offered ? 0 : price;
 
     const status: "present" | "late" =
       nowMin > startsAt(matched) + SCAN_LATE_AFTER ? "late" : "present";
@@ -957,7 +996,7 @@ export const useData = create<DataStore>((set, get) => ({
     // what the présence sheet does, so a badge and a click can never disagree.
     // A student whose solde is already empty is still let in: it simply goes
     // into the red and the desk regularises it.
-    const consumes = !student.isFree && !offered && !!enrollment?.enrollmentId;
+    const consumes = !freeHere && !offered && !!enrollment?.enrollmentId;
     const before = enrollment?.remaining ?? 0;
     const outOfSeances = consumes && before <= 0;
     const remaining = consumes ? Math.max(0, before - 1) : Math.max(0, before);
@@ -1062,7 +1101,7 @@ export const useData = create<DataStore>((set, get) => ({
       const refundSeance =
         !existing.preStart &&
         !existing.freePeriodId &&
-        !student.isFree &&
+        !isFreeSub(student, db.subscriptions.find((x) => x.sessionId === sessionId)?.id) &&
         !!enrollment?.enrollmentId;
       set((state) => ({
         attendance: state.attendance.filter((a) => a.id !== existing.id),
@@ -1133,9 +1172,10 @@ export const useData = create<DataStore>((set, get) => ({
     const freePeriod = activeFreePeriod(db, [session.classId, ...(session.classIds ?? [])], date);
     const isFreePeriod = !!freePeriod;
 
+    const freeHere = isFreeSub(student, markedSub?.id);
     const offered = isFreePeriod || beforeStart;
-    const waived = offered && !student.isFree ? price : 0;
-    const cost = student.isFree || offered ? 0 : price;
+    const waived = offered && !freeHere ? price : 0;
+    const cost = freeHere || offered ? 0 : price;
 
     const teacherBase =
       (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
@@ -1148,7 +1188,7 @@ export const useData = create<DataStore>((set, get) => ({
         ? new Date().toISOString()
         : new Date(`${date}T${startTimeOnDate(session, date)}:00`).toISOString();
 
-    const consumes = !student.isFree && !offered && !!enrollment?.enrollmentId;
+    const consumes = !freeHere && !offered && !!enrollment?.enrollmentId;
     const before = enrollment?.remaining ?? 0;
     const outOfSeances = consumes && before <= 0;
     const remaining = consumes ? Math.max(0, before - 1) : Math.max(0, before);
@@ -1346,7 +1386,7 @@ export const useData = create<DataStore>((set, get) => ({
     const beforeStart = !!startDate && startDate > date;
 
     const noCharge = status === "cancelled" || firstAbsence;
-    const offered = !noCharge && (!!freePeriod || beforeStart || student.isFree);
+    const offered = !noCharge && (!!freePeriod || beforeStart || isFreeSub(student, sub?.id));
     const netPrice = netPriceFor(listPrice, discount);
     const charge = noCharge || offered ? 0 : netPrice;
     const waived = offered ? netPrice : 0;
@@ -1481,11 +1521,52 @@ export const useData = create<DataStore>((set, get) => ({
       amountPaid: credit,
       rest: 0,
       type: "subscription_payment",
+      paidFrom: source ?? "cash",
       date: now,
       description:
         description?.trim() ||
         `Solde ${code} — ${MODULE_NAME(db, sub ? db.sessions.find((x) => x.id === sub.sessionId)?.moduleId ?? "" : "")}`,
     };
+
+    /**
+     * Ce que la caisse enregistre :
+     *  - un versement de la famille : une entrée, comme toujours ;
+     *  - un règlement sur le salaire du père : RIEN, l'argent n'a jamais
+     *    traversé le tiroir (l'enseignant touche simplement moins) ;
+     *  - une dette couverte par l'école : l'entrée portée au crédit de l'élève
+     *    ET la sortie qui l'a financée. Les deux s'annulent, si bien que le
+     *    solde de la caisse ne bouge que du jour où l'enseignant est payé —
+     *    et l'historique montre noir sur blanc que l'école a avancé l'argent.
+     */
+    const studentLabel = `${student.firstName} ${student.lastName}`.trim();
+    const cashRows: CashTransaction[] =
+      source === "teacher_salary"
+        ? []
+        : [
+            {
+              id: uid("csh"),
+              type: "student_payment" as const,
+              amount: credit,
+              date: now,
+              description:
+                source === "school_cash"
+                  ? `Dette ${code} de ${studentLabel} réglée par l'école`
+                  : `Solde ${code} — ${studentLabel}`,
+            },
+            ...(source === "school_cash"
+              ? [
+                  {
+                    id: uid("csh"),
+                    type: "student_debt" as const,
+                    amount: -credit,
+                    date: now,
+                    description: `Caisse école → dette ${code} de ${studentLabel} (${
+                      description?.trim() || "part enseignant débloquée"
+                    })`,
+                  },
+                ]
+              : []),
+          ];
 
     set((state) => ({
       enrollments: existing
@@ -1510,25 +1591,110 @@ export const useData = create<DataStore>((set, get) => ({
             }
           : st,
       ),
-      // Money settled from a teacher-father's salary never passes through the
-      // till: the teacher is simply paid less. Posting an inflow here would
-      // book it twice.
-      cash:
-        source === "teacher_salary"
-          ? state.cash
-          : [
-              ...state.cash,
-              {
-                id: uid("csh"),
-                type: "student_payment" as const,
-                amount: credit,
-                date: now,
-                description: `Solde ${code} — ${student.firstName} ${student.lastName}`,
-              },
-            ],
+      cash: cashRows.length > 0 ? [...state.cash, ...cashRows] : state.cash,
     }));
 
     return { ok: true, paymentId: payment.id, balance: enrollment.balance, monthCode: code };
+  },
+
+  /**
+   * L'école avance ce qu'un élève doit, pour que l'enseignant soit payé
+   * aujourd'hui. Voir la description de l'action sur l'interface : tout ce qui
+   * retient la part de l'enseignant est couvert — les mois dans le rouge, les
+   * restes d'anciens paiements et les frais d'inscription.
+   */
+  coverStudentDebt: async ({ studentId, subscriptionId, monthCode, description }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    if (!student) return { ok: false, messageKey: "student.notFound" };
+
+    const summary = studentDebtSummary(db, studentId);
+    const rows = summary.soldRows.filter(
+      (r) =>
+        (!subscriptionId || r.subscriptionId === subscriptionId) &&
+        (!monthCode || r.code === monthCode),
+    );
+    // Restreindre à un emploi du temps ne touche QUE ses mois : les restes et
+    // les frais d'inscription ne relèvent d'aucun emploi en particulier, ils ne
+    // sont donc soldés que quand toute la dette est couverte.
+    const whole = !subscriptionId && !monthCode;
+    const rests = whole ? summary.rests : 0;
+    const registration = whole ? summary.registrationDue : 0;
+
+    const total = rows.reduce((t, r) => t + r.debt, 0) + rests + registration;
+    if (total <= 0) return { ok: false, amount: 0, rows: 0, messageKey: "debt.nothingDue" };
+
+    const label = description?.trim() || "Dette avancée par l'école";
+
+    // Mois par mois : chaque versement porte sa provenance et pose ses deux
+    // mouvements de caisse, donc l'historique reste lisible ligne par ligne.
+    for (const row of rows) {
+      await get().addSold({
+        studentId,
+        subscriptionId: row.subscriptionId,
+        amount: row.debt,
+        monthCode: row.code,
+        source: "school_cash",
+        description: `${label} — ${row.label} (${row.code})`,
+      });
+    }
+
+    // Les restes d'anciens paiements et les frais d'inscription se soldent en
+    // une seule écriture : ils ne portent ni emploi du temps ni mois.
+    if (rests > 0 || registration > 0) {
+      const now = new Date().toISOString();
+      const settled = rests + registration;
+      const order = db.payments
+        .filter((p) => p.studentId === studentId && p.rest > 0)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const cleared = new Set(order.map((p) => p.id));
+      const studentLabel = `${student.firstName} ${student.lastName}`.trim();
+      const receipt: Payment = {
+        id: uid("pay"),
+        studentId,
+        seancesPurchased: 0,
+        unitPrice: 0,
+        grossTotal: settled,
+        netTotal: settled,
+        amountPaid: settled,
+        rest: 0,
+        type: "debt_payment",
+        paidFrom: "school_cash",
+        date: now,
+        description:
+          registration > 0
+            ? `${label} — restes et frais d'inscription`
+            : `${label} — restes d'anciens paiements`,
+      };
+      set((state) => ({
+        payments: [
+          ...state.payments.map((p) => (cleared.has(p.id) ? { ...p, rest: 0 } : p)),
+          receipt,
+        ],
+        students: state.students.map((st) =>
+          st.id === studentId && registration > 0 ? { ...st, registrationDue: 0 } : st,
+        ),
+        cash: [
+          ...state.cash,
+          {
+            id: uid("csh"),
+            type: "student_payment" as const,
+            amount: settled,
+            date: now,
+            description: `Dette de ${studentLabel} réglée par l'école`,
+          },
+          {
+            id: uid("csh"),
+            type: "student_debt" as const,
+            amount: -settled,
+            date: now,
+            description: `Caisse école → dette de ${studentLabel} (${label})`,
+          },
+        ],
+      }));
+    }
+
+    return { ok: true, amount: total, rows: rows.length + (rests + registration > 0 ? 1 : 0) };
   },
 
   // Cancelling a presence gives the séance back — the mirror of consuming it.
@@ -1543,7 +1709,10 @@ export const useData = create<DataStore>((set, get) => ({
     const enrollment =
       student && session ? enrollmentFor(db, student, session, date) : undefined;
     const refundSeance =
-      !att.preStart && !att.freePeriodId && !student?.isFree && !!enrollment?.enrollmentId;
+      !att.preStart &&
+      !att.freePeriodId &&
+      !isFreeSub(student, db.subscriptions.find((x) => x.sessionId === att.sessionId)?.id) &&
+      !!enrollment?.enrollmentId;
 
     set((state) => ({
       attendance: state.attendance.filter((a) => a.id !== attendanceId),
@@ -1813,7 +1982,7 @@ export const useData = create<DataStore>((set, get) => ({
         const windowDays = Math.max(rule?.daysWindow ?? 7, 1);
         const aligned = windowDays === 7;
 
-        const cost = student.isFree ? 0 : enr.price;
+        const cost = isFreeSub(student, enr.subscriptionId) ? 0 : enr.price;
         if (cost <= 0) continue;
 
         const attended = db.attendance.filter((a) => {

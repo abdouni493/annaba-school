@@ -80,6 +80,8 @@ import {
   studentCaseLabel,
   studentCaseTone,
   studentMatches,
+  isFreeSub,
+  studentFullyFree,
   studentSoldDebt,
   studentSubscriptionHistory,
   unsubscribedAtOf,
@@ -337,9 +339,11 @@ export function StudentsPage() {
   /** At least one emploi du temps whose solde no longer covers two séances —
    *  the alert reception relaunches families on. */
   const isSoonToRunOut = (student: Student) => {
-    if (student.isFree) return false;
     if (student.subscriptionIds.length === 0) return false;
     return student.subscriptionIds.some((subId) => {
+      // Un emploi du temps OFFERT n'a pas de solde à surveiller : la gratuité
+      // se coche module par module, donc la question se pose emploi par emploi.
+      if (isFreeSub(student, subId)) return false;
       const sub = subscriptions.find((x) => x.id === subId);
       const st = soldStatus(soldFor(db, student.id, subId), sub?.pricePerSession ?? 0);
       return st !== "ok";
@@ -1820,14 +1824,15 @@ export function StudentsPage() {
                       {stu.subscriptionIds.map((id) => {
                         const sub = subscriptions.find((x) => x.id === id);
                         const sold = soldFor(db, stu.id, id);
-                        const st = stu.isFree ? "ok" : soldStatus(sold, sub?.pricePerSession ?? 0);
+                        const offered = isFreeSub(stu, id);
+                        const st = offered ? "ok" : soldStatus(sold, sub?.pricePerSession ?? 0);
                         const tone =
                           st === "debt" ? "danger" : st === "empty" || st === "low" ? "warning" : "success";
                         const month = currentCycleIndex(db, stu.id, id) + 1;
                         return (
                           <Badge key={id} tone={tone} className="text-[9px] px-1 py-0.5 whitespace-normal">
                             {getModuleLabel(id)} · M{month}
-                            {!stu.isFree && ` · ${sold} DA`}
+                            {offered ? " · offert" : ` · ${sold} DA`}
                           </Badge>
                         );
                       })}
@@ -1852,7 +1857,7 @@ export function StudentsPage() {
                 <span className="text-xs text-muted">ID: {selectedStudent.id} | Carte: {selectedStudent.rfid}</span>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                {selectedStudent.isFree ? (
+                {studentFullyFree(selectedStudent) ? (
                   <Badge tone="success" className="text-sm px-3 py-1">Études gratuites</Badge>
                 ) : (
                   <Badge
@@ -2014,7 +2019,7 @@ export function StudentsPage() {
                           );
                         }
                         const sold = soldFor(db, selectedStudent.id, subId);
-                        const st = selectedStudent.isFree
+                        const st = isFreeSub(selectedStudent, subId)
                           ? "ok"
                           : soldStatus(sold, sub.pricePerSession);
                         const cycles = enrollmentCycles(db, selectedStudent.id, subId);

@@ -19,11 +19,17 @@
  *    précédent qu'on règle,
  *  - la part d'un élève en dette est RETENUE : elle ne disparaît pas, elle
  *    revient au règlement suivant dès que l'élève s'est acquitté — et la colonne
- *    « arriérés débloqués » la montre noir sur blanc,
+ *    « arriérés débloqués » la montre noir sur blanc. L'école peut aussi ne pas
+ *    faire attendre l'enseignant : le bouton « Payer de la caisse » avance la
+ *    dette de l'élève, la part se débloque immédiatement, et les deux
+ *    mouvements apparaissent dans l'historique de la caisse,
  *  - les cas d'élèves sont appliqués à la source : un « école seule » n'est même
  *    pas listé (l'enseignant n'est délibérément pas payé pour lui), un
- *    « cas spécial » ne rapporte rien, une « réduction » ne lui coûte que SA
- *    moitié de la remise, et un « fils d'enseignant » sort du salaire du père,
+ *    « cas spécial » ne rapporte rien SUR LES EMPLOIS QUI LUI SONT OFFERTS (la
+ *    gratuité se coche module par module), une « réduction » ne lui coûte que
+ *    SA moitié de la remise, et un « fils d'enseignant » sort du salaire du
+ *    père — sauf si sa famille a déjà payé d'elle-même, ce que l'écran dit
+ *    alors avec son propre statut,
  *  - la formule « par groupe » lit le tarif de l'abonnement (part enseignant du
  *    mois ÷ séances) déjà figé sur chaque présence, donc rien à saisir.
  */
@@ -31,6 +37,7 @@
 import { useMemo, useState } from "react";
 import { useData } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
+import { useToast } from "@/lib/store/toast";
 import { Badge, type Tone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -54,6 +61,7 @@ import {
   studentArrearsBefore,
   teacherChildRows,
   teacherEmplois,
+  type ChildLineState,
   type MonthPayState,
   type TeacherChildRow,
   type TeacherDue,
@@ -63,9 +71,11 @@ import {
 } from "@/lib/teacherMonths";
 import {
   AlertTriangle,
+  Banknote,
   CalendarClock,
   DollarSign,
   GraduationCap,
+  HandCoins,
   Percent,
   Receipt,
   Users,
@@ -114,8 +124,11 @@ export function TeacherPayModal({
 
 function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void }) {
   const db = useData();
-  const { payTeacherSessions, teacherExpenses, acomptes, students, school } = db;
+  const { payTeacherSessions, coverStudentDebt, teacherExpenses, acomptes, students, school } = db;
   const { language } = useSettings();
+  const { addToast } = useToast();
+  /** L'élève dont la dette est en train d'être avancée (le bouton se verrouille). */
+  const [payingDebt, setPayingDebt] = useState<string | null>(null);
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>(() =>
     defaultPayableMonthKeys(teacherEmplois(db, teacher.id)),
@@ -145,7 +158,97 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
       .filter((st) => st.studentCase === "teacher_child" && st.teacherFatherId === teacher.id)
       .map((st) => st.id),
   );
+  /** L'enfant dont la famille est en train de régler au guichet. */
+  const [payingChild, setPayingChild] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  /**
+   * L'ÉCOLE AVANCE LA DETTE D'UN ÉLÈVE, pour ne pas faire attendre l'enseignant.
+   *
+   * Tant que l'élève doit quelque chose, la part que ses séances rapportent est
+   * retenue : elle ne se règle pas aujourd'hui. Ce bouton solde la dette sur la
+   * caisse de l'école — tout ce qui la retient, y compris les restes d'anciens
+   * paiements et les frais d'inscription — et la part redevient payable dans la
+   * seconde. La caisse porte les deux mouvements : le paiement porté au crédit de
+   * l'élève, et la sortie qui l'a financé.
+   */
+  const payDebtFromSchool = async (studentId: string, name: string, amount: number) => {
+    if (amount <= 0) return;
+    if (
+      !confirm(
+        `L'école va régler ${amount} DA de dette pour ${name}, sur sa propre caisse. ` +
+          "La part que ses séances rapportent à l'enseignant sera immédiatement débloquée, " +
+          "et les deux mouvements apparaîtront dans l'historique de la caisse. Continuer ?",
+      )
+    ) {
+      return;
+    }
+    setPayingDebt(studentId);
+    try {
+      const res = await coverStudentDebt({ studentId });
+      if (!res.ok) {
+        addToast({
+          type: "danger",
+          title: "Rien à régler",
+          message: `${name} ne doit plus rien — sa part est déjà payable.`,
+        });
+        return;
+      }
+      addToast({
+        type: "success",
+        title: "Dette avancée par l'école",
+        message: `${res.amount ?? amount} DA réglés sur la caisse — la part de l'enseignant est débloquée.`,
+        studentName: name,
+      });
+    } finally {
+      setPayingDebt(null);
+    }
+  };
+
+  /**
+   * LA FAMILLE D'UN ENFANT D'ENSEIGNANT PAIE ELLE-MÊME, AVANT LA PAIE DU PÈRE.
+   *
+   * Rien n'oblige un fils d'enseignant à attendre le salaire de son père : sa
+   * famille peut régler au guichet quand elle veut. L'argent passe alors par la
+   * caisse comme n'importe quel versement d'élève, le mois cesse d'être retenu
+   * sur le salaire — et l'écran le montre avec son propre statut, pour que
+   * personne ne le retienne une seconde fois.
+   */
+  const collectFromFamily = async (child: TeacherChildRow) => {
+    if (child.amount <= 0) return;
+    if (
+      !confirm(
+        `Encaisser ${child.amount} DA de la famille de ${child.studentName}, maintenant ? ` +
+          "Le montant n'a alors plus à être retenu sur le salaire de son père.",
+      )
+    ) {
+      return;
+    }
+    setPayingChild(child.studentId);
+    try {
+      for (const line of child.dueLines) {
+        if (line.amount <= 0) continue;
+        await db.addSold({
+          studentId: child.studentId,
+          subscriptionId: line.subscriptionId,
+          amount: line.amount,
+          monthCode: line.monthCode,
+          description: `Versé par la famille avant la paie de ${teacher.firstName} ${teacher.lastName} (${line.monthCode})`,
+        });
+      }
+      // Il ne doit plus rien : le décocher évite qu'un clic distrait ne le
+      // retienne quand même sur ce règlement.
+      setChildIds((prev) => prev.filter((id) => id !== child.studentId));
+      addToast({
+        type: "success",
+        title: "Encaissé auprès de la famille",
+        message: `${child.amount} DA — rien à retenir sur le salaire de son père.`,
+        studentName: child.studentName,
+      });
+    } finally {
+      setPayingChild(null);
+    }
+  };
 
   const emplois = useMemo(
     () => teacherEmplois(db, teacher.id),
@@ -230,7 +333,11 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 
   const chosenExpenses = unpaidExpenses.filter((e) => expenseIds.includes(e.id));
   const chosenAcomptes = unpaidAcomptes.filter((a) => acompteIds.includes(a.id));
-  const chosenChildren = childRows.filter((c) => childIds.includes(c.studentId));
+  // Un enfant dont la famille a déjà payé n'a plus rien à retenir : le cocher ne
+  // retiendrait rien, et le retenir quand même ferait payer deux fois.
+  const chosenChildren = childRows.filter(
+    (c) => childIds.includes(c.studentId) && c.amount > 0,
+  );
   const expensesTotal = chosenExpenses.reduce((s, e) => s + e.amount, 0);
   const acomptesTotal = chosenAcomptes.reduce((s, a) => s + a.amount, 0);
   const childrenTotal = chosenChildren.reduce((s, c) => s + c.amount, 0);
@@ -242,7 +349,9 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
     studentId: c.studentId,
     studentName: c.studentName,
     registrationNumber: c.registrationNumber,
-    lines: c.lines.map((l) => ({
+    // Seuls les mois ENCORE DUS sortent du salaire : ceux que la famille a
+    // réglés elle-même sont déjà soldés.
+    lines: c.dueLines.map((l) => ({
       subscriptionId: l.subscriptionId,
       label: l.label,
       monthCode: l.monthCode,
@@ -253,9 +362,73 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 
   const withheldTotal = chosenWithheldDues.reduce((s, d) => s + d.amount, 0);
   const withheldStudents = new Set(chosenWithheldDues.map((d) => d.studentId)).size;
-  const unpaidRows = chosen.flatMap((m) =>
-    m.students.filter((st) => st.debt > 0).map((st) => ({ month: m, student: st })),
-  );
+
+  /**
+   * LES ÉLÈVES EN DETTE de cet enseignant — mois en cours ET mois précédents,
+   * un seul bloc par élève.
+   *
+   * Ils sont listés qu'ils tombent ou non dans les mois cochés : c'est
+   * précisément leur dette qui retient la part de l'enseignant, donc elle doit
+   * rester sous les yeux jusqu'à ce qu'elle soit réglée. `totalDebt` est ce que
+   * l'école doit avancer pour débloquer cette part : la dette ENTIÈRE de
+   * l'élève, restes d'anciens paiements et frais d'inscription compris — rien
+   * de moins ne libérerait la part.
+   */
+  const debtors = useMemo(() => {
+    const rows = new Map<
+      string,
+      {
+        studentId: string;
+        name: string;
+        registrationNumber: string;
+        phone: string;
+        caseLabel: string;
+        months: string[];
+        currentDebt: number;
+        previousDebt: number;
+        monthsDebt: number;
+        otherDebt: number;
+        totalDebt: number;
+        withheld: number;
+        inChosen: boolean;
+      }
+    >();
+    for (const e of emplois) {
+      for (const m of e.months) {
+        for (const st of m.students) {
+          if (st.debt <= 0) continue;
+          const row = rows.get(st.studentId) ?? {
+            studentId: st.studentId,
+            name: st.name,
+            registrationNumber: st.registrationNumber,
+            phone: st.phone,
+            caseLabel: st.caseLabel,
+            months: [],
+            currentDebt: 0,
+            previousDebt: 0,
+            monthsDebt: 0,
+            otherDebt: st.otherDebt,
+            totalDebt: st.totalDebt,
+            withheld: 0,
+            inChosen: false,
+          };
+          row.months.push(`${e.title} · ${m.code}`);
+          if (m.isCurrent) row.currentDebt += st.debt;
+          else row.previousDebt += st.debt;
+          row.monthsDebt += st.debt;
+          row.withheld += st.withheld;
+          if (selectedKeys.includes(m.key)) row.inChosen = true;
+          rows.set(st.studentId, row);
+        }
+      }
+    }
+    return [...rows.values()].sort(
+      (a, b) => b.totalDebt - a.totalDebt || a.name.localeCompare(b.name),
+    );
+  }, [emplois, selectedKeys]);
+
+  const debtorsTotal = debtors.reduce((s, r) => s + r.totalDebt, 0);
+  const debtorsBlocked = debtors.reduce((s, r) => s + r.withheld, 0);
 
   /**
    * Ce que l'enseignant doit toucher, TOUS emplois du temps confondus — la
@@ -739,6 +912,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                         pct={pct}
                         studentShare={studentShare}
                         onToggle={() => toggleMonth(m.key)}
+                        onPayDebt={payDebtFromSchool}
+                        payingDebt={payingDebt}
                       />
                     ))}
                   </div>
@@ -755,64 +930,108 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                   prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
                 )
               }
+              onCollectFromFamily={collectFromFamily}
+              payingChild={payingChild}
               reductionRows={reductionRows}
               childrenTotal={childrenTotal}
             />
 
-            {/* ---- les élèves qui n'ont pas payé ----------------------- */}
-            {unpaidRows.length > 0 && (
-              <div className="space-y-2 rounded-2xl border border-danger/30 bg-danger/5 p-4">
+            {/* ---- LES ÉLÈVES EN DETTE, avec l'action qui débloque la paie -- */}
+            {debtors.length > 0 && (
+              <div className="space-y-2 rounded-2xl border-2 border-danger/40 bg-danger/5 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-danger">
                     <AlertTriangle className="h-3.5 w-3.5" />
-                    Élèves non réglés sur les mois cochés ({unpaidRows.length})
+                    Élèves en dette — mois en cours et mois précédents ({debtors.length})
                   </span>
-                  <Badge tone="danger" className="font-mono font-bold">
-                    {formatDA(unpaidRows.reduce((s, r) => s + r.student.debt, 0))}
-                  </Badge>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge tone="danger" className="font-mono font-bold">
+                      {formatDA(debtorsTotal)} dus
+                    </Badge>
+                    <Badge tone="warning" className="font-mono font-bold">
+                      {formatDA(debtorsBlocked)} de part prof bloqués
+                    </Badge>
+                  </div>
                 </div>
-                <div className="max-h-44 overflow-x-auto overflow-y-auto rounded-xl border border-line bg-surface">
-                  <table className="w-full min-w-[640px] text-[11px]">
+
+                <p className="rounded-xl border border-danger/30 bg-surface px-3 py-2 text-[10px] leading-relaxed text-danger">
+                  Tant qu&apos;un élève doit de l&apos;argent, la part que ses séances rapportent
+                  à l&apos;enseignant est <strong>retenue</strong> : elle ne se règle pas
+                  aujourd&apos;hui. Pour ne pas le faire attendre, l&apos;école peut{" "}
+                  <strong>avancer la dette sur sa propre caisse</strong> — la part redevient
+                  payable immédiatement, et les deux mouvements apparaissent dans
+                  l&apos;historique de la caisse.
+                </p>
+
+                <div className="max-h-64 overflow-x-auto overflow-y-auto rounded-xl border border-line bg-surface">
+                  <table className="w-full min-w-[860px] text-[11px]">
                     <thead className="bg-canvas/60">
                       <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
                         <th className="px-2 py-1.5">N°</th>
                         <th className="px-2 py-1.5">Élève</th>
-                        <th className="px-2 py-1.5">Mois</th>
-                        <th className="px-2 py-1.5 text-center">Séances</th>
-                        <th className="px-2 py-1.5 text-right">Versé</th>
-                        <th className="px-2 py-1.5 text-right">Reste dû</th>
+                        <th className="px-2 py-1.5">Mois concernés</th>
+                        <th className="px-2 py-1.5 text-right">Mois en cours</th>
+                        <th className="px-2 py-1.5 text-right">Mois précédents</th>
+                        <th className="px-2 py-1.5 text-right">Dette totale</th>
                         <th className="px-2 py-1.5 text-right">Part prof bloquée</th>
+                        <th className="px-2 py-1.5 text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {unpaidRows.map(({ month, student }) => (
-                        <tr
-                          key={`${month.key}-${student.studentId}`}
-                          className="border-t border-line/50"
-                        >
+                      {debtors.map((r) => (
+                        <tr key={r.studentId} className="border-t border-line/50 align-middle">
                           <td className="px-2 py-1.5 font-mono text-muted">
-                            {student.registrationNumber}
+                            {r.registrationNumber}
                           </td>
-                          <td className="px-2 py-1.5 font-semibold text-ink">
-                            {student.name}
-                            {student.caseLabel && (
-                              <Badge tone="warning" className="ml-1.5 text-[8px]">
-                                {student.caseLabel}
-                              </Badge>
+                          <td className="px-2 py-1.5">
+                            <strong className="block text-ink">{r.name}</strong>
+                            <span className="flex flex-wrap items-center gap-1">
+                              {r.caseLabel && (
+                                <Badge tone="warning" className="text-[8px]">
+                                  {r.caseLabel}
+                                </Badge>
+                              )}
+                              {r.inChosen && (
+                                <Badge tone="primary" className="text-[8px]">
+                                  sur un mois coché
+                                </Badge>
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5 text-[10px] text-muted">
+                            {r.months.join(" · ")}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono text-danger">
+                            {r.currentDebt > 0 ? formatDA(r.currentDebt) : "—"}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono text-danger">
+                            {r.previousDebt > 0 ? formatDA(r.previousDebt) : "—"}
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <strong className="font-mono text-danger">
+                              {formatDA(r.totalDebt)}
+                            </strong>
+                            {r.totalDebt > r.monthsDebt && (
+                              <span className="block text-[9px] text-warning">
+                                dont {formatDA(r.totalDebt - r.monthsDebt)} hors ces mois
+                              </span>
                             )}
                           </td>
-                          <td className="px-2 py-1.5 font-mono">{month.code}</td>
-                          <td className="px-2 py-1.5 text-center font-mono">
-                            {student.done}/{student.size}
-                          </td>
-                          <td className="px-2 py-1.5 text-right font-mono text-success">
-                            {formatDA(student.credited)}
-                          </td>
-                          <td className="px-2 py-1.5 text-right font-mono font-bold text-danger">
-                            {formatDA(student.debt)}
-                          </td>
                           <td className="px-2 py-1.5 text-right font-mono text-warning">
-                            {student.withheld > 0 ? formatDA(student.withheld) : "—"}
+                            {r.withheld > 0 ? formatDA(r.withheld) : "—"}
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Button
+                              size="sm"
+                              onClick={() => payDebtFromSchool(r.studentId, r.name, r.totalDebt)}
+                              disabled={payingDebt === r.studentId || r.totalDebt <= 0}
+                              className="gap-1 whitespace-nowrap"
+                            >
+                              <HandCoins className="h-3.5 w-3.5" />
+                              {payingDebt === r.studentId
+                                ? "Règlement…"
+                                : `Payer ${formatDA(r.totalDebt)} de la caisse`}
+                            </Button>
                           </td>
                         </tr>
                       ))}
@@ -820,8 +1039,9 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                   </table>
                 </div>
                 <p className="text-[10px] text-danger">
-                  Leur part n&apos;est pas versée aujourd&apos;hui : elle reste ouverte et
-                  réapparaîtra au prochain règlement dès qu&apos;ils auront payé.
+                  Sans ce règlement, leur part n&apos;est pas versée aujourd&apos;hui : elle
+                  reste ouverte et réapparaîtra au prochain règlement dès qu&apos;ils auront
+                  payé.
                 </p>
               </div>
             )}
@@ -1011,6 +1231,8 @@ function MonthBoard({
   pct,
   studentShare,
   onToggle,
+  onPayDebt,
+  payingDebt,
 }: {
   emploi: TeacherEmploi;
   month: TeacherMonth;
@@ -1021,6 +1243,9 @@ function MonthBoard({
   pct: number;
   studentShare: (m: TeacherMonth, studentId: string) => number;
   onToggle: () => void;
+  /** l'école avance la dette de cet élève, pour débloquer la part du prof */
+  onPayDebt: (studentId: string, name: string, amount: number) => void;
+  payingDebt: string | null;
 }) {
   const db = useData();
   const subId = emploi.subscriptionId;
@@ -1167,6 +1392,8 @@ function MonthBoard({
                   slotCount={slotCount}
                   selectedKeys={selectedKeys}
                   share={studentShare(month, st.studentId)}
+                  onPayDebt={onPayDebt}
+                  payingDebt={payingDebt}
                 />
               ))
             )}
@@ -1209,6 +1436,8 @@ function StudentPayRow({
   slotCount,
   selectedKeys,
   share,
+  onPayDebt,
+  payingDebt,
 }: {
   emploi: TeacherEmploi;
   month: TeacherMonth;
@@ -1217,6 +1446,8 @@ function StudentPayRow({
   slotCount: number;
   selectedKeys: string[];
   share: number;
+  onPayDebt: (studentId: string, name: string, amount: number) => void;
+  payingDebt: string | null;
 }) {
   const db = useData();
   const badge = PAY_STATE[student.status];
@@ -1302,6 +1533,27 @@ function StudentPayRow({
             </Badge>
           )}
         </div>
+
+        {/* L'ALERTE DE DETTE reste à sa place, avec l'action qui la solde :
+            l'école avance l'argent et la part du prof se débloque aussitôt. */}
+        {student.totalDebt > 0 && (
+          <div className="mt-1 rounded-lg border border-danger/40 bg-danger/10 px-2 py-1">
+            <span className="flex items-center gap-1 text-[9px] font-bold text-danger">
+              <AlertTriangle className="h-3 w-3" />
+              En dette de {formatDA(student.totalDebt)}
+              {student.withheld > 0 && ` — ${formatDA(student.withheld)} de part prof bloqués`}
+            </span>
+            <button
+              type="button"
+              onClick={() => onPayDebt(student.studentId, student.name, student.totalDebt)}
+              disabled={payingDebt === student.studentId}
+              className="mt-1 inline-flex items-center gap-1 rounded-md border border-danger/50 bg-surface px-1.5 py-0.5 text-[9px] font-bold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
+            >
+              <Banknote className="h-3 w-3" />
+              {payingDebt === student.studentId ? "Règlement…" : "Payer de la caisse école"}
+            </button>
+          </div>
+        )}
         <span className="mt-0.5 block text-[9px] text-muted">
           {student.done}/{Math.max(0, student.size - lead)} séance(s) · {student.presents} P /{" "}
           {student.absents} A
@@ -1381,12 +1633,17 @@ function SpecialCases({
   childRows,
   childIds,
   onToggleChild,
+  onCollectFromFamily,
+  payingChild,
   reductionRows,
   childrenTotal,
 }: {
   childRows: TeacherChildRow[];
   childIds: string[];
   onToggleChild: (id: string) => void;
+  /** encaisser au guichet, tout de suite, ce que l'enfant doit encore */
+  onCollectFromFamily: (child: TeacherChildRow) => void;
+  payingChild: string | null;
   reductionRows: { student: TeacherMonthStudent; emploi: string; months: string[] }[];
   childrenTotal: number;
 }) {
@@ -1408,17 +1665,18 @@ function SpecialCases({
         </div>
         {childRows.length === 0 ? (
           <p className="text-[10px] italic text-muted">
-            Aucun enfant à charge en dette sur ce salaire.
+            Aucun enfant à charge sur ce salaire.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-line">
-            <table className="w-full min-w-[720px] text-[11px]">
+            <table className="w-full min-w-[900px] text-[11px]">
               <thead className="bg-canvas/60">
                 <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
                   <th className="px-2 py-1.5">Retenir</th>
                   <th className="px-2 py-1.5">Enfant</th>
                   <th className="px-2 py-1.5">Emploi du temps</th>
                   <th className="px-2 py-1.5">Mois</th>
+                  <th className="px-2 py-1.5">Statut</th>
                   <th className="px-2 py-1.5 text-center">Séances suivies</th>
                   <th className="px-2 py-1.5 text-right">Prix / séance</th>
                   <th className="px-2 py-1.5 text-right">Montant</th>
@@ -1427,13 +1685,24 @@ function SpecialCases({
               <tbody>
                 {childRows.map((c) =>
                   c.lines.map((l, i) => (
-                    <tr key={`${c.studentId}-${l.subscriptionId}-${l.monthCode}`} className="border-t border-line/50">
+                    <tr
+                      key={`${c.studentId}-${l.subscriptionId}-${l.monthCode}`}
+                      className={`border-t border-line/50 ${
+                        l.state === "family" ? "bg-success/5" : ""
+                      }`}
+                    >
                       {i === 0 && (
                         <td rowSpan={c.lines.length} className="px-2 py-1.5 align-top">
                           <input
                             type="checkbox"
-                            checked={childIds.includes(c.studentId)}
+                            checked={childIds.includes(c.studentId) && c.amount > 0}
                             onChange={() => onToggleChild(c.studentId)}
+                            disabled={c.amount <= 0}
+                            title={
+                              c.amount > 0
+                                ? "Retenir sa scolarité sur ce salaire"
+                                : "Rien à retenir : sa scolarité est déjà soldée"
+                            }
                             className="h-4 w-4"
                           />
                         </td>
@@ -1444,6 +1713,25 @@ function SpecialCases({
                           <span className="block font-mono text-[9px] text-muted">
                             N° {c.registrationNumber}
                           </span>
+                          {c.settledBeforePay && (
+                            <Badge tone="success" className="mt-1 text-[8px]">
+                              Payé par la famille
+                            </Badge>
+                          )}
+                          {c.amount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => onCollectFromFamily(c)}
+                              disabled={payingChild === c.studentId}
+                              className="mt-1 inline-flex items-center gap-1 rounded-md border border-success/50 bg-surface px-1.5 py-0.5 text-[9px] font-bold text-success transition-colors hover:bg-success hover:text-white disabled:opacity-50"
+                              title="La famille paie maintenant, au guichet : le montant ne sera plus retenu sur le salaire"
+                            >
+                              <HandCoins className="h-3 w-3" />
+                              {payingChild === c.studentId
+                                ? "Encaissement…"
+                                : `Encaisser ${formatDA(c.amount)}`}
+                            </button>
+                          )}
                         </td>
                       )}
                       <td className="px-2 py-1.5 text-muted">{l.label}</td>
@@ -1454,17 +1742,24 @@ function SpecialCases({
                             mois en cours
                           </Badge>
                         ) : (
-                          <Badge tone="danger" className="ml-1.5 text-[8px]">
-                            arriéré
+                          <Badge tone="neutral" className="ml-1.5 text-[8px]">
+                            mois précédent
                           </Badge>
                         )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <ChildStateBadge state={l.state} />
                       </td>
                       <td className="px-2 py-1.5 text-center font-mono">{l.seances}</td>
                       <td className="px-2 py-1.5 text-right font-mono text-muted">
                         {formatDA(l.unitPrice)}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono font-bold text-danger">
-                        {formatDA(l.amount)}
+                      <td className="px-2 py-1.5 text-right font-mono font-bold">
+                        {l.amount > 0 ? (
+                          <span className="text-danger">{formatDA(l.amount)}</span>
+                        ) : (
+                          <span className="text-success">{formatDA(0)}</span>
+                        )}
                       </td>
                     </tr>
                   )),
@@ -1473,12 +1768,26 @@ function SpecialCases({
               <tfoot>
                 {childRows.map((c) => (
                   <tr key={`total-${c.studentId}`} className="border-t border-line bg-canvas/40">
-                    <td colSpan={4} className="px-2 py-1.5 text-[10px] font-bold uppercase text-muted">
+                    <td colSpan={5} className="px-2 py-1.5 text-[10px] font-bold uppercase text-muted">
                       {c.studentName} — mois en cours {formatDA(c.currentAmount)} ·{" "}
                       {c.currentSeances} séance(s) · arriérés {formatDA(c.previousAmount)}
+                      {c.paidByFamily > 0 && (
+                        <span className="ml-1 text-success">
+                          · déjà versé par la famille {formatDA(c.paidByFamily)}
+                        </span>
+                      )}
+                      {c.paidFromSalary > 0 && (
+                        <span className="ml-1 text-primary">
+                          · déjà retenu sur le salaire {formatDA(c.paidFromSalary)}
+                        </span>
+                      )}
                     </td>
-                    <td colSpan={3} className="px-2 py-1.5 text-right font-mono font-black text-danger">
-                      total à retenir {formatDA(c.amount)}
+                    <td colSpan={3} className="px-2 py-1.5 text-right font-mono font-black">
+                      {c.amount > 0 ? (
+                        <span className="text-danger">total à retenir {formatDA(c.amount)}</span>
+                      ) : (
+                        <span className="text-success">rien à retenir sur ce salaire</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1487,9 +1796,13 @@ function SpecialCases({
           </div>
         )}
         <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
-          Cet argent ne passe jamais par la caisse : l&apos;école est payée en versant
-          <strong className="text-ink"> moins</strong> à l&apos;enseignant, et le solde de
-          l&apos;enfant revient à zéro sur les mois cochés.
+          Deux chemins, jamais les deux : soit la scolarité est{" "}
+          <strong className="text-ink">retenue sur le salaire</strong> — l&apos;argent ne passe
+          alors pas par la caisse, l&apos;école est payée en versant moins à l&apos;enseignant —
+          soit <strong className="text-success">la famille paie elle-même</strong>, avant la
+          paie, au guichet comme n&apos;importe quel élève. Un mois déjà réglé par la famille
+          reste affiché avec son statut mais n&apos;est plus retenu : le retenir une seconde
+          fois ferait payer la scolarité deux fois.
         </p>
       </div>
 
@@ -1532,6 +1845,19 @@ function SpecialCases({
                       <Badge tone={student.caseKind === "special" ? "success" : "warning"} className="text-[9px]">
                         {student.caseLabel}
                       </Badge>
+                      {student.caseKind === "special" && (
+                        <Badge
+                          tone={student.isFree ? "success" : "danger"}
+                          className="ml-1 text-[8px]"
+                          title={
+                            student.isFree
+                              ? "Cet emploi du temps lui est offert"
+                              : "Cet emploi du temps reste payant pour lui"
+                          }
+                        >
+                          {student.isFree ? "offert ici" : "payant ici"}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-2 py-1.5 text-right font-mono text-muted line-through">
                       {formatDA(student.listPrice)}
@@ -1554,12 +1880,61 @@ function SpecialCases({
         <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
           La remise se partage : l&apos;école en accorde sa moitié sur SA part, l&apos;enseignant la
           sienne sur LA SIENNE — les deux colonnes rendent donc exactement ce que l&apos;élève paie.
-          Un <strong className="text-ink">cas spécial</strong> ne rapporte rien à personne, et un
-          élève <strong className="text-ink">« école seule »</strong> n&apos;est volontairement pas
+          Un <strong className="text-ink">cas spécial</strong> ne rapporte rien à personne{" "}
+          <strong className="text-ink">sur les emplois du temps qui lui sont offerts</strong> — la
+          gratuité se coche module par module, donc le même élève peut très bien payer un autre
+          de ses emplois, et l&apos;enseignant y est alors réglé normalement. Un élève{" "}
+          <strong className="text-ink">« école seule »</strong> n&apos;est volontairement pas
           listé sur cette paie : l&apos;enseignant n&apos;est pas payé pour lui.
         </p>
       </div>
     </div>
+  );
+}
+
+/**
+ * D'OÙ vient l'argent d'un mois d'un enfant d'enseignant — la question que
+ * l'écran de paie doit trancher avant de retenir quoi que ce soit.
+ *
+ * Un « fils d'enseignant » n'attend pas forcément le salaire de son père : sa
+ * famille peut avoir payé au guichet avant. Ce statut-là est le plus important
+ * de la liste, parce que c'est le seul qui ait l'air d'une dette sans en être
+ * une : le mois est soldé, il ne sort plus du salaire.
+ */
+const CHILD_STATE: Record<ChildLineState, { label: string; tone: Tone; hint: string }> = {
+  due: {
+    label: "À retenir",
+    tone: "danger",
+    hint: "Rien n'a été versé : le montant sort du salaire du père.",
+  },
+  family: {
+    label: "Payé par la famille",
+    tone: "success",
+    hint: "La famille a réglé elle-même, avant la paie : plus rien à retenir sur le salaire.",
+  },
+  salary: {
+    label: "Retenu sur le salaire",
+    tone: "primary",
+    hint: "Déjà pris sur un règlement précédent de son père.",
+  },
+  school: {
+    label: "Avancé par l'école",
+    tone: "warning",
+    hint: "L'école a couvert ce mois sur sa propre caisse.",
+  },
+  pending: {
+    label: "Rien encore",
+    tone: "neutral",
+    hint: "Le mois n'a encore rien consommé.",
+  },
+};
+
+function ChildStateBadge({ state }: { state: ChildLineState }) {
+  const info = CHILD_STATE[state];
+  return (
+    <Badge tone={info.tone} className="text-[9px]" title={info.hint}>
+      {info.label}
+    </Badge>
   );
 }
 

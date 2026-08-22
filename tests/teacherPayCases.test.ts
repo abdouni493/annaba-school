@@ -321,13 +321,56 @@ describe("les enfants de l'enseignant, scolarisés sur son salaire", () => {
     expect(child.amount).toBe(3000);
   });
 
-  it("un enfant à jour ne pèse plus sur le salaire", async () => {
+  /**
+   * Le cas que la réception vit dès qu'une famille d'enseignant paie au
+   * guichet : l'enfant a réglé AVANT que son père ne soit payé. Le mois reste
+   * affiché — sinon personne ne saurait qu'il a été soldé — mais avec son
+   * propre statut, et il ne sort plus du salaire : le retenir une seconde fois
+   * ferait payer la scolarité deux fois.
+   */
+  it("un enfant qui paie AVANT le salaire reste listé, avec un statut à part", async () => {
     board();
     patch(STU, { studentCase: "teacher_child", teacherFatherId: TEACHER });
     const days = scheduledDays(4);
     for (const day of days) await attend(STU, day);
     await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: 2000, monthCode: "M1" });
 
-    expect(teacherChildRows(useData.getState(), TEACHER)).toHaveLength(0);
+    const rows = teacherChildRows(useData.getState(), TEACHER);
+    expect(rows).toHaveLength(1);
+    const child = rows[0];
+    // Plus rien à retenir sur le salaire du père.
+    expect(child.amount).toBe(0);
+    expect(child.dueLines).toHaveLength(0);
+    expect(child.settledBeforePay).toBe(true);
+    expect(child.paidByFamily).toBe(2000);
+    expect(child.paidFromSalary).toBe(0);
+    const m1 = child.lines.find((l) => l.monthCode === "M1")!;
+    expect(m1.state).toBe("family");
+    expect(m1.amount).toBe(0);
+  });
+
+  it("un mois retenu sur le salaire se distingue d'un mois payé par la famille", async () => {
+    board();
+    patch(STU, { studentCase: "teacher_child", teacherFatherId: TEACHER });
+    const days = scheduledDays(4);
+    for (const day of days) await attend(STU, day);
+    const cashBefore = useData.getState().cash.length;
+    // Exactement ce que `payTeacherSessions` écrit quand il solde un enfant.
+    await useData.getState().addSold({
+      studentId: STU,
+      subscriptionId: SUB,
+      amount: 2000,
+      monthCode: "M1",
+      source: "teacher_salary",
+    });
+
+    const child = teacherChildRows(useData.getState(), TEACHER)[0];
+    expect(child.lines.find((l) => l.monthCode === "M1")!.state).toBe("salary");
+    expect(child.paidFromSalary).toBe(2000);
+    expect(child.paidByFamily).toBe(0);
+    expect(child.settledBeforePay).toBe(false);
+    // Et l'argent n'a jamais traversé la caisse : l'école est payée en versant
+    // simplement moins au père.
+    expect(useData.getState().cash).toHaveLength(cashBefore);
   });
 });

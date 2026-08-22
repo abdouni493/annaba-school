@@ -10,7 +10,12 @@ import { Input, Select } from "@/components/ui/SearchInput";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Trash2, Edit, Eye, Plus, MoreVertical } from "lucide-react";
 import type { SchoolClass, CoursLevel, FormationLevel } from "@/lib/types";
-import { COURS_LEVELS, coursLevelLabel, totalRemainingSeances } from "@/lib/helpers";
+import {
+  COURS_LEVELS,
+  coursLevelLabel,
+  studentFullyFree,
+  totalRemainingSeances,
+} from "@/lib/helpers";
 
 /** Year options per school level. Kindergarten uses sections, the others the
  *  Algerian AP/AM/AS scale. */
@@ -550,8 +555,10 @@ export function ClassesPage() {
                           <strong className="text-ink block">{stu.firstName} {stu.lastName}</strong>
                           <span className="text-[10px] text-muted">{stu.phone}</span>
                         </div>
-                        <Badge tone={stu.isFree ? "success" : totalRemainingSeances(db, stu.id) === 0 ? "danger" : "primary"}>
-                          {stu.isFree ? "Gratuit" : `${totalRemainingSeances(db, stu.id)} séance(s)`}
+                        <Badge tone={studentFullyFree(stu) ? "success" : totalRemainingSeances(db, stu.id) === 0 ? "danger" : "primary"}>
+                          {studentFullyFree(stu)
+                            ? "Gratuit"
+                            : `${totalRemainingSeances(db, stu.id)} séance(s)`}
                         </Badge>
                       </div>
                     ))}

@@ -607,6 +607,7 @@ create table if not exists public.students (
   rfid                   text not null default '',
   is_free                boolean not null default false,
   student_case           text check (student_case in ('normal','special','teacher_child','reduction','school_only')),
+  free_subscription_ids  jsonb,                 -- cas spécial : les abonnements OFFERTS (null = tous)
   teacher_father_id      text references public.teachers (id) on delete set null,
   case_reduction         jsonb,                 -- remise partagée école / enseignant
   unpaid_teacher_ids     jsonb,                 -- school_only : enseignants NON payés
@@ -619,6 +620,12 @@ create table if not exists public.students (
 
 create index if not exists students_rfid_key
   on public.students (rfid) where rfid <> '';
+
+-- `free_subscription_ids` est la GRATUITÉ, emploi du temps par emploi du temps :
+-- un « cas spécial » liste ici les abonnements qui lui sont offerts (ni l'école
+-- ni l'enseignant ne sont payés pour eux), les autres étant facturés au tarif
+-- ordinaire. NULL = toute la scolarité est offerte, ce qui est exactement la
+-- façon dont le cas se lisait avant d'être détaillé.
 
 -- Le bloc `subscription_dates` porte, abonnement par abonnement :
 --   {subscribedAt, startDate, expiryDate, plan,
@@ -674,9 +681,25 @@ create table if not exists public.payments (
   rest               numeric not null default 0, -- net − payé : la dette laissée
   type               text not null default 'subscription_payment'
                        check (type in ('subscription_payment','debt_payment')),
+  paid_from          text                       -- d'où vient l'argent (null = la famille)
+                       check (paid_from is null or paid_from in ('cash','teacher_salary','school_cash')),
   date               text not null default '',
   description        text
 );
+
+-- `paid_from` distingue trois provenances qui ne se lisent pas de la même façon
+-- dans la caisse :
+--   * `cash` / null       — la famille a payé au guichet : une entrée en caisse.
+--   * `teacher_salary`    — retenu sur la paie d'un enseignant père : AUCUN
+--                           mouvement de caisse, l'école est payée en versant
+--                           moins à l'enseignant.
+--   * `school_cash`       — l'école a avancé la dette de l'élève sur sa propre
+--                           caisse pour ne pas faire attendre l'enseignant : la
+--                           caisse porte le `student_payment` porté au crédit de
+--                           l'élève ET le `student_debt` qui l'a financé.
+-- C'est elle qui permet de distinguer, sur la paie, un mois qu'un fils
+-- d'enseignant a réglé LUI-MÊME avant la paie de son père d'un mois retenu sur
+-- le salaire : le premier reste affiché avec son statut mais n'est plus retenu.
 
 -- --- Présence ------------------------------------------------------------------
 -- Écrans : Présence (feuille partagée), scan RFID, fiche élève.
@@ -765,7 +788,7 @@ create table if not exists public.expenses (
 -- paiements élèves, les règlements enseignants et les acomptes.
 create table if not exists public.cash_transactions (
   id          text primary key,
-  type        text not null check (type in ('deposit','withdraw','expense','student_payment','teacher_payment','acompte')),
+  type        text not null check (type in ('deposit','withdraw','expense','student_payment','teacher_payment','acompte','student_debt')),
   amount      numeric not null default 0,       -- signé
   date        text not null default '',
   description text not null default ''
