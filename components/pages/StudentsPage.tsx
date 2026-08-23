@@ -398,7 +398,7 @@ export function StudentsPage() {
   const removePayment = async (p: Payment) => {
     if (
       !confirm(
-        `Supprimer ce paiement de ${p.amountPaid} DA ?\nLe solde de l'emploi du temps sera repris d'autant et la caisse suivra.`,
+        `Supprimer ce paiement de ${formatDA(p.amountPaid)} ?\nLe solde de l'emploi du temps sera repris d'autant et la caisse suivra.`,
       )
     )
       return;
@@ -425,7 +425,7 @@ export function StudentsPage() {
    *  so the renewal screen doubles as a desk sale when needed. */
   const handleSettleRegistrationCost = (student: Student) => {
     if (!student.registrationDue) return;
-    if (confirm(`Marquer les frais d'inscription de ${student.registrationDue} DA comme réglés ?`)) {
+    if (confirm(`Marquer les frais d'inscription de ${formatDA(student.registrationDue)} comme réglés ?`)) {
       updateItem("students", student.id, { registrationDue: 0 });
     }
   };
@@ -982,7 +982,7 @@ export function StudentsPage() {
                                 ${a.status === "present" ? "Présent" : "En Retard"}
                               </span>
                             </td>
-                            <td style="text-align:right; font-weight:bold; color:#b91c1c;">-${a.amountDeducted} DA</td>
+                            <td style="text-align:right; font-weight:bold; color:#b91c1c;">-${formatDA(a.amountDeducted)}</td>
                           </tr>`,
                         };
                       }),
@@ -997,7 +997,7 @@ export function StudentsPage() {
                             <td style="text-align:center;">
                               <span class="badge badge-warning" style="background:#fee2e2; color:#b91c1c;">Absent</span>
                             </td>
-                            <td style="text-align:right; font-weight:bold; color:#b91c1c;">-${p.amount} DA</td>
+                            <td style="text-align:right; font-weight:bold; color:#b91c1c;">-${formatDA(p.amount)}</td>
                           </tr>`,
                         };
                       }),
@@ -1032,9 +1032,9 @@ export function StudentsPage() {
                           <td>${formatDate(p.date)}</td>
                           <td>${p.description ?? (p.type === "debt_payment" ? "Règlement de dette" : "Paiement de séances")}</td>
                           <td style="text-align:center;">${p.seancesPurchased || "—"}</td>
-                          <td style="text-align:right;">${p.netTotal ? `${p.netTotal} DA` : "—"}</td>
-                          <td style="text-align:right; font-weight:bold; color:#15803d;">${p.amountPaid} DA</td>
-                          <td style="text-align:right; font-weight:bold; color:${p.rest > 0 ? "#b91c1c" : "#5c567a"};">${p.rest} DA</td>
+                          <td style="text-align:right;">${p.netTotal ? `${formatDA(p.netTotal)}` : "—"}</td>
+                          <td style="text-align:right; font-weight:bold; color:#15803d;">${formatDA(p.amountPaid)}</td>
+                          <td style="text-align:right; font-weight:bold; color:${p.rest > 0 ? "#b91c1c" : "#5c567a"};">${formatDA(p.rest)}</td>
                         </tr>
                       `).join("")
                   }
@@ -1057,13 +1057,13 @@ export function StudentsPage() {
             </div>
             <div class="summary-line">
               <span>Total versé :</span>
-              <strong style="color:#15803d;">${totalPaid} DA</strong>
+              <strong style="color:#15803d;">${formatDA(totalPaid)}</strong>
             </div>
             ${stu.registrationDue !== undefined && stu.registrationDue > 0
               ? `
                 <div class="summary-line" style="color:#b91c1c;">
                   <span>Frais d'inscription annuels restants :</span>
-                  <strong>-${stu.registrationDue} DA</strong>
+                  <strong>-${formatDA(stu.registrationDue)}</strong>
                 </div>
               `
               : ""
@@ -1072,7 +1072,7 @@ export function StudentsPage() {
               ? `
                 <div class="summary-line" style="color:#b91c1c;">
                   <span>Dette (reste à payer) :</span>
-                  <strong>${currentDebt} DA</strong>
+                  <strong>${formatDA(currentDebt)}</strong>
                 </div>
               `
               : ""
@@ -1141,7 +1141,7 @@ export function StudentsPage() {
         basePrice,
         netPrice: netPriceFor(basePrice, disc),
         discountLabel: disc && disc.value > 0
-          ? disc.type === "percent" ? `-${disc.value}%` : `-${disc.value} DA`
+          ? disc.type === "percent" ? `-${disc.value}%` : `-${formatDA(disc.value)}`
           : "",
         unit: isFormation ? `${sub.periodMonths ?? 0} mois` : "séance",
       }];
@@ -1383,8 +1383,8 @@ export function StudentsPage() {
                   <td class="num">
                     ${
                       e.discountLabel
-                        ? `<span class="strike">${e.basePrice}</span> ${e.netPrice} DA<br/><span class="cut" style="font-size:0.85em;">${e.discountLabel}</span>`
-                        : `${e.netPrice} DA`
+                        ? `<span class="strike">${e.basePrice}</span> ${formatDA(e.netPrice)}<br/><span class="cut" style="font-size:0.85em;">${e.discountLabel}</span>`
+                        : `${formatDA(e.netPrice)}`
                     }
                     <br/><span style="font-weight:400; color:#9ca3af; font-size:0.85em;">/ ${e.unit}</span>
                   </td>
@@ -1405,7 +1405,7 @@ export function StudentsPage() {
             </div>
             <div class="synthesis-line">
               <span>Séances payées :</span>
-              <strong>${seances} × ${receipt.unitPrice} DA = ${receipt.grossTotal} DA</strong>
+              <strong>${seances} × ${formatDA(receipt.unitPrice)} = ${formatDA(receipt.grossTotal)}</strong>
             </div>
             ${receipt.discountLabel
               ? `
@@ -1418,11 +1418,11 @@ export function StudentsPage() {
             }
             <div class="synthesis-line">
               <span>Net à payer :</span>
-              <strong style="color: #1e1b4b;">${receipt.netTotal} DA</strong>
+              <strong style="color: #1e1b4b;">${formatDA(receipt.netTotal)}</strong>
             </div>
             <div class="synthesis-line">
               <span>Reste à payer :</span>
-              <strong style="color: ${receipt.rest > 0 ? "#b91c1c" : "#15803d"};">${receipt.rest} DA</strong>
+              <strong style="color: ${receipt.rest > 0 ? "#b91c1c" : "#15803d"};">${formatDA(receipt.rest)}</strong>
             </div>
             <div class="synthesis-line">
               <span>Séances restantes (tous modules) :</span>
@@ -1432,7 +1432,7 @@ export function StudentsPage() {
               ? `
                 <div class="synthesis-line" style="color: #b91c1c;">
                   <span>Dette totale du compte :</span>
-                  <strong>${debtAfter} DA</strong>
+                  <strong>${formatDA(debtAfter)}</strong>
                 </div>
               `
               : ""
@@ -1440,7 +1440,7 @@ export function StudentsPage() {
 
             <div class="amount-box">
               <span>MONTANT REÇU :</span>
-              <span>${amount} DA</span>
+              <span>${formatDA(amount)}</span>
             </div>
           </div>
 
@@ -1638,7 +1638,7 @@ export function StudentsPage() {
                               }`}
                             >
                               {debt > 0
-                                ? `Dette de ${debt} DA à régler`
+                                ? `Dette de ${formatDA(debt)} à régler`
                                 : "Soldes par emploi du temps, mois par mois"}
                             </span>
                           </span>
@@ -1782,7 +1782,7 @@ export function StudentsPage() {
                           Dette totale
                         </span>
                         <strong className={`block text-base ${debt > 0 ? "text-danger" : "text-success"}`}>
-                          {debt > 0 ? `${debt} DA` : "Aucune"}
+                          {debt > 0 ? `${formatDA(debt)}` : "Aucune"}
                         </strong>
                       </span>
                       {debt > 0 ? (
@@ -1796,7 +1796,7 @@ export function StudentsPage() {
 
                     {stu.registrationDue && stu.registrationDue > 0 ? (
                       <div className="flex justify-between items-center bg-danger/10 p-1.5 rounded-lg">
-                        <span className="text-danger text-[10px] font-bold">Frais d&apos;inscription dus: {stu.registrationDue} DA</span>
+                        <span className="text-danger text-[10px] font-bold">Frais d&apos;inscription dus: {formatDA(stu.registrationDue)}</span>
                         <button
                           onClick={() => handleSettleRegistrationCost(stu)}
                           className="text-[9px] bg-danger text-white px-2 py-0.5 rounded font-bold hover:bg-danger/80"
@@ -1832,7 +1832,7 @@ export function StudentsPage() {
                         return (
                           <Badge key={id} tone={tone} className="text-[9px] px-1 py-0.5 whitespace-normal">
                             {getModuleLabel(id)} · M{month}
-                            {offered ? " · offert" : ` · ${sold} DA`}
+                            {offered ? " · offert" : ` · ${formatDA(sold)}`}
                           </Badge>
                         );
                       })}
@@ -1875,7 +1875,7 @@ export function StudentsPage() {
                 )}
                 {debtFor(selectedStudent) > 0 && (
                   <Badge tone="danger" className="text-sm px-3 py-1">
-                    Dette: {debtFor(selectedStudent)} DA
+                    Dette: {formatDA(debtFor(selectedStudent))}
                   </Badge>
                 )}
               </div>
@@ -2195,7 +2195,7 @@ export function StudentsPage() {
                         ))}
                       </Select>
                       <span className="text-[10px] text-muted ms-auto font-mono">
-                        {payList.length} paiement(s) · {totalPaid} DA versés
+                        {payList.length} paiement(s) · {formatDA(totalPaid)} versés
                       </span>
                     </div>
                     {payEdit && (
@@ -2277,7 +2277,7 @@ export function StudentsPage() {
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1.5">
                                   <strong className="font-bold text-success">
-                                    +{p.amountPaid} DA
+                                    +{formatDA(p.amountPaid)}
                                   </strong>
                                   {/* Un règlement de dette a soldé des restes
                                       répartis sur plusieurs achats : il ne se
@@ -2312,8 +2312,8 @@ export function StudentsPage() {
                               {!isDebt && (
                                 <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 border-t border-line/60 pt-1.5 text-[10px] text-muted sm:grid-cols-3">
                                   <span>Séances: <strong className="text-ink">{p.seancesPurchased}</strong></span>
-                                  <span>Prix séance: <strong className="text-ink">{p.unitPrice} DA</strong></span>
-                                  <span>Brut: <strong className="text-ink">{p.grossTotal} DA</strong></span>
+                                  <span>Prix séance: <strong className="text-ink">{formatDA(p.unitPrice)}</strong></span>
+                                  <span>Brut: <strong className="text-ink">{formatDA(p.grossTotal)}</strong></span>
                                   <span>
                                     Remise:{" "}
                                     <strong className="text-warning">
@@ -2322,10 +2322,10 @@ export function StudentsPage() {
                                         : "—"}
                                     </strong>
                                   </span>
-                                  <span>Net: <strong className="text-primary">{p.netTotal} DA</strong></span>
+                                  <span>Net: <strong className="text-primary">{formatDA(p.netTotal)}</strong></span>
                                   <span>
                                     Reste:{" "}
-                                    <strong className={p.rest > 0 ? "text-danger" : "text-ink"}>{p.rest} DA</strong>
+                                    <strong className={p.rest > 0 ? "text-danger" : "text-ink"}>{formatDA(p.rest)}</strong>
                                   </span>
                                 </div>
                               )}
@@ -2461,7 +2461,7 @@ export function StudentsPage() {
                       </div>
                       <div className="rounded-xl border border-line bg-canvas/40 p-2 text-center">
                         <span className="block text-[10px] font-semibold text-muted">Total débité</span>
-                        <strong className="text-sm text-ink">{chargedTotal} DA</strong>
+                        <strong className="text-sm text-ink">{formatDA(chargedTotal)}</strong>
                       </div>
                     </div>
 
@@ -2516,7 +2516,7 @@ export function StudentsPage() {
                                       Offert ({att.waivedAmount ?? 0} DA)
                                     </span>
                                   ) : (
-                                    <span className="font-bold text-danger text-[10px]">-{att.amountDeducted} DA</span>
+                                    <span className="font-bold text-danger text-[10px]">-{formatDA(att.amountDeducted)}</span>
                                   )}
                                   <button
                                     onClick={() => openEditAtt(att)}
@@ -2604,7 +2604,7 @@ export function StudentsPage() {
                   {s ? `${formatDays(s.days)} · ${s.startTime}-${s.endTime}` : ""}
                 </span>
                 <span className="block text-muted">
-                  Prix de la séance d&apos;origine : {editingAtt.amountDeducted} DA
+                  Prix de la séance d&apos;origine : {formatDA(editingAtt.amountDeducted)}
                 </span>
               </div>
 
@@ -2902,7 +2902,7 @@ export function StudentsPage() {
               <span className="text-muted">
                 Séances restantes: {remainingFor(selectedStudent)}
                 {debtFor(selectedStudent) > 0 && (
-                  <strong className="text-danger"> · Dette: {debtFor(selectedStudent)} DA</strong>
+                  <strong className="text-danger"> · Dette: {formatDA(debtFor(selectedStudent))}</strong>
                 )}
               </span>
             </div>

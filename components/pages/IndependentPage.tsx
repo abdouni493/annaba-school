@@ -33,6 +33,7 @@ import { formatDateFr, registrationNumberOf, studentMatches } from "@/lib/helper
 import { seanceLibreInvoiceHtml } from "@/lib/reports/documents";
 import { GroupSeanceSection } from "@/components/independent/GroupSeanceSection";
 import { useSettings } from "@/lib/store/settings";
+import { formatDA } from "@/lib/utils";
 
 /** Everything the séance libre receipt needs, captured at creation time. */
 interface CasualReceiptData {
@@ -501,7 +502,7 @@ export function IndependentPage() {
 
           <div className="flex flex-wrap items-center gap-3 border-t border-line pt-2.5 text-[11px]">
             <Badge tone="primary" className="font-bold">{filteredList.length} séance(s)</Badge>
-            <Badge tone="success" className="font-bold">{totalCollected} DA encaissés</Badge>
+            <Badge tone="success" className="font-bold">{formatDA(totalCollected)} encaissés</Badge>
             <Badge tone="neutral" className="font-bold">
               {filteredList.filter((i) => !i.studentId).length} passager(s)
             </Badge>
@@ -608,7 +609,7 @@ export function IndependentPage() {
                         </div>
                         <div className="text-right shrink-0">
                           <span className="text-[10px] text-muted block uppercase font-semibold">Tarif Payé</span>
-                          <span className="font-bold text-success">{ind.price} DA</span>
+                          <span className="font-bold text-success">{formatDA(ind.price)}</span>
                         </div>
                       </div>
 
@@ -636,7 +637,7 @@ export function IndependentPage() {
                         <Badge tone="warning" className="text-[8px] px-1 py-0">Passager</Badge>
                       )}
                     </span>
-                    <Badge tone="success" className="font-mono font-bold text-[10px]">{ind.price} DA</Badge>
+                    <Badge tone="success" className="font-mono font-bold text-[10px]">{formatDA(ind.price)}</Badge>
                   </div>
                 </CardBody>
               </Card>
@@ -684,7 +685,7 @@ export function IndependentPage() {
                         {ind.startTime && <span className="block text-muted">{ind.startTime} - {ind.endTime}</span>}
                       </td>
                       <td className="p-3 font-mono text-[10px] text-muted">{createdStamp(ind)}</td>
-                      <td className="p-3 text-right font-bold text-success font-mono">{ind.price} DA</td>
+                      <td className="p-3 text-right font-bold text-success font-mono">{formatDA(ind.price)}</td>
                       <td className="p-3">
                         <div className="flex justify-end gap-1">
                           <button
@@ -860,7 +861,7 @@ export function IndependentPage() {
                             {opt.kind === "timing" && <span className="mr-1">🎯</span>}
                             {opt.label}
                           </strong>
-                          <strong className="text-primary shrink-0">{opt.price} DA</strong>
+                          <strong className="text-primary shrink-0">{formatDA(opt.price)}</strong>
                         </div>
                         {/* Full context so two identical module names stay distinguishable */}
                         <div className="mt-1 space-y-0.5 text-[10px] text-muted">
@@ -893,7 +894,7 @@ export function IndependentPage() {
                   />
                   <p className="text-[10px] text-muted mt-1">
                     Tarif chargé depuis {selectedItem.kind === "timing" ? "le créneau" : "l'abonnement"} :{" "}
-                    <strong>{selectedItem.price} DA</strong>. Modifiable pour cette séance uniquement.
+                    <strong>{formatDA(selectedItem.price)}</strong>. Modifiable pour cette séance uniquement.
                   </p>
                 </div>
                 <div className="rounded-xl border border-success/25 bg-success/10 p-3.5 text-xs">
@@ -910,11 +911,11 @@ export function IndependentPage() {
                   </div>
                   <div className="flex justify-between py-0.5">
                     <span className="text-muted">Prix d&apos;une séance</span>
-                    <strong className="text-ink">{selectedItem.price} DA</strong>
+                    <strong className="text-ink">{formatDA(selectedItem.price)}</strong>
                   </div>
                   <div className="mt-1.5 flex items-center justify-between border-t border-success/25 pt-2">
                     <span className="font-semibold text-success">Total à encaisser</span>
-                    <strong className="text-sm font-extrabold text-success">{effectivePrice} DA</strong>
+                    <strong className="text-sm font-extrabold text-success">{formatDA(effectivePrice)}</strong>
                   </div>
                 </div>
               </div>
@@ -967,7 +968,7 @@ export function IndependentPage() {
                 </div>
                 <div>
                   <span className="text-[10px] text-muted block uppercase">Montant encaissé</span>
-                  <strong className="text-success block text-base">{selectedCasual.price} DA</strong>
+                  <strong className="text-success block text-base">{formatDA(selectedCasual.price)}</strong>
                   <span className="text-[10px] text-muted">Créée le {createdStamp(selectedCasual)}</span>
                 </div>
               </div>
@@ -1001,7 +1002,7 @@ export function IndependentPage() {
                   </h4>
                   <div className="flex justify-between border-b border-line/50 pb-1.5">
                     <span className="text-muted">Montant :</span>
-                    <strong className="text-success">{selectedCasual.price} DA</strong>
+                    <strong className="text-success">{formatDA(selectedCasual.price)}</strong>
                   </div>
                   <div className="flex justify-between border-b border-line/50 pb-1.5">
                     <span className="text-muted">Mode :</span>
@@ -1047,7 +1048,7 @@ export function IndependentPage() {
               <h3 className="text-sm font-bold text-ink">Séance libre enregistrée avec succès !</h3>
               <p className="text-xs text-muted max-w-sm mx-auto leading-relaxed">
                 <strong>{receiptData.itemLabel}</strong> pour <strong>{receiptData.personName}</strong> —{" "}
-                <strong>{receiptData.price} DA</strong> encaissés.
+                <strong>{formatDA(receiptData.price)}</strong> encaissés.
                 <br />
                 Souhaitez-vous imprimer le reçu ?
               </p>

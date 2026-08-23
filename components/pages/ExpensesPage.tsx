@@ -10,6 +10,7 @@ import { Input, Select } from "@/components/ui/SearchInput";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Trash2, Edit, Plus, Filter, Tag, Calendar } from "lucide-react";
 import type { Expense, ExpenseCategory } from "@/lib/types";
+import { formatDA } from "@/lib/utils";
 
 export function ExpensesPage() {
   const { expenses, categories, push, deleteFrom, updateItem } = useData();
@@ -190,7 +191,7 @@ export function ExpensesPage() {
                     <Calendar className="h-3 w-3" />
                     <span>{exp.date}</span>
                   </div>
-                  <strong className="text-danger font-extrabold text-sm">-{exp.amount} DA</strong>
+                  <strong className="text-danger font-extrabold text-sm">-{formatDA(exp.amount)}</strong>
                 </div>
               </CardBody>
             </Card>

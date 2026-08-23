@@ -9,7 +9,23 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { formatDA } from "@/lib/utils";
-import { groupSeanceTotals, studentDebt, totalRemainingSeances } from "@/lib/helpers";
+import {
+  cycleSizeOf,
+  formatDateFr,
+  groupSeanceTotals,
+  moduleName as moduleNameOf,
+  monthlyPriceOf,
+  schoolMonthShareOf,
+  schoolPerSeanceOf,
+  seancePriceOf,
+  sessionGroupsLabel,
+  sessionTimeLabel,
+  studentDebt,
+  studentName as studentNameOf,
+  teacherMonthShareOf,
+  teacherPerSeanceOf,
+  totalRemainingSeances,
+} from "@/lib/helpers";
 import {
   Calendar,
   FileText,
@@ -35,6 +51,12 @@ import {
   UserCog,
   ClipboardList,
   PieChart as PieIcon,
+  CalendarClock,
+  Filter,
+  HandCoins,
+  RotateCcw,
+  Sparkles,
+  TrendingUp,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -101,6 +123,8 @@ interface CalcLine {
   strong?: boolean;
   emphasis?: boolean;
   formula?: string;
+  /** La ligne aussi s'ouvre : le détail exact du chiffre qu'elle annonce. */
+  detail?: DetailSpec;
 }
 interface CalcPanel {
   title: string;
@@ -114,10 +138,14 @@ interface Section {
   id: string;
   label: string;
   icon: ReactNode;
+  /** Ce que la section répond, en une phrase — affiché sous son titre. */
+  subtitle?: string;
   cards: MetricSpec[];
   panels: CalcPanel[];
   /** Free-form block rendered under the cards/panels (charts, custom tables). */
   custom?: ReactNode;
+  /** Les tableaux détaillés que la section déplie sous ses cartes. */
+  tables?: { title: string; icon?: ReactNode; note?: string; spec: DetailSpec }[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,7 +258,13 @@ function MetricCard({ spec, onOpen }: { spec: MetricSpec; onOpen: (s: MetricSpec
 /* Small-calculations panel                                            */
 /* ------------------------------------------------------------------ */
 
-function CalcCard({ panel }: { panel: CalcPanel }) {
+function CalcCard({
+  panel,
+  onOpen,
+}: {
+  panel: CalcPanel;
+  onOpen?: (title: string, spec: DetailSpec) => void;
+}) {
   return (
     <Card className="border border-line card-shadow">
       <CardBody className="space-y-4 p-5">
@@ -244,11 +278,14 @@ function CalcCard({ panel }: { panel: CalcPanel }) {
           {panel.lines.map((l, i) => (
             <div
               key={i}
+              role={l.detail && onOpen ? "button" : undefined}
+              tabIndex={l.detail && onOpen ? 0 : undefined}
+              onClick={() => l.detail && onOpen?.(l.label, l.detail)}
               className={`flex items-center justify-between rounded-xl px-2 py-2 ${
                 l.emphasis
                   ? `border border-line/60 ${l.tone ? TONE_SOFT[l.tone].split(" ")[0] + "/40" : "bg-canvas/40"}`
                   : "border-b border-line/40"
-              }`}
+              } ${l.detail && onOpen ? "cursor-pointer transition-colors hover:bg-primary-50/40" : ""}`}
             >
               <span className={`flex items-center gap-1.5 ${l.strong || l.emphasis ? "font-bold text-ink" : "text-muted"}`}>
                 {l.tone && !l.emphasis && <span className={`h-2 w-2 rounded-full ${TONE_SOFT[l.tone].split(" ")[0]}`} />}
@@ -257,7 +294,10 @@ function CalcCard({ panel }: { panel: CalcPanel }) {
                   {l.formula && <span className="ml-1 block text-[9px] font-normal not-italic text-muted">{l.formula}</span>}
                 </span>
               </span>
-              <strong className={l.tone ? TONE_TEXT[l.tone] : "text-ink"}>{l.value}</strong>
+              <strong className={`flex items-center gap-1 ${l.tone ? TONE_TEXT[l.tone] : "text-ink"}`}>
+                {l.value}
+                {l.detail && onOpen && <ChevronRight className="h-3 w-3 opacity-60" />}
+              </strong>
             </div>
           ))}
         </div>
@@ -398,6 +438,7 @@ export function ReportsPage() {
     subscriptions,
     categories,
     parents,
+    teacherPayments,
   } = db;
 
   const [startDate, setStartDate] = useState(
@@ -405,13 +446,86 @@ export function ReportsPage() {
   );
   const [endDate, setEndDate] = useState(new Date().toISOString().split("T")[0]);
 
-  const [isGenerated, setIsGenerated] = useState(false);
-  const [reportRange, setReportRange] = useState<{ start: string; end: string } | null>(null);
+  /**
+   * LE BILAN S'OUVRE DÉJÀ CALCULÉ.
+   *
+   * L'écran attendait un clic sur « Générer » avant d'afficger quoi que ce
+   * soit : on arrivait sur une page vide alors que la question — « où en est
+   * l'école ce mois-ci ? » — a toujours la même réponse par défaut. Il s'ouvre
+   * donc sur le mois en cours, et les périodes se changent d'un clic.
+   */
+  const [isGenerated, setIsGenerated] = useState(true);
+  const [reportRange, setReportRange] = useState<{ start: string; end: string } | null>(() => ({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .split("T")[0],
+    end: new Date().toISOString().split("T")[0],
+  }));
+
+  /**
+   * LES FILTRES TRANSVERSES — ils s'appliquent à TOUTES les sections.
+   *
+   * Un bilan ne se lit presque jamais « en entier » : on veut le mois de la 4AP,
+   * ou ce qu'un enseignant a produit, ou ce qu'un module a rapporté. Ces quatre
+   * filtres restreignent les ENSEMBLES DE BASE (présences, paiements, dues,
+   * inscriptions), donc chaque carte, chaque panneau et chaque tableau de
+   * l'écran parle du même périmètre — il n'y a pas un endroit qui filtre et un
+   * autre qui totalise tout.
+   */
+  const [classFilter, setClassFilter] = useState("all");
+  const [teacherFilter, setTeacherFilter] = useState("all");
+  const [moduleFilter, setModuleFilter] = useState("all");
+  const [sessionFilter, setSessionFilter] = useState("all");
+  const [entitySearch, setEntitySearch] = useState("");
+
+  const filtersActive =
+    classFilter !== "all" ||
+    teacherFilter !== "all" ||
+    moduleFilter !== "all" ||
+    sessionFilter !== "all" ||
+    entitySearch.trim().length > 0;
+
+  const resetFilters = () => {
+    setClassFilter("all");
+    setTeacherFilter("all");
+    setModuleFilter("all");
+    setSessionFilter("all");
+    setEntitySearch("");
+  };
+
+  /** Les raccourcis de période — ce que la réception demande neuf fois sur dix. */
+  const applyPreset = (preset: "today" | "week" | "month" | "quarter" | "year" | "all") => {
+    const now = new Date();
+    const iso = (d: Date) => d.toLocaleDateString("fr-CA");
+    const end = iso(now);
+    let start = end;
+    if (preset === "week") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 6);
+      start = iso(d);
+    } else if (preset === "month") {
+      start = iso(new Date(now.getFullYear(), now.getMonth(), 1));
+    } else if (preset === "quarter") {
+      const d = new Date(now);
+      d.setMonth(d.getMonth() - 2);
+      start = iso(new Date(d.getFullYear(), d.getMonth(), 1));
+    } else if (preset === "year") {
+      start = iso(new Date(now.getFullYear(), 0, 1));
+    } else if (preset === "all") {
+      start = "1970-01-01";
+    }
+    setStartDate(start);
+    setEndDate(end);
+    setReportRange({ start, end });
+    setIsGenerated(true);
+  };
 
   const [activeSection, setActiveSection] = useState("overview");
 
   const [detail, setDetail] = useState<{ title: string; spec: DetailSpec } | null>(null);
   const [modalSearch, setModalSearch] = useState("");
+  /** La recherche propre à chaque tableau déplié, par section. */
+  const [tableSearch, setTableSearch] = useState<Record<string, string>>({});
 
   /** "Analyse générale" tab: focus the per-teacher breakdown on one teacher. */
   const [teacherAnalysisId, setTeacherAnalysisId] = useState("all");
@@ -477,10 +591,71 @@ export function ReportsPage() {
     const outflow = (n: number) => `-${formatDA(Math.abs(n))}`;
     const signed = (n: number) => (n >= 0 ? `+${formatDA(Math.abs(n))}` : `-${formatDA(Math.abs(n))}`);
 
-    // Range-filtered raw sets
+    /**
+     * LE PÉRIMÈTRE DES FILTRES, résolu une fois.
+     *
+     * Les quatre filtres portent sur des objets différents (une classe, un
+     * enseignant, un module, un emploi du temps) mais désignent tous, au fond,
+     * un ENSEMBLE D'EMPLOIS DU TEMPS — et donc un ensemble d'abonnements et
+     * d'élèves. On les résout ici, une seule fois, et tout l'écran s'y range.
+     */
+    const scopeSessionIds: Set<string> | null = (() => {
+      if (classFilter === "all" && teacherFilter === "all" && moduleFilter === "all" && sessionFilter === "all") {
+        return null;
+      }
+      const ids = sessions
+        .filter((se) => {
+          if (sessionFilter !== "all" && se.id !== sessionFilter) return false;
+          if (teacherFilter !== "all" && se.teacherId !== teacherFilter) return false;
+          if (moduleFilter !== "all" && se.moduleId !== moduleFilter) return false;
+          if (classFilter !== "all") {
+            const list = se.isOpen && se.classIds?.length ? se.classIds : [se.classId];
+            if (!list.includes(classFilter)) return false;
+          }
+          return true;
+        })
+        .map((se) => se.id);
+      return new Set(ids);
+    })();
+
+    const scopeSubIds: Set<string> | null = scopeSessionIds
+      ? new Set(subscriptions.filter((x) => scopeSessionIds.has(x.sessionId)).map((x) => x.id))
+      : null;
+
+    /** Les élèves du périmètre — inscrits sur l'un de ses emplois du temps. */
+    const scopeStudentIds: Set<string> | null = scopeSubIds
+      ? new Set(
+          students
+            .filter((st) => st.subscriptionIds.some((id) => scopeSubIds!.has(id)))
+            .map((st) => st.id),
+        )
+      : null;
+
+    /** La recherche libre : un nom d'élève, un numéro d'inscription. */
+    const q = entitySearch.trim().toLowerCase();
+    const matchesStudent = (id?: string) => {
+      if (!q) return true;
+      const st = students.find((x) => x.id === id);
+      if (!st) return false;
+      return `${st.firstName} ${st.lastName} ${st.registrationNumber ?? ""} ${st.phone ?? ""}`
+        .toLowerCase()
+        .includes(q);
+    };
+
+    const inScopeStudent = (id?: string) =>
+      (!scopeStudentIds || (!!id && scopeStudentIds.has(id))) && matchesStudent(id);
+    const inScopeSession = (id?: string) => !scopeSessionIds || (!!id && scopeSessionIds.has(id));
+
+    // Range-filtered raw sets — le périmètre des filtres compris.
     const fCash = cash.filter((t) => inRange(t.date));
-    const fPay = payments.filter((p) => inRange(p.date));
-    const fAtt = attendance.filter((a) => inRange(a.timestamp));
+    const fPay = payments
+      .filter((p) => inRange(p.date))
+      .filter((p) => inScopeStudent(p.studentId))
+      .filter((p) => !scopeSubIds || (!!p.subscriptionId && scopeSubIds.has(p.subscriptionId)));
+    const fAtt = attendance
+      .filter((a) => inRange(a.timestamp))
+      .filter((a) => inScopeSession(a.sessionId))
+      .filter((a) => inScopeStudent(a.studentId));
     const fExp = expenses.filter((e) => inRange(e.date));
     const fAco = acomptes.filter((a) => inRange(a.date));
     const fAbs = absences.filter((a) => inRange(a.date));
@@ -493,7 +668,10 @@ export function ReportsPage() {
     const groupSchool = groupTotals.reduce((n, r) => n + r.t.schoolTotal, 0);
     const groupTeacher = groupTotals.reduce((n, r) => n + r.t.teacherTotal, 0);
     const groupStudents = groupTotals.reduce((n, r) => n + r.t.students, 0);
-    const fUnpaidRange = unpaidTeacher.filter((u) => inRange(u.date));
+    const fUnpaidRange = unpaidTeacher
+      .filter((u) => inRange(u.date))
+      .filter((u) => inScopeSession(u.sessionId))
+      .filter((u) => inScopeStudent(u.studentId));
 
     // Reusable cell renderers
     const dateCell = (d: string) => <span className="font-mono text-[10px] text-muted">{(d || "").substring(0, 10)}</span>;
@@ -519,12 +697,14 @@ export function ReportsPage() {
     // What the school billed over the range (net of the remises granted).
     const billedNet = sum(purchases, (p) => p.netTotal);
     const seancesSold = sum(purchases, (p) => p.seancesPurchased);
-    const seancesLeft = sum(students, (st) => totalRemainingSeances(db, st.id));
-    const totalDebts = sum(students, (st) => studentDebt(db, st.id) + (st.registrationDue || 0));
-    const debtors = students.filter(
+    /** Les élèves du PÉRIMÈTRE — ceux que les filtres du haut désignent. */
+    const scopedStudents = students.filter((st) => inScopeStudent(st.id));
+    const seancesLeft = sum(scopedStudents, (st) => totalRemainingSeances(db, st.id));
+    const totalDebts = sum(scopedStudents, (st) => studentDebt(db, st.id) + (st.registrationDue || 0));
+    const debtors = scopedStudents.filter(
       (st) => studentDebt(db, st.id) > 0 || (st.registrationDue && st.registrationDue > 0),
     );
-    const freeCount = students.filter((s) => s.isFree).length;
+    const freeCount = scopedStudents.filter((s) => s.isFree).length;
 
     const amountCell = (tone: Tone, prefix: "" | "+" | "-" = "") => (row: { amount: number }) => (
       <strong className={`font-extrabold ${TONE_TEXT[tone]}`}>
@@ -659,7 +839,7 @@ export function ReportsPage() {
                   ),
               },
             ],
-            rows: [...students].sort(
+            rows: [...scopedStudents].sort(
               (a, b) => totalRemainingSeances(db, b.id) - totalRemainingSeances(db, a.id),
             ),
             totalLabel: "Séances restantes cumulées",
@@ -722,7 +902,7 @@ export function ReportsPage() {
           title: "État des comptes élèves",
           icon: <Wallet className="h-4 w-4 text-warning" />,
           lines: [
-            { label: "Élèves inscrits", value: `${students.length}`, strong: true },
+            { label: "Élèves inscrits", value: `${scopedStudents.length}`, strong: true },
             { label: "Dont cas gratuits", value: `${freeCount}`, tone: "primary" },
             { label: "Élèves avec un reste à payer", value: `${debtors.length}`, tone: "warning" },
             { label: "Séances restantes cumulées", value: `${seancesLeft}`, strong: true },
@@ -1928,14 +2108,537 @@ export function ReportsPage() {
       ),
     };
 
+
+    /* ========================= EMPLOIS DU TEMPS ======================== */
+    /**
+     * CE QUE CHAQUE EMPLOI DU TEMPS COÛTE ET RAPPORTE.
+     *
+     * Un emploi du temps est un produit : il a un prix (le mois), un nombre de
+     * séances, donc un prix à la séance — et ce prix se partage entre l'école
+     * et l'enseignant. Ces trois divisions ne tombent presque jamais juste
+     * (4 000 DA sur 3 séances = 1 333,33 DA), alors elles sont affichées AVEC
+     * LEURS DÉCIMALES, exactement comme elles sont facturées et payées.
+     */
+    const plannerRows = sessions
+      .filter((se) => inScopeSession(se.id))
+      .map((se) => {
+        const sub = subscriptions.find((x) => x.sessionId === se.id);
+        const size = cycleSizeOf(sub);
+        const roster = sub ? students.filter((st) => st.subscriptionIds.includes(sub.id)).length : 0;
+        const marks = fAtt.filter((a) => a.sessionId === se.id);
+        const presents = marks.filter((a) => a.status !== "absent" && a.status !== "cancelled").length;
+        const absents = marks.filter((a) => a.status === "absent").length;
+        const collected = sum(marks, (a) => a.amountDeducted || 0);
+        const teacherDue = sum(
+          fUnpaidRange.filter((u) => u.sessionId === se.id),
+          (u) => u.amount,
+        );
+        return {
+          id: se.id,
+          title: se.title || moduleNameOf(db, se.moduleId) || "Emploi du temps",
+          className: classes.find((c) => c.id === se.classId)?.name ?? "—",
+          groups: sessionGroupsLabel(db, se),
+          teacher: tName(se.teacherId),
+          days: se.days.length,
+          timeLabel: sessionTimeLabel(se),
+          archived: !!se.archivedAt,
+          size,
+          monthPrice: monthlyPriceOf(sub),
+          seancePrice: sub ? seancePriceOf(sub) : se.openPrice ?? 0,
+          schoolPerSeance: sub ? schoolPerSeanceOf(sub) : 0,
+          teacherPerSeance: sub ? teacherPerSeanceOf(sub) : 0,
+          schoolMonth: sub ? schoolMonthShareOf(sub) : 0,
+          teacherMonth: sub ? teacherMonthShareOf(sub) : 0,
+          roster,
+          seances: new Set(marks.map((a) => (a.timestamp || "").substring(0, 10))).size,
+          presents,
+          absents,
+          collected,
+          teacherDue,
+          margin: collected - teacherDue,
+          potentialMonth: sub ? monthlyPriceOf(sub) * roster : 0,
+        };
+      })
+      .sort((a, b) => b.collected - a.collected || a.title.localeCompare(b.title));
+
+    const plannerCollected = sum(plannerRows, (r) => r.collected);
+    const plannerTeacher = sum(plannerRows, (r) => r.teacherDue);
+    const plannerPotential = sum(plannerRows, (r) => r.potentialMonth);
+    const plannerPriced = plannerRows.filter((r) => r.monthPrice > 0).length;
+
+    const tariffColumns: DetailColumn[] = [
+      {
+        label: "Emploi du temps",
+        render: (r) => (
+          <span>
+            <strong className="block text-ink">{r.title}</strong>
+            <span className="text-[10px] text-muted">
+              {r.className} · {r.groups} · {r.teacher}
+            </span>
+          </span>
+        ),
+      },
+      { label: "Séances / mois", align: "right", render: (r) => <span className="font-mono">{r.size}</span> },
+      { label: "Prix du mois", align: "right", render: (r) => <span className="font-mono">{formatDA(r.monthPrice)}</span> },
+      {
+        label: "Séance élève",
+        align: "right",
+        render: (r) => (
+          <span>
+            <strong className="block text-primary">{formatDA(r.seancePrice)}</strong>
+            <span className="text-[9px] text-muted">
+              {formatDA(r.monthPrice)} ÷ {r.size}
+            </span>
+          </span>
+        ),
+      },
+      {
+        label: "Part école / séance",
+        align: "right",
+        render: (r) => (
+          <span>
+            <strong className="block text-ink">{formatDA(r.schoolPerSeance)}</strong>
+            <span className="text-[9px] text-muted">
+              {formatDA(r.schoolMonth)} ÷ {r.size}
+            </span>
+          </span>
+        ),
+      },
+      {
+        label: "Part prof / séance",
+        align: "right",
+        render: (r) => (
+          <span>
+            <strong className="block text-warning">{formatDA(r.teacherPerSeance)}</strong>
+            <span className="text-[9px] text-muted">
+              {formatDA(r.teacherMonth)} ÷ {r.size}
+            </span>
+          </span>
+        ),
+      },
+    ];
+
+    const plannerSection: Section = {
+      id: "planner",
+      label: "Emplois du temps",
+      subtitle:
+        "Le tarif de chaque créneau au centime près, ce qu'il a encaissé sur la période et ce qu'il doit à son enseignant.",
+      icon: <CalendarClock className="h-4 w-4" />,
+      cards: [
+        {
+          label: "Emplois du temps",
+          value: `${plannerRows.length}`,
+          tone: "primary",
+          icon: <CalendarClock className="h-5 w-5" />,
+          hint: `${plannerPriced} avec un tarif mensuel`,
+          detail: {
+            columns: tariffColumns,
+            rows: plannerRows,
+            totalLabel: "Créneaux",
+            totalValue: `${plannerRows.length}`,
+            totalTone: "primary",
+            searchable: (r) => `${r.title} ${r.className} ${r.groups} ${r.teacher}`,
+          },
+        },
+        {
+          label: "Encaissé par les séances (période)",
+          value: inflow(plannerCollected),
+          tone: "success",
+          icon: <ArrowUpRight className="h-5 w-5" />,
+          detail: {
+            columns: [
+              { label: "Emploi du temps", render: (r) => <strong className="text-ink">{r.title}</strong> },
+              { label: "Enseignant", render: (r) => <span className="text-muted">{r.teacher}</span> },
+              { label: "Séances tenues", align: "right", render: (r) => <span className="font-mono">{r.seances}</span> },
+              { label: "Présences", align: "right", render: (r) => <span className="font-mono text-primary">{r.presents}</span> },
+              { label: "Encaissé", align: "right", render: (r) => <strong className="text-success">{inflow(r.collected)}</strong> },
+            ],
+            rows: plannerRows,
+            totalLabel: "Total encaissé",
+            totalValue: inflow(plannerCollected),
+            totalTone: "success",
+            searchable: (r) => `${r.title} ${r.teacher}`,
+          },
+        },
+        {
+          label: "Part enseignants générée",
+          value: outflow(plannerTeacher),
+          tone: "warning",
+          icon: <GraduationCap className="h-5 w-5" />,
+          hint: "Ce que les séances de la période doivent aux enseignants",
+          detail: {
+            columns: [
+              { label: "Emploi du temps", render: (r) => <strong className="text-ink">{r.title}</strong> },
+              { label: "Enseignant", render: (r) => <span className="text-muted">{r.teacher}</span> },
+              { label: "Part / séance", align: "right", render: (r) => <span className="font-mono text-warning">{formatDA(r.teacherPerSeance)}</span> },
+              { label: "Généré", align: "right", render: (r) => <span className="text-success">{inflow(r.collected)}</span> },
+              { label: "Dû au prof", align: "right", render: (r) => <strong className="text-warning">{outflow(r.teacherDue)}</strong> },
+              { label: "Marge école", align: "right", render: (r) => <strong className={r.margin >= 0 ? "text-success" : "text-danger"}>{signed(r.margin)}</strong> },
+            ],
+            rows: plannerRows,
+            totalLabel: "Total dû aux enseignants",
+            totalValue: outflow(plannerTeacher),
+            totalTone: "warning",
+            searchable: (r) => `${r.title} ${r.teacher}`,
+          },
+        },
+        {
+          label: "Potentiel mensuel du catalogue",
+          value: formatDA(plannerPotential),
+          tone: "sky",
+          icon: <TrendingUp className="h-5 w-5" />,
+          hint: "Prix du mois × élèves inscrits, emploi par emploi",
+          detail: {
+            columns: [
+              { label: "Emploi du temps", render: (r) => <strong className="text-ink">{r.title}</strong> },
+              { label: "Élèves", align: "right", render: (r) => <span className="font-mono text-primary">{r.roster}</span> },
+              { label: "Prix du mois", align: "right", render: (r) => <span className="font-mono">{formatDA(r.monthPrice)}</span> },
+              { label: "Potentiel", align: "right", render: (r) => <strong className="text-sky-500">{formatDA(r.potentialMonth)}</strong> },
+            ],
+            rows: [...plannerRows].sort((a, b) => b.potentialMonth - a.potentialMonth),
+            totalLabel: "Potentiel total",
+            totalValue: formatDA(plannerPotential),
+            totalTone: "sky",
+            searchable: (r) => `${r.title} ${r.teacher}`,
+          },
+        },
+      ],
+      panels: [
+        {
+          title: "Comment le prix d'une séance est calculé",
+          subtitle: "Une seule division, trois lectures — et jamais d'arrondi à l'entier.",
+          icon: <CircleDollarSign className="h-4 w-4 text-primary" />,
+          lines: [
+            { label: "Emplois du temps tarifés", value: `${plannerPriced} / ${plannerRows.length}`, strong: true },
+            {
+              label: "Encaissé par les séances",
+              value: inflow(plannerCollected),
+              tone: "success",
+              formula: "somme des montants débités sur les présences de la période",
+            },
+            {
+              label: "Part des enseignants",
+              value: outflow(plannerTeacher),
+              tone: "warning",
+              formula: "part enseignant du mois ÷ séances du mois, × présences",
+            },
+            {
+              label: "Marge de l'école",
+              value: signed(plannerCollected - plannerTeacher),
+              tone: plannerCollected - plannerTeacher >= 0 ? "success" : "danger",
+              emphasis: true,
+              formula: "encaissé − part des enseignants",
+            },
+          ],
+          note:
+            "Prix d'une séance = prix du mois ÷ séances du mois. La part de l'école et celle de l'enseignant se divisent de la même façon, DÉCIMALES COMPRISES : arrondir chaque division au dinar faisait dériver la paie de plusieurs dinars par mois.",
+        },
+      ],
+      tables: [
+        {
+          title: "Tarif détaillé de chaque emploi du temps",
+          icon: <Ticket className="h-3.5 w-3.5 text-primary" />,
+          note: "Chaque colonne montre sa division : ce que l'élève paie, ce que l'école garde, ce que l'enseignant touche.",
+          spec: {
+            columns: tariffColumns,
+            rows: plannerRows,
+            totalLabel: "Créneaux",
+            totalValue: `${plannerRows.length}`,
+            totalTone: "primary",
+            searchable: (r) => `${r.title} ${r.className} ${r.groups} ${r.teacher}`,
+          },
+        },
+      ],
+    };
+
+    /* =========================== PAIE ENSEIGNANTS ====================== */
+    /**
+     * LES RÈGLEMENTS D'ENSEIGNANTS, PIÈCE PAR PIÈCE.
+     *
+     * Chaque règlement fige ce qu'il a payé : les MOIS d'emploi du temps
+     * soldés, ce qui a été retenu (dépenses, acomptes, scolarités d'enfants) et
+     * — depuis les arriérés — les parts d'un mois DÉJÀ payé qu'un élève a
+     * débloquées en réglant en retard. Les trois se lisent séparément, sinon un
+     * rattrapage se confond avec le mois courant.
+     */
+    const payrollRows = teacherPayments
+      .filter((tp) => inRange(tp.paidAt))
+      .filter((tp) => teacherFilter === "all" || tp.teacherId === teacherFilter)
+      .map((tp) => ({
+        ...tp,
+        teacherName: tName(tp.teacherId),
+        monthsLabel: (tp.months ?? []).map((m) => `${m.title} ${m.monthCode}`).join(" · "),
+        deductions:
+          sum(tp.expenses ?? [], (x) => x.amount) +
+          sum(tp.acomptes ?? [], (x) => x.amount) +
+          sum(tp.childDebts ?? [], (x) => x.amount) +
+          sum(tp.childCharges ?? [], (x) => x.amount),
+        arrearsTotal: sum(tp.arrears ?? [], (a) => a.amount),
+      }))
+      .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+
+    const payrollNet = sum(payrollRows, (r) => r.amount);
+    const payrollGross = sum(payrollRows, (r) => r.gross ?? r.amount);
+    const payrollDeducted = sum(payrollRows, (r) => r.deductions);
+    const payrollArrears = sum(payrollRows, (r) => r.arrearsTotal);
+    const arrearLines = payrollRows.flatMap((r) =>
+      (r.arrears ?? []).map((a) => ({ ...a, teacherName: r.teacherName, paidAt: r.paidAt })),
+    );
+
+    const payrollSection: Section = {
+      id: "payroll",
+      label: "Paie enseignants",
+      subtitle:
+        "Chaque règlement, ce qu'il a soldé mois par mois, ce qui en a été retenu et les arriérés qu'il a rattrapés.",
+      icon: <HandCoins className="h-4 w-4" />,
+      cards: [
+        {
+          label: "Net versé aux enseignants",
+          value: outflow(payrollNet),
+          tone: "danger",
+          icon: <Banknote className="h-5 w-5" />,
+          detail: {
+            columns: [
+              { label: "Date", render: (r) => dateTimeCell(r.paidAt) },
+              { label: "Enseignant", render: (r) => <strong className="text-ink">{r.teacherName}</strong> },
+              { label: "Mois soldés", render: (r) => <span className="text-muted">{r.monthsLabel || "—"}</span> },
+              { label: "Brut", align: "right", render: (r) => <span className="font-mono">{formatDA(r.gross ?? r.amount)}</span> },
+              { label: "Retenues", align: "right", render: (r) => <span className="text-danger">{r.deductions > 0 ? outflow(r.deductions) : "—"}</span> },
+              { label: "Net", align: "right", render: (r) => <strong className="text-danger">{outflow(r.amount)}</strong> },
+            ],
+            rows: payrollRows,
+            totalLabel: "Total net versé",
+            totalValue: outflow(payrollNet),
+            totalTone: "danger",
+            searchable: (r) => `${r.teacherName} ${r.monthsLabel} ${r.description}`,
+          },
+        },
+        {
+          label: "Brut des séances réglées",
+          value: formatDA(payrollGross),
+          tone: "primary",
+          icon: <Receipt className="h-5 w-5" />,
+          hint: "Avant dépenses, acomptes et scolarités d'enfants",
+          detail: {
+            columns: [
+              { label: "Date", render: (r) => dateCell(r.paidAt) },
+              { label: "Enseignant", render: (r) => <strong className="text-ink">{r.teacherName}</strong> },
+              { label: "Présences", align: "right", render: (r) => <span className="font-mono">{r.studentsCount}</span> },
+              { label: "Créneaux", align: "right", render: (r) => <span className="font-mono">{r.sessionsCount}</span> },
+              { label: "Brut", align: "right", render: (r) => <strong className="text-primary">{formatDA(r.gross ?? r.amount)}</strong> },
+            ],
+            rows: payrollRows,
+            totalLabel: "Total brut",
+            totalValue: formatDA(payrollGross),
+            totalTone: "primary",
+            searchable: (r) => `${r.teacherName} ${r.description}`,
+          },
+        },
+        {
+          label: "Retenues sur les paies",
+          value: outflow(payrollDeducted),
+          tone: "warning",
+          icon: <ArrowDownLeft className="h-5 w-5" />,
+          hint: "Dépenses, acomptes et scolarités d'enfants",
+          detail: {
+            columns: [
+              { label: "Date", render: (r) => dateCell(r.paidAt) },
+              { label: "Enseignant", render: (r) => <strong className="text-ink">{r.teacherName}</strong> },
+              { label: "Dépenses", align: "right", render: (r) => <span className="text-muted">{(r.expenses ?? []).length}</span> },
+              { label: "Acomptes", align: "right", render: (r) => <span className="text-muted">{(r.acomptes ?? []).length}</span> },
+              { label: "Scolarités", align: "right", render: (r) => <span className="text-muted">{(r.childDebts ?? []).length + (r.childCharges ?? []).length}</span> },
+              { label: "Total retenu", align: "right", render: (r) => <strong className="text-warning">{outflow(r.deductions)}</strong> },
+            ],
+            rows: payrollRows.filter((r) => r.deductions > 0),
+            totalLabel: "Total des retenues",
+            totalValue: outflow(payrollDeducted),
+            totalTone: "warning",
+            searchable: (r) => `${r.teacherName}`,
+          },
+        },
+        {
+          label: "Arriérés débloqués rattrapés",
+          value: formatDA(payrollArrears),
+          tone: "success",
+          icon: <HandCoins className="h-5 w-5" />,
+          hint: `${arrearLines.length} élève-mois payés en retard`,
+          detail: {
+            columns: [
+              { label: "Réglé le", render: (r) => dateCell(r.paidAt) },
+              { label: "Enseignant", render: (r) => <span className="text-muted">{r.teacherName}</span> },
+              { label: "Élève", render: (r) => <strong className="text-ink">{r.studentName}</strong> },
+              { label: "Emploi du temps", render: (r) => <span className="text-muted">{r.emploi}</span> },
+              { label: "Mois d'origine", render: (r) => <Badge tone="primary" className="text-[9px]">{r.monthCode}</Badge> },
+              { label: "Séances", align: "right", render: (r) => <span className="font-mono">{r.seances}</span> },
+              { label: "Part rattrapée", align: "right", render: (r) => <strong className="text-success">{formatDA(r.amount)}</strong> },
+            ],
+            rows: arrearLines,
+            totalLabel: "Total rattrapé",
+            totalValue: formatDA(payrollArrears),
+            totalTone: "success",
+            empty: "Aucun arriéré débloqué sur cette période — tous les élèves avaient payé à temps.",
+            searchable: (r) => `${r.studentName} ${r.emploi} ${r.monthCode} ${r.teacherName}`,
+          },
+        },
+      ],
+      panels: [
+        {
+          title: "De quoi une paie est faite",
+          subtitle: "Brut des séances − retenues + arriérés rattrapés = net versé.",
+          icon: <Banknote className="h-4 w-4 text-primary" />,
+          lines: [
+            { label: "Règlements sur la période", value: `${payrollRows.length}`, strong: true },
+            { label: "Brut des séances", value: formatDA(payrollGross), tone: "primary" },
+            { label: "Retenues (dépenses, acomptes, scolarités)", value: outflow(payrollDeducted), tone: "warning" },
+            { label: "Arriérés débloqués", value: formatDA(payrollArrears), tone: "success", formula: "parts d'un mois déjà réglé, libérées par un paiement tardif" },
+            { label: "Net versé", value: outflow(payrollNet), tone: "danger", emphasis: true },
+          ],
+          note:
+            "Un mois déjà réglé peut encore devoir quelque chose : la part d'un élève qui n'avait pas payé est RETENUE, puis rattrapée dès qu'il s'acquitte. Elle est comptée avec son mois d'origine, jamais avec le mois courant.",
+        },
+      ],
+      tables: [
+        {
+          title: "Tous les règlements de la période",
+          icon: <Receipt className="h-3.5 w-3.5 text-primary" />,
+          spec: {
+            columns: [
+              { label: "Date", render: (r) => dateTimeCell(r.paidAt) },
+              { label: "Enseignant", render: (r) => <strong className="text-ink">{r.teacherName}</strong> },
+              { label: "Mode", render: (r) => (
+                <Badge tone="neutral" className="text-[9px]">
+                  {r.method === "percent" ? `${r.percentage ?? 0} %` : r.method === "group" ? "par groupe" : "fixe"}
+                </Badge>
+              ) },
+              { label: "Mois soldés", render: (r) => <span className="text-muted">{r.monthsLabel || "—"}</span> },
+              { label: "Arriérés", align: "right", render: (r) => <span className="text-success">{r.arrearsTotal > 0 ? formatDA(r.arrearsTotal) : "—"}</span> },
+              { label: "Retenues", align: "right", render: (r) => <span className="text-warning">{r.deductions > 0 ? outflow(r.deductions) : "—"}</span> },
+              { label: "Net", align: "right", render: (r) => <strong className="text-danger">{outflow(r.amount)}</strong> },
+            ],
+            rows: payrollRows,
+            totalLabel: "Total net versé",
+            totalValue: outflow(payrollNet),
+            totalTone: "danger",
+            searchable: (r) => `${r.teacherName} ${r.monthsLabel} ${r.description}`,
+          },
+        },
+      ],
+    };
+
+    /* ============================== PARENTS ============================ */
+    const parentRows = parents.map((par) => {
+      const children = students.filter(
+        (st) => par.childIds?.includes(st.id) || st.parentId === par.id,
+      );
+      const debt = sum(children, (c) => studentDebt(db, c.id) + (c.registrationDue || 0));
+      const paid = sum(
+        fPay.filter((pm) => children.some((c) => c.id === pm.studentId)),
+        (pm) => pm.amountPaid,
+      );
+      return {
+        id: par.id,
+        name: `${par.firstName} ${par.lastName}`,
+        phone: par.phone,
+        childrenCount: children.length,
+        childrenNames: children.map(studentNameOf).join(", "),
+        debt,
+        paid,
+      };
+    });
+    const parentsDebt = sum(parentRows, (r) => r.debt);
+    const parentsPaid = sum(parentRows, (r) => r.paid);
+
+    const parentsSection: Section = {
+      id: "parents",
+      label: "Parents",
+      subtitle: "Qui a payé pour ses enfants sur la période, et qui doit encore quelque chose.",
+      icon: <UserCog className="h-4 w-4" />,
+      cards: [
+        {
+          label: "Parents enregistrés",
+          value: `${parents.length}`,
+          tone: "primary",
+          icon: <UserCog className="h-5 w-5" />,
+          detail: {
+            columns: [
+              { label: "Parent", render: (r) => <strong className="text-ink">{r.name}</strong> },
+              { label: "Téléphone", render: (r) => <span className="font-mono text-[10px] text-muted">{r.phone || "—"}</span> },
+              { label: "Enfants", render: (r) => <span className="text-muted">{r.childrenNames || "—"}</span> },
+              { label: "Versé (période)", align: "right", render: (r) => <span className="text-success">{inflow(r.paid)}</span> },
+              { label: "Dette", align: "right", render: (r) => <strong className={r.debt > 0 ? "text-danger" : "text-muted"}>{r.debt > 0 ? formatDA(r.debt) : "—"}</strong> },
+            ],
+            rows: parentRows,
+            totalLabel: "Dette totale des familles",
+            totalValue: formatDA(parentsDebt),
+            totalTone: "danger",
+            searchable: (r) => `${r.name} ${r.phone} ${r.childrenNames}`,
+          },
+        },
+        {
+          label: "Versé par les familles (période)",
+          value: inflow(parentsPaid),
+          tone: "success",
+          icon: <ArrowUpRight className="h-5 w-5" />,
+          detail: {
+            columns: [
+              { label: "Parent", render: (r) => <strong className="text-ink">{r.name}</strong> },
+              { label: "Enfants", align: "right", render: (r) => <span className="font-mono">{r.childrenCount}</span> },
+              { label: "Versé", align: "right", render: (r) => <strong className="text-success">{inflow(r.paid)}</strong> },
+            ],
+            rows: [...parentRows].sort((a, b) => b.paid - a.paid),
+            totalLabel: "Total versé",
+            totalValue: inflow(parentsPaid),
+            totalTone: "success",
+            searchable: (r) => r.name,
+          },
+        },
+        {
+          label: "Dette des familles",
+          value: formatDA(parentsDebt),
+          tone: "danger",
+          icon: <AlertCircle className="h-5 w-5" />,
+          hint: "Soldes dans le rouge + frais d'inscription dus",
+          detail: {
+            columns: [
+              { label: "Parent", render: (r) => <strong className="text-ink">{r.name}</strong> },
+              { label: "Téléphone", render: (r) => <span className="font-mono text-[10px] text-muted">{r.phone || "—"}</span> },
+              { label: "Enfants", render: (r) => <span className="text-muted">{r.childrenNames || "—"}</span> },
+              { label: "Dette", align: "right", render: (r) => <strong className="text-danger">{formatDA(r.debt)}</strong> },
+            ],
+            rows: parentRows.filter((r) => r.debt > 0).sort((a, b) => b.debt - a.debt),
+            totalLabel: "Dette totale",
+            totalValue: formatDA(parentsDebt),
+            totalTone: "danger",
+            empty: "Aucune famille en dette.",
+            searchable: (r) => `${r.name} ${r.childrenNames}`,
+          },
+        },
+      ],
+      panels: [
+        {
+          title: "Les familles en un coup d'œil",
+          icon: <Users className="h-4 w-4 text-primary" />,
+          lines: [
+            { label: "Parents", value: `${parents.length}`, strong: true },
+            { label: "Familles ayant versé sur la période", value: `${parentRows.filter((r) => r.paid > 0).length}`, tone: "success" },
+            { label: "Familles en dette", value: `${parentRows.filter((r) => r.debt > 0).length}`, tone: "danger" },
+            { label: "Dette moyenne par famille endettée", value: formatDA(parentRows.filter((r) => r.debt > 0).length ? parentsDebt / parentRows.filter((r) => r.debt > 0).length : 0), emphasis: true },
+          ],
+        },
+      ],
+    };
+
     return {
       sections: [
         overviewSection,
         analysisSection,
         studentsSection,
         attendanceSection,
+        plannerSection,
         subscriptionsSection,
         teachersSection,
+        payrollSection,
+        parentsSection,
         receptionSection,
         independentSection,
         expensesSection,
@@ -1945,6 +2648,13 @@ export function ReportsPage() {
   }, [
     isGenerated,
     reportRange,
+    // Les filtres transverses restreignent tous les ensembles de base : ils
+    // doivent donc invalider le calcul entier, pas seulement l'affichage.
+    classFilter,
+    teacherFilter,
+    moduleFilter,
+    sessionFilter,
+    entitySearch,
     // the "Analyse générale" block is built inside this memo, so the teacher
     // filter has to invalidate it
     teacherAnalysisId,
@@ -1968,50 +2678,226 @@ export function ReportsPage() {
     subscriptions,
     categories,
     parents,
+    teacherPayments,
   ]);
 
   const current = report?.sections.find((s) => s.id === activeSection) ?? report?.sections[0];
 
+  /** Les KPI que l'on garde SOUS LES YEUX, quelle que soit la section lue. */
+  const headline = (() => {
+    if (!reportRange) return null;
+    const inRange = (d: string) => {
+      const day = (d || "").substring(0, 10);
+      return day >= reportRange.start && day <= reportRange.end;
+    };
+    const rows = cash.filter((t) => inRange(t.date));
+    const income = rows.filter((t) => t.amount > 0).reduce((n, t) => n + t.amount, 0);
+    const outgo = rows.filter((t) => t.amount < 0).reduce((n, t) => n + Math.abs(t.amount), 0);
+    const debt = students.reduce(
+      (n, st) => n + studentDebt(db, st.id) + (st.registrationDue || 0),
+      0,
+    );
+    return { income, outgo, net: income - outgo, debt, movements: rows.length };
+  })();
+
   return (
     <div className="space-y-6">
-      <PageHeader emoji="💰" title="Rapports Financiers" subtitle="Bilans consolidés et détaillés par interface de l'application" />
+      <PageHeader
+        emoji="💰"
+        title="Rapports Financiers"
+        subtitle="Chaque interface de l'application, dans le détail : les chiffres, leur calcul, et la liste derrière chaque chiffre"
+      />
 
-      {/* Date controls + generate */}
-      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4 card-shadow md:flex-row md:items-end">
-        <div className="grid flex-1 grid-cols-2 gap-4">
+      {/* -----------------------------------------------------------------
+          LA BARRE DE PÉRIODE ET DE FILTRES.
+
+          Un bilan ne se lit presque jamais « en entier » : on veut le mois de
+          la 4AP, ce qu'un enseignant a produit, ce qu'un module a rapporté. Ces
+          filtres restreignent les ENSEMBLES DE BASE, si bien que chaque carte,
+          chaque calcul et chaque tableau de l'écran parlent du même périmètre.
+          ----------------------------------------------------------------- */}
+      <div className="space-y-3 rounded-2xl border border-line bg-surface p-4 card-shadow">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+            <Calendar className="h-3.5 w-3.5" /> Période
+          </span>
+          {(
+            [
+              { id: "today", label: "Aujourd'hui" },
+              { id: "week", label: "7 jours" },
+              { id: "month", label: "Ce mois" },
+              { id: "quarter", label: "3 mois" },
+              { id: "year", label: "Cette année" },
+              { id: "all", label: "Tout" },
+            ] as const
+          ).map((preset) => (
+            <button
+              key={preset.id}
+              onClick={() => applyPreset(preset.id)}
+              className="rounded-xl border border-line bg-canvas/40 px-3 py-1.5 text-[11px] font-bold text-muted transition-colors hover:border-primary hover:bg-primary-50 hover:text-primary"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="grid flex-1 grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Du
+              </label>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="rounded-xl text-xs"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Au
+              </label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="rounded-xl text-xs"
+              />
+            </div>
+          </div>
+          <Button
+            onClick={handleGenerate}
+            className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl px-6 font-bold"
+          >
+            <FileText className="h-4 w-4" /> Appliquer la période
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 border-t border-line pt-3 sm:grid-cols-2 lg:grid-cols-5">
           <div>
-            <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-muted">
-              <Calendar className="h-3.5 w-3.5" /> Date de début
+            <label className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+              <Filter className="h-3 w-3" /> Classe
             </label>
-            <Input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                setIsGenerated(false);
-              }}
-              className="rounded-xl text-xs"
-            />
+            <select
+              value={classFilter}
+              onChange={(e) => setClassFilter(e.target.value)}
+              className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-ink outline-none focus:border-primary"
+            >
+              <option value="all">Toutes les classes</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                  {c.type === "cours" && c.year ? ` · ${c.year}` : ""}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
-            <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-muted">
-              <Calendar className="h-3.5 w-3.5" /> Date de fin
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Enseignant
             </label>
-            <Input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setIsGenerated(false);
-              }}
-              className="rounded-xl text-xs"
-            />
+            <select
+              value={teacherFilter}
+              onChange={(e) => setTeacherFilter(e.target.value)}
+              className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-ink outline-none focus:border-primary"
+            >
+              <option value="all">Tous les enseignants</option>
+              {teachers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.firstName} {t.lastName}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Module
+            </label>
+            <select
+              value={moduleFilter}
+              onChange={(e) => setModuleFilter(e.target.value)}
+              className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-ink outline-none focus:border-primary"
+            >
+              <option value="all">Tous les modules</option>
+              {modules.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Emploi du temps
+            </label>
+            <select
+              value={sessionFilter}
+              onChange={(e) => setSessionFilter(e.target.value)}
+              className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-ink outline-none focus:border-primary"
+            >
+              <option value="all">Tous les emplois du temps</option>
+              {sessions.map((se) => (
+                <option key={se.id} value={se.id}>
+                  {se.title || modules.find((m) => m.id === se.moduleId)?.name || "Emploi du temps"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Élève (nom, N°)
+            </label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-muted">
+                <Search className="h-3.5 w-3.5" />
+              </span>
+              <Input
+                value={entitySearch}
+                onChange={(e) => setEntitySearch(e.target.value)}
+                placeholder="Rechercher…"
+                className="w-full rounded-xl py-2 pl-9 text-xs"
+              />
+            </div>
           </div>
         </div>
-        <Button onClick={handleGenerate} className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl px-6 font-bold">
-          <FileText className="h-4 w-4" /> Générer le Bilan
-        </Button>
+
+        {filtersActive && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary-50/40 px-3 py-2">
+            <span className="text-[11px] font-semibold text-primary">
+              🎯 Bilan restreint — toutes les cartes, tous les calculs et tous les tableaux
+              ci-dessous parlent du même périmètre.
+            </span>
+            <Button size="sm" variant="outline" onClick={resetFilters} className="gap-1.5 rounded-xl">
+              <RotateCcw className="h-3.5 w-3.5" /> Tout réafficher
+            </Button>
+          </div>
+        )}
       </div>
+
+      {/* Les quatre chiffres que l'on garde sous les yeux */}
+      {headline && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            { label: "Entrées de la période", value: `+${formatDA(headline.income)}`, tone: "success" as Tone, icon: <ArrowUpRight className="h-4 w-4" /> },
+            { label: "Sorties de la période", value: `-${formatDA(headline.outgo)}`, tone: "danger" as Tone, icon: <ArrowDownLeft className="h-4 w-4" /> },
+            { label: "Flux net", value: `${headline.net >= 0 ? "+" : "-"}${formatDA(Math.abs(headline.net))}`, tone: (headline.net >= 0 ? "success" : "danger") as Tone, icon: <Wallet className="h-4 w-4" /> },
+            { label: "Dettes des élèves", value: formatDA(headline.debt), tone: "warning" as Tone, icon: <AlertCircle className="h-4 w-4" /> },
+          ].map((k) => (
+            <div key={k.label} className="flex items-center justify-between gap-2 rounded-2xl border border-line bg-surface p-4 card-shadow">
+              <div className="min-w-0">
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-muted">
+                  {k.label}
+                </span>
+                <strong className={`block text-lg font-black ${TONE_TEXT[k.tone]}`}>{k.value}</strong>
+              </div>
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${TONE_SOFT[k.tone]}`}>
+                {k.icon}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!isGenerated || !reportRange || !report || !current ? (
         <Card className="border border-dashed border-line bg-canvas/30 p-12 text-center">
@@ -2045,6 +2931,26 @@ export function ReportsPage() {
             ))}
           </div>
 
+          {/* Ce que la section répond, avant les chiffres */}
+          <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-line bg-gradient-to-br from-primary-50/60 to-transparent p-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                {current.icon}
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-black text-ink">{current.label}</h3>
+                <p className="text-[11px] leading-relaxed text-muted">
+                  {current.subtitle ??
+                    "Cliquez sur n'importe quel montant pour ouvrir la liste exacte qui le compose."}
+                </p>
+              </div>
+            </div>
+            <Badge tone="primary" className="gap-1 text-[10px]">
+              <Sparkles className="h-3 w-3" />
+              {formatDateFr(reportRange.start)} → {formatDateFr(reportRange.end)}
+            </Badge>
+          </div>
+
           {/* Metric cards */}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {current.cards.map((c, i) => (
@@ -2059,10 +2965,49 @@ export function ReportsPage() {
           {current.panels.length > 0 && (
             <div className={`grid grid-cols-1 gap-6 ${current.panels.length > 1 ? "lg:grid-cols-2" : ""}`}>
               {current.panels.map((p, i) => (
-                <CalcCard key={i} panel={p} />
+                <CalcCard
+                  key={i}
+                  panel={p}
+                  onOpen={(title, spec) => {
+                    setModalSearch("");
+                    setDetail({ title, spec });
+                  }}
+                />
               ))}
             </div>
           )}
+
+          {/* Les tableaux détaillés que la section déplie d'elle-même — pas
+              besoin d'ouvrir une carte pour les lire. */}
+          {(current.tables ?? []).map((t, i) => (
+            <Card key={i} className="border border-line card-shadow">
+              <CardBody className="space-y-3 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink">
+                    {t.icon} {t.title}
+                  </h4>
+                  <div className="relative w-full max-w-xs">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-muted">
+                      <Search className="h-3.5 w-3.5" />
+                    </span>
+                    <Input
+                      value={tableSearch[`${current.id}-${i}`] ?? ""}
+                      onChange={(e) =>
+                        setTableSearch((prev) => ({
+                          ...prev,
+                          [`${current.id}-${i}`]: e.target.value,
+                        }))
+                      }
+                      placeholder="Filtrer ce tableau…"
+                      className="w-full rounded-xl py-1.5 pl-9 text-xs"
+                    />
+                  </div>
+                </div>
+                <DetailTable spec={t.spec} search={tableSearch[`${current.id}-${i}`] ?? ""} />
+                {t.note && <p className="text-[10px] leading-relaxed text-muted">{t.note}</p>}
+              </CardBody>
+            </Card>
+          ))}
         </div>
       )}
 

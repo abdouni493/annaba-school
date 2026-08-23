@@ -42,7 +42,18 @@ import { formatDA } from "@/lib/utils";
 
 export function CashPage() {
   const db = useData();
-  const { cash, cashMove, deleteFrom, updateItem, groupSeances, teachers } = db;
+  const {
+    cash,
+    cashMove,
+    deleteFrom,
+    updateItem,
+    groupSeances,
+    teachers,
+    teacherPayments,
+    payments,
+    students,
+    expenses,
+  } = db;
 
   // Helper for timezone-safe local date string (YYYY-MM-DD)
   const getLocalDateString = (d: Date) => {
@@ -53,7 +64,17 @@ export function CashPage() {
   };
 
   // Filters
-  const [filterPeriod, setFilterPeriod] = useState<"today" | "week" | "month" | "custom">("today");
+  /**
+   * LA CAISSE S'OUVRE SUR TOUT L'HISTORIQUE.
+   *
+   * Elle s'ouvrait sur « aujourd'hui » : un écran vide dès le lendemain d'un
+   * encaissement, alors même que la question posée à cette page est « qu'est-ce
+   * qui est passé par la caisse ? ». La période par défaut est donc l'histoire
+   * entière, et les autres filtres restent à un clic.
+   */
+  const [filterPeriod, setFilterPeriod] = useState<
+    "all" | "today" | "week" | "month" | "custom"
+  >("all");
   const [customStart, setCustomStart] = useState(getLocalDateString(new Date()));
   const [customEnd, setCustomEnd] = useState(getLocalDateString(new Date()));
   const [searchQuery, setSearchQuery] = useState("");
@@ -91,6 +112,7 @@ export function CashPage() {
   const periodRange = (() => {
     const now = new Date();
     const todayStr = getLocalDateString(now);
+    if (filterPeriod === "all") return { from: "1970-01-01", to: "9999-12-31" };
     if (filterPeriod === "today") return { from: todayStr, to: todayStr };
     if (filterPeriod === "week") {
       const start = new Date();
@@ -114,7 +136,9 @@ export function CashPage() {
       const txDateStr = tx.date.substring(0, 10); // YYYY-MM-DD
       
       let inPeriod = false;
-      if (filterPeriod === "today") {
+      if (filterPeriod === "all") {
+        inPeriod = true;
+      } else if (filterPeriod === "today") {
         const todayStr = getLocalDateString(now);
         inPeriod = txDateStr === todayStr;
       } else if (filterPeriod === "week") {
@@ -219,6 +243,24 @@ export function CashPage() {
 
   const tabTxList = getTabFilteredTransactions();
 
+  /**
+   * LE JOURNAL, DU PLUS RÉCENT AU PLUS ANCIEN, AVEC LE SOLDE APRÈS CHAQUE LIGNE.
+   *
+   * Une caisse se relit toujours de la même façon : « après ce mouvement, il
+   * restait combien ? ». Le solde est cumulé dans l'ordre CHRONOLOGIQUE puis la
+   * liste est retournée, pour que la ligne du haut soit la plus récente sans
+   * que les soldes en soient faussés.
+   */
+  const journalRows = (() => {
+    const chrono = tabTxList.slice().sort((a, b) => a.date.localeCompare(b.date));
+    let running = 0;
+    const rows = chrono.map((tx) => {
+      running += tx.amount;
+      return { tx, running };
+    });
+    return rows.reverse();
+  })();
+
   // Create Transaction Handlers
   const handleDepositSubmit = () => {
     if (amount <= 0 || !description) {
@@ -288,13 +330,63 @@ export function CashPage() {
    * élèves, prix par élève, part de l'école et part de l'enseignant.
    */
   const periodGroupSeances = (() => {
-    const dates = filteredTx.map((t) => t.date.substring(0, 10));
-    const from = dates.length ? dates.reduce((a, b) => (a < b ? a : b)) : "";
-    const to = dates.length ? dates.reduce((a, b) => (a > b ? a : b)) : "";
+    // La fenêtre est celle du filtre — pas celle que les mouvements affichés
+    // dessinent : sans mouvement, l'ancienne version n'affichait plus rien.
+    const { from, to } = periodRange;
     return groupSeances
-      .filter((g) => (!from || g.date >= from) && (!to || g.date <= to))
+      .filter((g) => g.date >= from && g.date <= to)
       .sort((a, b) => b.date.localeCompare(a.date));
   })();
+
+  /**
+   * LE DÉTAIL DERRIÈRE CHAQUE MOUVEMENT DE CAISSE.
+   *
+   * Une ligne de caisse ne dit que « Règlement séances Untel (3 créneaux) ».
+   * Ce qu'on veut lire, c'est CE QU'ELLE PAIE : quel élève, quel emploi du
+   * temps, quel mois, quelle dépense, quel règlement d'enseignant. Chaque
+   * mouvement est donc relié à la pièce qui l'a produit.
+   */
+  const detailOf = (tx: CashTransaction) => {
+    if (tx.type === "teacher_payment") {
+      const pay = teacherPayments.find((p) => p.cashId === tx.id);
+      if (pay) {
+        const t = teachers.find((x) => x.id === pay.teacherId);
+        const months = (pay.months ?? []).map((m) => `${m.title} ${m.monthCode}`).join(" · ");
+        const arrears = (pay.arrears ?? []).length;
+        return [
+          t ? `${t.firstName} ${t.lastName}` : "Enseignant",
+          months || `${pay.sessionsCount} créneau(x)`,
+          pay.gross != null ? `brut ${formatDA(pay.gross)}` : "",
+          arrears > 0 ? `${arrears} arriéré(s) débloqué(s)` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      }
+    }
+    if (tx.type === "student_payment" || tx.type === "student_debt") {
+      // Le versement de l'élève écrit dans la même seconde que le mouvement.
+      const near = payments.find(
+        (pmt) => Math.abs(new Date(pmt.date).getTime() - new Date(tx.date).getTime()) < 2000,
+      );
+      if (near) {
+        const stu = students.find((x) => x.id === near.studentId);
+        return [
+          stu ? `${stu.firstName} ${stu.lastName}` : "Élève",
+          near.monthCode ? monthCodeLabel(near.monthCode) : "",
+          near.rest > 0 ? `reste ${formatDA(near.rest)}` : "soldé",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      }
+    }
+    if (tx.type === "expense") {
+      const exp = expenses.find(
+        (e) => e.date.slice(0, 10) === tx.date.slice(0, 10) && e.amount === Math.abs(tx.amount),
+      );
+      if (exp) return `Dépense « ${exp.name} »`;
+    }
+    return "";
+  };
 
   const teacherNameOf = (id: string) => {
     const t = teachers.find((x) => x.id === id);
@@ -343,7 +435,17 @@ export function CashPage() {
         {/* Row 1: Period Metrics */}
         <div>
           <span className="text-[10px] text-muted font-bold uppercase tracking-wider block mb-2.5">
-            Flux Périodiques ({filterPeriod === "today" ? "Aujourd'hui" : filterPeriod === "week" ? "7 derniers jours" : filterPeriod === "month" ? "Ce mois-ci" : "Personnalisé"})
+            Flux Périodiques (
+            {filterPeriod === "all"
+              ? "tout l'historique"
+              : filterPeriod === "today"
+                ? "Aujourd'hui"
+                : filterPeriod === "week"
+                  ? "7 derniers jours"
+                  : filterPeriod === "month"
+                    ? "Ce mois-ci"
+                    : "Personnalisé"}
+            )
           </span>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="border border-line bg-surface card-shadow hover:translate-y-[-2px] transition-transform duration-300">
@@ -351,7 +453,7 @@ export function CashPage() {
                 <div>
                   <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Flux Net Période</span>
                   <strong className={`text-2xl font-black block mt-1.5 ${periodNetFlow >= 0 ? "text-success" : "text-danger"}`}>
-                    {periodNetFlow >= 0 ? "+" : ""}{periodNetFlow} DA
+                    {periodNetFlow >= 0 ? "+" : ""}{formatDA(periodNetFlow)}
                   </strong>
                 </div>
                 <div className={`h-11 w-11 rounded-2xl flex items-center justify-center ${periodNetFlow >= 0 ? "bg-success/10 text-success" : "bg-danger/10 text-danger"}`}>
@@ -365,11 +467,11 @@ export function CashPage() {
                 <div>
                   <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Paiements Élèves</span>
                   <strong className="text-2xl font-black text-primary block mt-1.5">
-                    {studentPaymentsPeriod} DA
+                    {formatDA(studentPaymentsPeriod)}
                   </strong>
                   {coveredDebtsPeriod > 0 && (
                     <span className="text-[10px] text-danger font-bold block mt-0.5">
-                      dont {coveredDebtsPeriod} DA de dettes avancées par l&apos;école
+                      dont {formatDA(coveredDebtsPeriod)} de dettes avancées par l&apos;école
                     </span>
                   )}
                 </div>
@@ -384,7 +486,7 @@ export function CashPage() {
                 <div>
                   <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Règlements Profs</span>
                   <strong className="text-2xl font-black text-warning block mt-1.5">
-                    -{teacherPaymentsPeriod} DA
+                    -{formatDA(teacherPaymentsPeriod)}
                   </strong>
                 </div>
                 <div className="h-11 w-11 rounded-2xl bg-warning/10 text-warning flex items-center justify-center">
@@ -398,7 +500,7 @@ export function CashPage() {
                 <div>
                   <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Dépenses & Retraits</span>
                   <strong className="text-2xl font-black text-danger block mt-1.5">
-                    -{schoolExpensesPeriod} DA
+                    -{formatDA(schoolExpensesPeriod)}
                   </strong>
                 </div>
                 <div className="h-11 w-11 rounded-2xl bg-rose-500/10 text-rose-600 flex items-center justify-center">
@@ -422,7 +524,7 @@ export function CashPage() {
               <CardBody className="flex justify-between items-center p-5 h-28 relative z-10">
                 <div>
                   <span className="text-xs text-white/80 font-bold uppercase tracking-wider block">Solde Caisse Réel</span>
-                  <strong className="text-3xl font-black block mt-1.5">{currentCashBalance} DA</strong>
+                  <strong className="text-3xl font-black block mt-1.5">{formatDA(currentCashBalance)}</strong>
                 </div>
                 <div className="h-12 w-12 rounded-2xl bg-white/10 flex items-center justify-center shadow-inner">
                   <DollarSign className="h-6 w-6" />
@@ -434,7 +536,7 @@ export function CashPage() {
               <CardBody className="flex justify-between items-center p-5 h-28">
                 <div>
                   <span className="text-xs text-success/80 font-bold uppercase tracking-wider block">Total Recettes Application</span>
-                  <strong className="text-2xl font-black text-success block mt-1.5">+{totalEarningsAllTime} DA</strong>
+                  <strong className="text-2xl font-black text-success block mt-1.5">+{formatDA(totalEarningsAllTime)}</strong>
                 </div>
                 <div className="h-11 w-11 rounded-2xl bg-success/15 text-success flex items-center justify-center">
                   <ArrowUpRight className="h-5 w-5" />
@@ -446,7 +548,7 @@ export function CashPage() {
               <CardBody className="flex justify-between items-center p-5 h-28">
                 <div>
                   <span className="text-xs text-danger/80 font-bold uppercase tracking-wider block font-sans">Total Dépenses Application</span>
-                  <strong className="text-2xl font-black text-danger block mt-1.5">-{totalExpensesAllTime} DA</strong>
+                  <strong className="text-2xl font-black text-danger block mt-1.5">-{formatDA(totalExpensesAllTime)}</strong>
                 </div>
                 <div className="h-11 w-11 rounded-2xl bg-danger/15 text-danger flex items-center justify-center">
                   <ArrowDownLeft className="h-5 w-5" />
@@ -461,6 +563,14 @@ export function CashPage() {
       <div className="bg-surface border border-line p-4 rounded-2xl flex flex-col xl:flex-row xl:items-center justify-between gap-4 text-xs">
         {/* Time period filter */}
         <div className="flex flex-wrap items-center gap-1 shrink-0">
+          <Button
+            size="sm"
+            variant={filterPeriod === "all" ? "primary" : "outline"}
+            onClick={() => setFilterPeriod("all")}
+            className="rounded-xl font-bold py-1.5 px-3"
+          >
+            Tout l&apos;historique
+          </Button>
           <Button
             size="sm"
             variant={filterPeriod === "today" ? "primary" : "outline"}
@@ -648,14 +758,16 @@ export function CashPage() {
                 <th className="p-4 pl-6">Date / Heure</th>
                 <th className="p-4">Type</th>
                 <th className="p-4">Description</th>
+                <th className="p-4">Détail de la pièce</th>
                 <th className="p-4 text-right">Montant</th>
+                <th className="p-4 text-right">Solde après</th>
                 <th className="p-4 text-center pr-6 w-28">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
               {tabTxList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-12 text-center text-muted italic bg-surface/30">
+                  <td colSpan={7} className="p-12 text-center text-muted italic bg-surface/30">
                     <div className="max-w-sm mx-auto flex flex-col items-center gap-2">
                       <AlertTriangle className="h-8 w-8 text-muted/65" />
                       <span className="block font-bold mt-1.5">Aucune transaction trouvée</span>
@@ -666,7 +778,7 @@ export function CashPage() {
                   </td>
                 </tr>
               ) : (
-                tabTxList.slice().reverse().map((tx) => (
+                journalRows.map(({ tx, running }) => (
                   <tr key={tx.id} className="hover:bg-primary-50/10 transition-colors group">
                     <td className="p-4 pl-6 font-mono text-[10px] text-muted">
                       <div className="flex items-center gap-1.5">
@@ -676,8 +788,14 @@ export function CashPage() {
                     </td>
                     <td className="p-4">{getTxTypeBadge(tx.type)}</td>
                     <td className="p-4 font-semibold text-ink max-w-md truncate">{tx.description}</td>
+                    <td className="p-4 text-[10px] text-muted max-w-xs">
+                      {detailOf(tx) || <span className="italic text-muted/60">—</span>}
+                    </td>
                     <td className={`p-4 text-right font-extrabold text-sm ${tx.amount > 0 ? "text-success" : "text-danger"}`}>
-                      {tx.amount > 0 ? `+${tx.amount}` : tx.amount} DA
+                      {tx.amount > 0 ? `+${formatDA(tx.amount)}` : formatDA(tx.amount)}
+                    </td>
+                    <td className="p-4 text-right font-mono text-[11px] text-muted">
+                      {formatDA(running)}
                     </td>
                     <td className="p-4 text-center pr-6">
                       <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">

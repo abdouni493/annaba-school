@@ -63,6 +63,15 @@ Aucune donnée de démonstration n'est insérée.
 >    `teacher_debt`, et crée la table **`teacher_child_debts`** (les scolarités d'enfants réglées
 >    d'avance au guichet et portées sur le salaire du père). Sans `archived_at`, tout emploi du
 >    temps déjà en base reste vivant : rien à reprendre.
+> 8. **`supabase/update-2026-08-24-decimales-ecole-seule-arrieres-et-frais.sql`** — ajoute
+>    `students.school_only_subscription_ids` (le cas **« école seulement » emploi par emploi**),
+>    `students.enrollment_level` / `.enrollment_year` (la **classe et l'année retenues même sans
+>    emploi du temps**), `schools.registration_fee_scope` et ses trois listes (**qui doit les
+>    frais d'inscription** : tout le monde, un niveau, des classes, des emplois du temps),
+>    `teacher_payments.arrears` / `.child_debts` / `.cash_id` (les **arriérés débloqués**, les
+>    scolarités retenues, et le mouvement de caisse à annuler avec le règlement) et
+>    `unpaid_teacher_sessions.payment_id` (**quelle paie a soldé cette part**). Aucune donnée
+>    n'est réécrite : sans ces colonnes, tout garde le sens qu'il a aujourd'hui.
 >
 > Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
 > erreur.
@@ -642,6 +651,70 @@ Refuser le premier n'empêche jamais d'imprimer le second. L'avance part en mêm
 Séances épuisées, inscription à 2 séances ou moins, abonnement mensuel ou formation bientôt expiré
 (ou déjà expiré, avec les séances perdues), et reste à payer non réglé : signalés dans les toasts du
 scan, sur la carte élève, dans le détail de la fiche, et dans les espaces étudiant et parent.
+
+## Ce que coûte une séance — au centime, jamais au dinar
+
+Le prix d'une séance ne se saisit pas : il se **déduit du mois**, et cette division ne tombe
+presque jamais juste.
+
+```
+prix d'une séance        = prix du mois        ÷ séances du mois
+part de l'école / séance = part école du mois  ÷ séances du mois
+part du prof   / séance  = (mois − part école) ÷ séances du mois
+```
+
+Un mois à **4 000 DA sur 3 séances** vaut **1 333,33 DA** la séance — pas 1 333. Si l'école en
+garde 2 500, il reste 1 500 DA à l'enseignant, soit **500 DA** par séance ; sur un mois de 7
+séances, ce serait **214,29 DA**. L'application arrondissait chaque division à l'entier : trois
+dinars perdus par séance, quatre séances, vingt élèves — et surtout la somme des lignes cessait
+d'égaler le total affiché, le pire défaut qu'un écran d'argent puisse avoir.
+
+Tout l'argent passe donc par `money()` (`lib/utils.ts`) : **deux décimales**, ni plus (le dinar n'a
+pas de millimes) ni moins. `formatDA()` n'affiche la virgule que lorsqu'il y a des décimales, si
+bien que « 4 000 DA » reste « 4 000 DA » et que « 1 333,33 DA » ne se lit plus « 1 333 DA ». Les
+colonnes d'argent étaient déjà en `numeric` : rien à migrer côté base.
+
+Le calcul se lit en toutes lettres, avec sa division, sur **l'emploi du temps** (à la création),
+sur les **Abonnements**, sur le **tableau de bord** (bloc « Coût d'une séance — emplois du temps du
+jour ») et sur l'**écran de règlement** de l'enseignant.
+
+## « École seulement », emploi du temps par emploi du temps
+
+Le cas était tout ou rien : on listait les enseignants qui ne seraient pas payés pour cet élève, et
+cela valait pour tous leurs cours. Il se coche désormais **emploi par emploi**, exactement comme la
+gratuité (`students.school_only_subscription_ids`) :
+
+| Emploi du temps | Ce que la famille paie | L'enseignant | L'élève sur l'écran de paie |
+| --------------- | ---------------------- | ------------ | --------------------------- |
+| option **ACTIVE**    | la seule part de l'école | pas payé pour lui | **absent** — une ligne à 0 DA n'invite qu'à l'erreur |
+| option **inactive**  | le tarif entier          | payé normalement  | listé comme n'importe qui |
+
+Une fiche sans liste garde le comportement d'avant, piloté par `unpaid_teacher_ids`.
+
+## Les arriérés débloqués — chaque mois reste indépendant
+
+Le cas se produit tous les mois. Au moment de régler le **M1**, deux élèves n'avaient rien versé :
+leur part est **retenue**, et l'enseignant touche le M1 sans elle. Ils s'acquittent ensuite, et
+quand vient le tour du **M2**, ces parts de M1 sont de nouveau dues.
+
+Elles n'appartiennent pas au M2. L'écran de règlement leur donne donc **leur propre tableau** —
+« Arriérés débloqués », avec l'élève, l'emploi du temps, le **mois d'origine**, les dates des
+séances et le montant — cochées d'office, réglées par le même versement, et **imprimées à part** sur
+la fiche de paie. Le mois déjà réglé n'est plus jamais recoché comme s'il restait à payer.
+
+Le règlement fige ce qu'il a rattrapé (`teacher_payments.arrears`), si bien que l'historique le
+relit des mois plus tard. Depuis la fiche de l'enseignant, chaque règlement se **voit**, se
+**corrige** (le net, la date, le libellé — la caisse suit) et s'**annule** : tout ce qu'il avait
+soldé redevient alors dû, présences comprises.
+
+## Qui doit les frais d'inscription
+
+Ils étaient réclamés à tous les élèves payants. L'écran **Abonnements** choisit désormais le
+périmètre : **tout le monde**, un **niveau** entier (« tout le secondaire »), des **classes**
+nommées, ou des **emplois du temps** cherchés par leur nom. L'écran « Nouvel élève » interroge
+exactement ce périmètre : un enfant qui ne coche que des emplois hors périmètre ne se voit rien
+réclamer ; pour les autres, l'écran propose de les **encaisser tout de suite** ou de **créer la
+fiche avec la dette**, qui reste visible jusqu'à son règlement.
 
 ## Structure
 

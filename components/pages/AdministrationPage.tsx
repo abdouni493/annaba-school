@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import type { ReceptionPaymentType, ReceptionStaff, WorkerRole, WorkerShift } from "@/lib/types";
 import { formatDateFr } from "@/lib/helpers";
+import { formatDA } from "@/lib/utils";
 
 const ROLE_LABELS: Record<WorkerRole, string> = {
   reception: "Réception",
@@ -382,7 +383,7 @@ export function AdministrationPage() {
       type: "teacher_payment", // treated as staff payout
       amount: -netAmount,
       date: new Date().toISOString(),
-      description: `Règlement salaire ${selectedStaff.firstName} ${selectedStaff.lastName} pour la période: ${periodKey} (Net: ${netAmount} DA)`,
+      description: `Règlement salaire ${selectedStaff.firstName} ${selectedStaff.lastName} pour la période: ${periodKey} (Net: ${formatDA(netAmount)})`,
     });
 
     setIsPayOpen(false);
@@ -414,7 +415,7 @@ export function AdministrationPage() {
         alert("Le règlement a échoué — veuillez réessayer.");
         return;
       }
-      alert(`Paiement enregistré : ${due} DA pour ${res.days} journée(s) (${fmtHours(res.minutes ?? 0)}).`);
+      alert(`Paiement enregistré : ${formatDA(due)} pour ${res.days} journée(s) (${fmtHours(res.minutes ?? 0)}).`);
       setIsPayOpen(false);
     } finally {
       setSavingPay(false);
@@ -739,7 +740,7 @@ export function AdministrationPage() {
                   </span>
 
                   <Badge tone={totalUnpaidAmount > 0 ? "warning" : "success"} className="font-mono font-bold text-[10px]">
-                    {totalUnpaidAmount} DA
+                    {formatDA(totalUnpaidAmount)}
                   </Badge>
                 </div>
               </CardBody>
@@ -989,7 +990,7 @@ export function AdministrationPage() {
                 <Badge tone="primary" className="text-xs px-3 py-1 font-bold">
                   {selectedStaff.paymentType === "hourly"
                     ? `${selectedStaff.hourlyRate ?? 0} DA / heure`
-                    : `${selectedStaff.salary} DA / ${PAYMENT_LABELS[selectedStaff.paymentType]}`}
+                    : `${formatDA(selectedStaff.salary)} / ${PAYMENT_LABELS[selectedStaff.paymentType]}`}
                 </Badge>
               </div>
             </div>
@@ -1104,7 +1105,7 @@ export function AdministrationPage() {
                             </div>
                             <div className="text-right shrink-0">
                               <span className="font-mono font-bold block text-sm">
-                                {log.type === "absence" ? "-" : ""}{log.amount} DA
+                                {log.type === "absence" ? "-" : ""}{formatDA(log.amount)}
                               </span>
                               <span className="text-[9px] text-muted block font-mono">{log.date}</span>
                             </div>
@@ -1133,7 +1134,7 @@ export function AdministrationPage() {
                           <span className="font-bold text-ink block">{p.label}</span>
                           <span className="text-[10px] text-muted font-mono">{p.key}</span>
                         </div>
-                        <Badge tone="warning" className="font-mono font-bold">{p.amount} DA</Badge>
+                        <Badge tone="warning" className="font-mono font-bold">{formatDA(p.amount)}</Badge>
                       </div>
                     ))}
                   </div>
@@ -1163,7 +1164,7 @@ export function AdministrationPage() {
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Montant dû</span>
-                      <strong className="text-success text-base font-mono">{hourlyDueOf(selectedStaff, payable)} DA</strong>
+                      <strong className="text-success text-base font-mono">{formatDA(hourlyDueOf(selectedStaff, payable))}</strong>
                     </div>
                   </div>
 
@@ -1442,7 +1443,7 @@ export function AdministrationPage() {
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Calcul automatique</span>
-                      <strong className="text-success text-base font-mono">{hourlyDueOf(selectedStaff, chosen)} DA</strong>
+                      <strong className="text-success text-base font-mono">{formatDA(hourlyDueOf(selectedStaff, chosen))}</strong>
                     </div>
                   </div>
 
@@ -1463,12 +1464,12 @@ export function AdministrationPage() {
                   <div className="rounded-2xl border-2 border-success/40 bg-success/5 p-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <span className="text-[10px] uppercase font-bold text-muted block">Montant à verser</span>
-                      <strong className="text-success text-xl font-black">{due} DA</strong>
+                      <strong className="text-success text-xl font-black">{formatDA(due)}</strong>
                     </div>
                     <div className="flex gap-2">
                       <Button variant="outline" onClick={() => setIsPayOpen(false)}>Annuler</Button>
                       <Button onClick={handleHourlyPayment} disabled={savingPay || due <= 0 || chosen.length === 0}>
-                        {savingPay ? "Enregistrement..." : `Payer ${due} DA`}
+                        {savingPay ? "Enregistrement..." : `Payer ${formatDA(due)}`}
                       </Button>
                     </div>
                   </div>
@@ -1502,7 +1503,7 @@ export function AdministrationPage() {
                             <div>
                               <span className="font-bold text-ink block">{p.label}</span>
                               <span className="text-[10px] text-muted">
-                                Brut: {p.amount} DA | Net calculé: {net > 0 ? net : 0} DA
+                                Brut: {formatDA(p.amount)} | Net calculé: {net > 0 ? net : 0} DA
                               </span>
                             </div>
                             <Button size="sm" onClick={() => handlePaymentSubmit(p.key, p.amount)} className="text-xs">

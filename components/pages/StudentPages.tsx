@@ -51,6 +51,7 @@ import {
   studentPayments,
   totalRemainingSeances,
 } from "@/lib/helpers";
+import { formatDA } from "@/lib/utils";
 
 interface PageProps {
   slug: string;
@@ -226,7 +227,7 @@ function StudentHomeView({
         <div className="p-4 bg-danger/10 border border-danger/25 rounded-2xl flex items-center gap-3 text-danger">
           <AlertTriangle className="h-5 w-5 shrink-0 animate-pulse" />
           <div>
-            <strong className="block text-xs font-bold">Dette : {debt} DA</strong>
+            <strong className="block text-xs font-bold">Dette : {formatDA(debt)}</strong>
             <span className="text-[11px] opacity-90">
               Un reste à payer subsiste sur vos paiements de séances. Merci de le régler à la réception.
             </span>
@@ -917,7 +918,7 @@ function StudentAttendanceView({
         <Card>
           <CardBody className="space-y-1 p-4">
             <span className="block text-[10px] font-bold uppercase tracking-wider text-muted">Absences facturées</span>
-            <strong className="text-lg text-danger">{absentCost} DA</strong>
+            <strong className="text-lg text-danger">{formatDA(absentCost)}</strong>
           </CardBody>
         </Card>
       </div>
@@ -993,7 +994,7 @@ function StudentAttendanceView({
                         >
                           {att.status === "present" ? "Présent" : att.status === "late" ? "En retard" : "Absent"}
                         </Badge>
-                        <span className="text-[10px] font-bold text-danger">-{att.amountDeducted} DA</span>
+                        <span className="text-[10px] font-bold text-danger">-{formatDA(att.amountDeducted)}</span>
                       </div>
                     </div>
                   );
@@ -1119,7 +1120,7 @@ function StudentPaymentsView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-xl text-emerald-700 dark:text-emerald-200 font-black">
-                {totalPaid} DA
+                {formatDA(totalPaid)}
               </strong>
               <ArrowUpCircle className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             </div>
@@ -1134,7 +1135,7 @@ function StudentPaymentsView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-xl text-rose-700 dark:text-rose-200 font-black">
-                {debt} DA
+                {formatDA(debt)}
               </strong>
               <ArrowDownCircle className="h-5 w-5 text-rose-600 dark:text-rose-400" />
             </div>
@@ -1281,7 +1282,7 @@ function StudentPaymentsView({
                           Séances : <strong className="text-ink">{p.seancesPurchased}</strong>
                         </span>
                         <span className="text-muted">
-                          Prix séance : <strong className="text-ink">{p.unitPrice} DA</strong>
+                          Prix séance : <strong className="text-ink">{formatDA(p.unitPrice)}</strong>
                         </span>
                         <span className="text-muted">
                           Remise :{" "}
@@ -1292,7 +1293,7 @@ function StudentPaymentsView({
                           </strong>
                         </span>
                         <span className="text-muted">
-                          Net : <strong className="text-primary">{p.netTotal} DA</strong>
+                          Net : <strong className="text-primary">{formatDA(p.netTotal)}</strong>
                         </span>
                       </div>
                     )}
@@ -1303,10 +1304,10 @@ function StudentPaymentsView({
                       <span
                         className={`h-1.5 w-1.5 rounded-full ${p.rest > 0 ? "bg-danger" : "bg-success"}`}
                       />
-                      {p.rest > 0 ? `Reste à payer : ${p.rest} DA` : "Payé intégralement"}
+                      {p.rest > 0 ? `Reste à payer : ${formatDA(p.rest)}` : "Payé intégralement"}
                     </span>
                     <Badge tone="success" className="font-mono font-bold text-xs px-2.5 py-0.5">
-                      {p.amountPaid} DA
+                      {formatDA(p.amountPaid)}
                     </Badge>
                   </div>
                 </CardBody>

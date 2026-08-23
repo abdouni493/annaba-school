@@ -383,6 +383,13 @@ create table if not exists public.schools (
   nif                       text,
   nis                       text,
   registration_fee          numeric,          -- frais d'inscription, une seule fois par élève
+  -- QUI doit les frais d'inscription : 'all' (tout le monde, le défaut),
+  -- 'levels' (tout un niveau : « tout le secondaire »), 'classes' (des classes
+  -- précises) ou 'sessions' (des emplois du temps précis).
+  registration_fee_scope       text check (registration_fee_scope in ('all','levels','classes','sessions')),
+  registration_fee_levels      jsonb,         -- scope 'levels'   : les niveaux concernés
+  registration_fee_class_ids   jsonb,         -- scope 'classes'  : les classes concernées
+  registration_fee_session_ids jsonb,         -- scope 'sessions' : les emplois du temps concernés
   absence_penalty_enabled   boolean,          -- interrupteur général de la facturation des absences
   absence_penalty_since     text,             -- plancher YYYY-MM-DD : jamais de rattrapage rétroactif
   absence_week_start_day    integer           -- 0 = dimanche … 5 = vendredi
@@ -462,9 +469,20 @@ create table if not exists public.teacher_payments (
   expenses       jsonb,                                -- dépenses soldées par ce règlement
   acomptes       jsonb,                                -- acomptes soldés par ce règlement
   child_charges  jsonb,                                -- enfants réglés sur le salaire du père
+  -- Scolarités déjà créditées aux enfants et PORTÉES sur ce salaire, retenues
+  -- par ce règlement (voir teacher_child_debts) : elles ne reviennent jamais
+  -- sur le suivant.
+  child_debts    jsonb,
   -- Mois d'emploi du temps soldés par ce règlement (M1, M2 …) : la paie se fait
   -- mois par mois, un mois se ferme sur la séance qui complète le pack.
   months         jsonb,
+  -- LES ARRIÉRÉS DÉBLOQUÉS payés par ce règlement : des parts d'un mois DÉJÀ
+  -- réglé, retenues à l'époque parce que l'élève n'avait pas payé, et libérées
+  -- depuis. Figées ici pour que la fiche de paie les imprime avec leur mois
+  -- d'origine, sans les confondre avec le mois courant.
+  arrears        jsonb,
+  -- Le mouvement de caisse écrit par ce règlement : annuler l'un annule l'autre.
+  cash_id        text,
   paid_at        text not null default ''
 );
 
@@ -655,6 +673,16 @@ create table if not exists public.students (
   teacher_father_id      text references public.teachers (id) on delete set null,
   case_reduction         jsonb,                 -- remise partagée école / enseignant
   unpaid_teacher_ids     jsonb,                 -- school_only : enseignants NON payés
+  -- « École seulement », EMPLOI PAR EMPLOI : les abonnements sur lesquels
+  -- l'option est ACTIVE (la famille n'y verse que la part de l'école,
+  -- l'enseignant n'est pas payé et l'élève ne figure pas sur sa fiche de paie).
+  -- NULL = fiche d'avant, pilotée par `unpaid_teacher_ids` seul.
+  school_only_subscription_ids jsonb,
+  -- Où la réception en était dans le catalogue quand elle a créé la fiche :
+  -- un élève peut être inscrit « 4AP » SANS emploi du temps, et l'écran de
+  -- modification doit rouvrir là plutôt que sur un primaire/1AP arbitraire.
+  enrollment_level       text,
+  enrollment_year        text,
   parent_id              text,
   subscription_ids       jsonb not null default '[]'::jsonb,
   subscription_dates     jsonb,                 -- dates + point d'entrée par abonnement
@@ -794,7 +822,10 @@ create table if not exists public.unpaid_teacher_sessions (
   student_id text not null default '',
   amount     numeric not null default 0,
   date       text not null default '',
-  paid       boolean not null default false
+  paid       boolean not null default false,
+  -- LE RÈGLEMENT QUI L'A SOLDÉE. Annuler ce règlement rend la part à nouveau
+  -- due : sans ce lien, une annulation ne saurait pas quoi rouvrir.
+  payment_id text references public.teacher_payments (id) on delete set null
 );
 
 -- --- Contenus ------------------------------------------------------------------

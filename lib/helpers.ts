@@ -1,4 +1,5 @@
 import type { Database } from "@/lib/store/data";
+import { money, positiveMoney, formatDA } from "@/lib/utils";
 import { DAYS } from "@/lib/types";
 import type {
   AttendanceRecord,
@@ -9,6 +10,7 @@ import type {
   GroupSeance,
   Payment,
   ScheduleSession,
+  School,
   SchoolClass,
   Student,
   Subscription,
@@ -227,6 +229,124 @@ export function isArchivedSub(db: Database, subscriptionId?: string): boolean {
   return isArchivedSession(db.sessions.find((s) => s.id === sub.sessionId));
 }
 
+// ---- Un emploi du temps, PLUSIEURS GROUPES --------------------------------
+/**
+ * Les groupes d'un emploi du temps.
+ *
+ * Un même créneau peut réunir plusieurs groupes — deux demi-groupes qui suivent
+ * le même cours à la même heure dans la même salle. `groupIds` porte la liste
+ * complète, `groupId` reste le PREMIER pour tout ce qui n'a besoin que d'un
+ * groupe (le scan, les vieux écrans, la base). Lire toujours par ici, pour que
+ * le repli tienne en un seul endroit.
+ */
+export function sessionGroupIds(session?: ScheduleSession): string[] {
+  if (!session) return [];
+  const list = session.groupIds?.filter(Boolean) ?? [];
+  if (list.length > 0) return [...new Set(list)];
+  return session.groupId ? [session.groupId] : [];
+}
+
+/** « Groupe A · Groupe B » — les groupes d'un emploi, lisibles d'un coup. */
+export function sessionGroupsLabel(db: Database, session?: ScheduleSession): string {
+  const ids = sessionGroupIds(session);
+  if (ids.length === 0) return "—";
+  return ids.map((id) => groupName(db, id)).join(" · ");
+}
+
+/** Cet emploi du temps réunit-il ce groupe ? */
+export function sessionHasGroup(session: ScheduleSession, groupId: string): boolean {
+  return sessionGroupIds(session).includes(groupId);
+}
+
+// ---- Frais d'inscription : qui les doit ? ---------------------------------
+/**
+ * CET EMPLOI DU TEMPS EST-IL SOUMIS AUX FRAIS D'INSCRIPTION ?
+ *
+ * L'école décide qui les paie depuis l'écran des abonnements : tout le monde,
+ * les élèves de certains NIVEAUX (« tout le secondaire »), de certaines CLASSES,
+ * ou seulement ceux inscrits sur certains EMPLOIS DU TEMPS. Un élève qui ne
+ * coche que des emplois hors périmètre ne les doit tout simplement pas, et
+ * l'écran d'inscription cesse alors de les réclamer.
+ */
+export function registrationFeeAppliesToSub(
+  db: Database,
+  school: School | undefined,
+  subscriptionId: string,
+): boolean {
+  const scope = school?.registrationFeeScope ?? "all";
+  if (scope === "all") return true;
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return false;
+  if (scope === "sessions") {
+    return (school?.registrationFeeSessionIds ?? []).includes(sub.sessionId);
+  }
+  const session = db.sessions.find((s) => s.id === sub.sessionId);
+  if (!session) return false;
+  const classIds = session.isOpen && session.classIds?.length
+    ? session.classIds
+    : [session.classId];
+  if (scope === "classes") {
+    const wanted = school?.registrationFeeClassIds ?? [];
+    return classIds.some((id) => wanted.includes(id));
+  }
+  // scope === "levels"
+  const wanted = school?.registrationFeeLevels ?? [];
+  return classIds.some((id) => {
+    const cls = db.classes.find((c) => c.id === id);
+    if (!cls) return false;
+    return wanted.includes(cls.type === "formation" ? "formation" : cls.coursLevel ?? "");
+  });
+}
+
+/** Les emplois du temps, parmi ceux cochés, qui déclenchent les frais. */
+export function registrationFeeSubIds(
+  db: Database,
+  school: School | undefined,
+  subIds: string[],
+): string[] {
+  return subIds.filter((id) => registrationFeeAppliesToSub(db, school, id));
+}
+
+/** Ce qu'un élève doit de frais d'inscription pour les emplois qu'il coche.
+ *  0 dès qu'aucun d'eux n'est dans le périmètre choisi par l'école. */
+export function registrationFeeFor(
+  db: Database,
+  school: School | undefined,
+  subIds: string[],
+): number {
+  const fee = positiveMoney(school?.registrationFee ?? 0);
+  if (fee <= 0 || subIds.length === 0) return 0;
+  return registrationFeeSubIds(db, school, subIds).length > 0 ? fee : 0;
+}
+
+/** Comment se lit le périmètre choisi, en une ligne. */
+export function registrationFeeScopeLabel(db: Database, school?: School): string {
+  const scope = school?.registrationFeeScope ?? "all";
+  if (scope === "all") return "Tous les élèves";
+  if (scope === "levels") {
+    const list = school?.registrationFeeLevels ?? [];
+    if (list.length === 0) return "Aucun niveau sélectionné";
+    return list
+      .map((l) => (l === "formation" ? "Formation" : coursLevelLabel(l as CoursLevel) || l))
+      .join(", ");
+  }
+  if (scope === "classes") {
+    const list = school?.registrationFeeClassIds ?? [];
+    if (list.length === 0) return "Aucune classe sélectionnée";
+    return list
+      .map((id) => db.classes.find((c) => c.id === id)?.name ?? "—")
+      .join(", ");
+  }
+  const list = school?.registrationFeeSessionIds ?? [];
+  if (list.length === 0) return "Aucun emploi du temps sélectionné";
+  return list
+    .map((id) => {
+      const session = db.sessions.find((x) => x.id === id);
+      return session ? session.title || moduleName(db, session.moduleId) : "—";
+    })
+    .join(", ");
+}
+
 /** Full session label. `withGroup=false` drops the group (used by the
  *  Subscriptions listing where one label covers multiple groups). */
 export function sessionLabel(
@@ -238,7 +358,9 @@ export function sessionLabel(
   const parts = [
     cls ? classLabel(db, cls) : "",
     moduleName(db, session.moduleId),
-    opts.withGroup === false ? "" : groupName(db, session.groupId),
+    // Un emploi du temps peut réunir PLUSIEURS groupes : l'intitulé les porte
+    // tous, sinon deux demi-groupes du même créneau se lisent à l'identique.
+    opts.withGroup === false ? "" : sessionGroupsLabel(db, session),
     salleName(db, session.salleId),
     teacherName(db, session.teacherId),
   ].filter(Boolean);
@@ -259,14 +381,14 @@ export function hasMonthlyPlan(sub?: Subscription): boolean {
 export function monthlyPriceOf(sub?: Subscription): number {
   if (!sub) return 0;
   const computed = (sub.monthlySeances ?? 0) * (sub.pricePerSession ?? 0);
-  return Math.max(0, Math.round(sub.monthlyPrice ?? computed));
+  return positiveMoney(sub.monthlyPrice ?? computed);
 }
 
 /** Price of the séances of a month bought one by one — the reference the
  *  monthly price is compared against (a pack is often cheaper). */
 export function monthlySeancesValue(sub?: Subscription): number {
   if (!sub) return 0;
-  return Math.max(0, Math.round((sub.monthlySeances ?? 0) * (sub.pricePerSession ?? 0)));
+  return positiveMoney((sub.monthlySeances ?? 0) * (sub.pricePerSession ?? 0));
 }
 
 // ---- School / teacher split of a month ------------------------------------
@@ -276,23 +398,39 @@ export function schoolMonthShareOf(sub?: Subscription): number {
   if (!sub) return 0;
   const total = monthlyPriceOf(sub);
   if (sub.schoolMonthShare == null) return total;
-  return Math.min(Math.max(0, Math.round(sub.schoolMonthShare)), total);
+  return Math.min(positiveMoney(sub.schoolMonthShare), total);
 }
 
 /** The teacher's share of one month = month price − school share. */
 export function teacherMonthShareOf(sub?: Subscription): number {
   if (!sub) return 0;
-  return Math.max(0, monthlyPriceOf(sub) - schoolMonthShareOf(sub));
+  return positiveMoney(monthlyPriceOf(sub) - schoolMonthShareOf(sub));
 }
 
-/** The teacher's pay for ONE séance of this subscription. Uses the stored value
- *  when present, otherwise teacherMonthShare / monthlySeances. This is what a
- *  teacher settlement multiplies by the number of séances actually attended. */
+/**
+ * The teacher's pay for ONE séance of this subscription. Uses the stored value
+ * when present, otherwise teacherMonthShare / monthlySeances. This is what a
+ * teacher settlement multiplies by the number of séances actually attended.
+ *
+ * LA DIVISION GARDE SES DÉCIMALES : 1 500 DA de part enseignant sur 3 séances
+ * font 500 DA, mais 1 000 DA sur 3 séances font 333,33 DA — pas 333. Arrondir à
+ * l'entier ici faisait perdre (ou gagner) à l'enseignant quelques dinars par
+ * séance, et l'écart devenait visible au bout d'un mois de présences.
+ */
 export function teacherPerSeanceOf(sub?: Subscription): number {
   if (!sub) return 0;
-  if (sub.teacherPerSeance != null) return Math.max(0, Math.round(sub.teacherPerSeance));
+  if (sub.teacherPerSeance != null) return positiveMoney(sub.teacherPerSeance);
   const n = sub.monthlySeances ?? 0;
-  return n > 0 ? Math.max(0, Math.round(teacherMonthShareOf(sub) / n)) : 0;
+  return n > 0 ? positiveMoney(teacherMonthShareOf(sub) / n) : 0;
+}
+
+/** Le prix d'UNE séance déduit du pack mensuel : prix du mois ÷ séances du
+ *  mois, décimales comprises. C'est le tarif que l'emploi du temps affiche. */
+export function seancePriceOf(sub?: Subscription): number {
+  if (!sub) return 0;
+  const n = sub.monthlySeances ?? 0;
+  if (n > 0) return positiveMoney(monthlyPriceOf(sub) / n);
+  return positiveMoney(sub.pricePerSession ?? 0);
 }
 
 // ---- Per-module reductions ----
@@ -304,19 +442,19 @@ export function teacherPerSeanceOf(sub?: Subscription): number {
  * charge. Never returns a negative price.
  */
 export function netPriceFor(basePrice: number, discount?: SubscriptionDiscount): number {
-  const price = Math.max(0, Math.round(basePrice || 0));
+  const price = positiveMoney(basePrice || 0);
   if (!discount || discount.value <= 0) return price;
   const cut =
     discount.type === "percent"
-      ? Math.round((price * Math.min(Math.max(discount.value, 0), 100)) / 100)
-      : Math.max(discount.value, 0);
-  return Math.max(0, price - cut);
+      ? money((price * Math.min(Math.max(discount.value, 0), 100)) / 100)
+      : positiveMoney(discount.value);
+  return positiveMoney(price - cut);
 }
 
 /** Human label for a reduction, e.g. "-20%" or "-500 DA". Empty when none. */
 export function discountLabel(discount?: SubscriptionDiscount): string {
   if (!discount || discount.value <= 0) return "";
-  return discount.type === "percent" ? `-${discount.value}%` : `-${discount.value} DA`;
+  return discount.type === "percent" ? `-${discount.value}%` : `-${formatDA(discount.value)}`;
 }
 
 /**
@@ -330,8 +468,8 @@ export function discountLabel(discount?: SubscriptionDiscount): string {
 export function schoolPerSeanceOf(sub?: Subscription): number {
   if (!sub) return 0;
   const n = sub.monthlySeances ?? 0;
-  if (n <= 0) return Math.max(0, Math.round(sub.pricePerSession ?? 0));
-  return Math.max(0, Math.round(schoolMonthShareOf(sub) / n));
+  if (n <= 0) return positiveMoney(sub.pricePerSession ?? 0);
+  return positiveMoney(schoolMonthShareOf(sub) / n);
 }
 
 /**
@@ -408,14 +546,14 @@ export function caseReductionCut(
   side: "school" | "teacher",
   part: number,
 ): number {
-  const base = Math.max(0, Math.round(part || 0));
+  const base = positiveMoney(part || 0);
   if (!student || student.studentCase !== "reduction" || base <= 0) return 0;
   const red = student.caseReduction;
   if (!red) return 0;
   const value = Math.max(0, side === "school" ? red.schoolValue || 0 : red.teacherValue || 0);
   if (value <= 0) return 0;
   const cut =
-    red.type === "percent" ? Math.round((base * Math.min(value, 100)) / 100) : Math.round(value);
+    red.type === "percent" ? money((base * Math.min(value, 100)) / 100) : money(value);
   return Math.min(base, cut);
 }
 
@@ -427,14 +565,51 @@ export function studentSchoolPerSeance(student: Student | undefined, sub?: Subsc
   // Un emploi du temps offert ne rapporte rien à l'école non plus.
   if (isFreeSub(student, sub?.id)) return 0;
   const part = schoolPerSeanceOf(sub);
-  return Math.max(0, part - caseReductionCut(student, "school", part));
+  return positiveMoney(part - caseReductionCut(student, "school", part));
+}
+
+// ---- « École seule » : l'option se coche EMPLOI DU TEMPS PAR EMPLOI DU TEMPS
+/**
+ * CET emploi du temps est-il « payé à l'école seulement » pour CET élève ?
+ *
+ * Le cas « École seulement » se règle exactement comme la gratuité : emploi par
+ * emploi. Sur un emploi ACTIVÉ, la famille ne verse que la part de l'école,
+ * l'enseignant n'est pas payé pour cet élève — et l'élève ne figure même pas
+ * sur l'écran de paie de cet enseignant pour cet emploi-là. Sur un emploi NON
+ * activé, tout se calcule normalement : l'école ET l'enseignant sont réglés, et
+ * l'élève apparaît sur la feuille de paie comme n'importe quel autre.
+ *
+ * ABSENT (`schoolOnlySubscriptionIds` non renseigné) = les fiches d'avant, qui
+ * ne connaissaient que la liste d'enseignants non payés : on retombe alors sur
+ * `unpaidTeacherIds`, pour que rien ne change de sens en base.
+ */
+export function isSchoolOnlySub(
+  student: Student | undefined,
+  subscriptionId?: string,
+  teacherId?: string,
+): boolean {
+  if (!student || student.studentCase !== "school_only") return false;
+  const list = student.schoolOnlySubscriptionIds;
+  if (list) {
+    if (!subscriptionId) return list.length > 0;
+    return list.includes(subscriptionId);
+  }
+  // Fiches anciennes : c'est la liste des enseignants qui décidait.
+  if (!teacherId) return true;
+  return (student.unpaidTeacherIds ?? []).includes(teacherId);
+}
+
+/** Les emplois du temps sur lesquels l'option « école seule » est ACTIVE. */
+export function schoolOnlySubIdsOf(student: Student | undefined): string[] {
+  if (!student || student.studentCase !== "school_only") return [];
+  return student.schoolOnlySubscriptionIds ?? student.subscriptionIds ?? [];
 }
 
 /**
  * What the TEACHER actually earns on one séance of this student: his part of
  * the split, minus his own half of a « cas réduction ». A « cas spécial » and an
- * « école seule » élève (for the listed teachers) earn him nothing — the same
- * rule `teacherDueFor` writes on every présence.
+ * « école seule » élève (SUR LES EMPLOIS OÙ L'OPTION EST ACTIVE) earn him
+ * nothing — the same rule `teacherDueFor` writes on every présence.
  */
 export function studentTeacherPerSeance(
   student: Student | undefined,
@@ -443,15 +618,9 @@ export function studentTeacherPerSeance(
 ): number {
   if (!sub) return 0;
   if (isFreeSub(student, sub.id)) return 0;
-  if (
-    student?.studentCase === "school_only" &&
-    teacherId &&
-    (student.unpaidTeacherIds ?? []).includes(teacherId)
-  ) {
-    return 0;
-  }
+  if (isSchoolOnlySub(student, sub.id, teacherId)) return 0;
   const part = teacherSeanceShareOf(sub);
-  return Math.max(0, part - caseReductionCut(student, "teacher", part));
+  return positiveMoney(part - caseReductionCut(student, "teacher", part));
 }
 
 /**
@@ -472,11 +641,14 @@ export function studentListPrice(
   sub: Subscription | undefined,
   fallback = 0,
 ): number {
-  const base = Math.max(0, Math.round(sub?.pricePerSession ?? fallback));
+  const base = positiveMoney(sub?.pricePerSession ?? fallback);
   if (!student || !sub) return base;
   // Emploi du temps offert : la séance ne coûte rien à la famille.
   if (isFreeSub(student, sub.id)) return 0;
-  if (student.studentCase === "school_only") {
+  // « École seule » ACTIVÉE sur cet emploi : la famille ne verse que la part de
+  // l'école. Sur un emploi non activé, elle paie le tarif entier comme tout le
+  // monde et l'enseignant touche sa part.
+  if (isSchoolOnlySub(student, sub.id)) {
     const schoolPart = schoolPerSeanceOf(sub);
     return schoolPart > 0 ? schoolPart : base;
   }
@@ -487,8 +659,7 @@ export function studentListPrice(
     // moitié « enseignant » est retirée là où elle a un sens dans ce cas-là :
     // sur le pourcentage que `teacherDueFor` lui verse. Elle n'est donc jamais
     // comptée deux fois.
-    return Math.max(
-      0,
+    return positiveMoney(
       studentSchoolPerSeance(student, sub) + studentTeacherPerSeance(student, sub),
     );
   }
@@ -500,13 +671,13 @@ export function studentListPrice(
 export function studentMonthPrice(student: Student | undefined, sub?: Subscription): number {
   if (!sub) return 0;
   if (isFreeSub(student, sub.id)) return 0;
-  if (student?.studentCase === "school_only") {
-    return Math.max(0, Math.round(schoolMonthShareOf(sub)));
+  if (isSchoolOnlySub(student, sub.id)) {
+    return positiveMoney(schoolMonthShareOf(sub));
   }
   if (student?.studentCase === "reduction") {
-    return Math.max(0, studentListPrice(student, sub) * cycleSizeOf(sub));
+    return positiveMoney(studentListPrice(student, sub) * cycleSizeOf(sub));
   }
-  return monthlyPriceOf(sub) || Math.round((sub.pricePerSession ?? 0) * cycleSizeOf(sub));
+  return monthlyPriceOf(sub) || positiveMoney((sub.pricePerSession ?? 0) * cycleSizeOf(sub));
 }
 
 /** Net price of one séance for a given student on a given subscription. */
@@ -910,7 +1081,7 @@ export function currentMonthCode(): string {
 // ---- Solde (money left on ONE emploi du temps) ------------------------------
 /** What is left on an inscription. Negative = the student owes that much. */
 export function enrollmentBalance(enrollment?: Enrollment): number {
-  return Math.round(enrollment?.balance ?? 0);
+  return money(enrollment?.balance ?? 0);
 }
 
 export function studentEnrollmentFor(
@@ -1115,9 +1286,8 @@ export function studentDebtSummary(db: Database, studentId: string): StudentDebt
   const soldRows = studentSoldDebtRows(db, studentId);
   const soldDebt = soldRows.reduce((s, r) => s + r.debt, 0);
   const rests = studentUnpaidPayments(db, studentId).reduce((s, p) => s + p.rest, 0);
-  const registrationDue = Math.max(
-    0,
-    Math.round(db.students.find((s) => s.id === studentId)?.registrationDue ?? 0),
+  const registrationDue = positiveMoney(
+    db.students.find((s) => s.id === studentId)?.registrationDue ?? 0,
   );
   return {
     soldRows,
@@ -1159,7 +1329,7 @@ export function cycleCredits(
   for (const p of db.payments) {
     if (p.studentId !== studentId || p.subscriptionId !== subscriptionId) continue;
     if ((p.monthCode || "M1") !== code) continue;
-    const amount = Math.max(0, Math.round(p.amountPaid || 0));
+    const amount = positiveMoney(p.amountPaid || 0);
     if (amount <= 0) continue;
     if (p.paidFrom === "teacher_salary") out.salary += amount;
     else if (p.paidFrom === "teacher_debt") out.charged += amount;
@@ -1383,8 +1553,21 @@ export function studentCaseLabel(student: Student): string {
       return "Fils d'enseignant";
     case "reduction":
       return "Réduction";
-    case "school_only":
+    case "school_only": {
+      // L'option se coche emploi par emploi : une fiche partiellement activée
+      // doit se lire comme telle, sinon la paie se lit à l'envers.
+      const only = student.schoolOnlySubscriptionIds;
+      if (only) {
+        const followed = student.subscriptionIds ?? [];
+        const active = followed.filter((id) => only.includes(id)).length;
+        if (active < followed.length) {
+          return active > 0
+            ? `École seule · ${active} emploi(s)`
+            : "École seule · aucun emploi";
+        }
+      }
       return "École seule";
+    }
     default:
       return "";
   }

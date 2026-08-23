@@ -58,6 +58,8 @@ export const SCHOOL_SPEC: TableSpec = {
   fields: [
     "id", "name", "description", "phone", "email", "logo", "address",
     "articleFiscal", "registreCommerce", "nif", "nis", "registrationFee",
+    "registrationFeeScope", "registrationFeeLevels", "registrationFeeClassIds",
+    "registrationFeeSessionIds",
     "absencePenaltyEnabled", "absencePenaltySince", "absenceWeekStartDay",
   ],
 };
@@ -119,7 +121,9 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     fields: ["id", "registrationNumber", "firstName", "lastName", "birthDate", "phone",
              "email", "rfid", "isFree", "studentCase", "freeSubscriptionIds",
              "teacherFatherId", "caseReduction",
-             "unpaidTeacherIds", "parentId", "subscriptionIds", "subscriptionDates",
+             "unpaidTeacherIds", "schoolOnlySubscriptionIds",
+             "enrollmentLevel", "enrollmentYear",
+             "parentId", "subscriptionIds", "subscriptionDates",
              "subscriptionDiscounts", "registrationDue"],
   },
   studentCredentials: {
@@ -155,7 +159,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "teacher_payments", pk: "id", pkField: "id",
     fields: ["id", "teacherId", "amount", "method", "percentage", "studentsCount",
              "sessionsCount", "description", "details", "gross", "expenses", "acomptes",
-             "childCharges", "months", "paidAt"],
+             "childCharges", "childDebts", "months", "arrears", "cashId", "paidAt"],
   },
   acomptes: {
     table: "teacher_acomptes", pk: "id", pkField: "id",
@@ -177,7 +181,8 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   },
   unpaidTeacher: {
     table: "unpaid_teacher_sessions", pk: "id", pkField: "id",
-    fields: ["id", "teacherId", "sessionId", "studentId", "amount", "date", "paid"],
+    fields: ["id", "teacherId", "sessionId", "studentId", "amount", "date", "paid",
+             "paymentId"],
   },
   workerShifts: {
     table: "worker_shifts", pk: "id", pkField: "id",

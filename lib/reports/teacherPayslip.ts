@@ -42,7 +42,22 @@ function esc(v: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-const da = (n: number) => `${Math.round(n).toLocaleString("fr-DZ")} DA`;
+/**
+ * Un montant imprimé — DÉCIMALES COMPRISES.
+ *
+ * La part d'une séance tombe rarement juste (1 333,33 DA), et arrondir chaque
+ * ligne au dinar faisait que la somme des lignes ne retombait plus sur le net
+ * versé : la fiche de paie affichait un total que ses propres lignes
+ * contredisaient. Les décimales ne s'affichent que lorsqu'il y en a.
+ */
+const da = (n: number) => {
+  const value = Math.round((Number(n) || 0) * 100) / 100;
+  const digits = Number.isInteger(value) ? 0 : 2;
+  return `${value.toLocaleString("fr-DZ", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })} DA`;
+};
 
 /** One student on one emploi du temps, over the settled period. */
 export interface PayslipStudent {
@@ -105,6 +120,28 @@ export interface TeacherPayslipData {
   net: number;
   /** présences left unpaid because the student still owes the school */
   withheld?: { count: number; amount: number };
+  /**
+   * LES ARRIÉRÉS DÉBLOQUÉS réglés par ce bulletin.
+   *
+   * Des parts d'un mois DÉJÀ payé, retenues à l'époque parce que l'élève
+   * n'avait rien versé, et libérées depuis. Elles n'appartiennent pas au mois
+   * courant : elles ont leur propre tableau, avec le mois d'origine, les dates
+   * concernées et le nombre de séances, pour que l'enseignant vérifie
+   * exactement ce qu'on lui rattrape.
+   */
+  arrears?: PayslipArrear[];
+}
+
+/** Une part d'un mois passé, débloquée par le paiement tardif d'un élève. */
+export interface PayslipArrear {
+  studentName: string;
+  registrationNumber?: string;
+  emploi: string;
+  groupName?: string;
+  monthCode: string;
+  seances: number;
+  dates?: string[];
+  amount: number;
 }
 
 const EXTRA_CSS = `
@@ -177,6 +214,15 @@ const LABELS = {
     signCashier: "La Caisse / Direction",
     seances: "séance(s)",
     months: "Mois réglé(s) :",
+    arrearsTitle: "Arriérés débloqués — élèves ayant payé en retard",
+    arrearsNote:
+      "Ces parts appartiennent à des MOIS DÉJÀ RÉGLÉS : elles avaient été retenues parce que l'élève n'avait pas payé. L'élève s'est acquitté depuis, la part est donc due aujourd'hui et réglée avec ce bulletin — elle ne se confond pas avec le mois en cours.",
+    arrearEmploi: "Emploi du temps",
+    arrearMonth: "Mois d'origine",
+    arrearDates: "Séances concernées",
+    arrearAmount: "Part rattrapée",
+    arrearsTotal: "TOTAL DES ARRIÉRÉS DÉBLOQUÉS",
+    monthsSubtotal: "Total des mois réglés",
   },
   ar: {
     docTitle: "كشف الراتب — الأستاذ",
@@ -236,6 +282,15 @@ const LABELS = {
     signCashier: "الصندوق / الإدارة",
     seances: "حصة",
     months: "الأشهر المسواة :",
+    arrearsTitle: "متأخرات مفرج عنها — تلاميذ دفعوا متأخرين",
+    arrearsNote:
+      "تخص هذه المبالغ أشهرًا سُوّيت من قبل : حُجزت لأن التلميذ لم يكن قد دفع. وقد سدّد منذ ذلك الحين، فأصبحت مستحقة اليوم وتُدفع مع هذا الكشف.",
+    arrearEmploi: "جدول التوقيت",
+    arrearMonth: "الشهر الأصلي",
+    arrearDates: "الحصص المعنية",
+    arrearAmount: "المبلغ المسترجع",
+    arrearsTotal: "مجموع المتأخرات المفرج عنها",
+    monthsSubtotal: "مجموع الأشهر المسواة",
   },
 } as const;
 
@@ -349,6 +404,56 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
       </div>`
     : "";
 
+  // ---- 3 bis. LES ARRIÉRÉS DÉBLOQUÉS — leur propre tableau ----------------
+  /**
+   * Un mois déjà réglé peut encore devoir quelque chose : l'élève n'avait pas
+   * payé, la part de l'enseignant a donc été retenue. Quand l'élève s'acquitte,
+   * elle revient — mais elle appartient toujours à SON mois. Elle se lit donc
+   * ici, à part, avec le mois d'origine et les dates des séances.
+   */
+  const arrears = data.arrears ?? [];
+  const totalArrears = arrears.reduce((s, a) => s + a.amount, 0);
+  const arrearsHtml = arrears.length
+    ? `<div class="frame frame-success" style="margin-bottom:16px;">
+        <h3>${L.arrearsTitle}</h3>
+        <table>
+          <thead>
+            <tr>
+              <th class="ctr" style="width:9%;">${L.number}</th>
+              <th>${L.student}</th>
+              <th>${L.arrearEmploi}</th>
+              <th class="ctr" style="width:11%;">${L.arrearMonth}</th>
+              <th class="ctr" style="width:9%;">${L.presents}</th>
+              <th style="width:20%;">${L.arrearDates}</th>
+              <th class="num" style="width:15%;">${L.arrearAmount}</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${arrears
+              .map(
+                (a) => `<tr>
+                  <td class="ctr" style="font-family:monospace;">${esc(a.registrationNumber ?? "—")}</td>
+                  <td><strong>${esc(a.studentName)}</strong></td>
+                  <td>${esc(a.emploi)}${a.groupName ? `<br/><span style="font-size:0.78em;color:#5c567a;">${esc(a.groupName)}</span>` : ""}</td>
+                  <td class="ctr"><span class="badge badge-primary">${esc(a.monthCode)}</span></td>
+                  <td class="ctr"><strong>${a.seances}</strong></td>
+                  <td style="font-family:monospace;font-size:0.78em;">${esc((a.dates ?? []).map((d) => fmtDate(d, lang)).join(" · ") || "—")}</td>
+                  <td class="num" style="color:#15803d;font-weight:700;">${da(a.amount)}</td>
+                </tr>`,
+              )
+              .join("")}
+          </tbody>
+          <tfoot>
+            <tr style="background:#f0fdf4;border-top:2px solid #16a34a;">
+              <td colspan="6" style="font-weight:800;text-transform:uppercase;">${L.arrearsTotal}</td>
+              <td class="num" style="font-weight:800;color:#15803d;">${da(totalArrears)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <p class="note">${L.arrearsNote}</p>
+      </div>`
+    : "";
+
   // ---- 4. his children, schooled on his pay -------------------------------
   const childRows = data.childCharges.flatMap((c) =>
     c.lines.map(
@@ -450,9 +555,22 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
     <h3 style="margin:0 0 10px;font-size:1.05em;color:#1e1b4b;">${L.emploisTitle}</h3>
     ${emploisHtml}
 
+    ${
+      arrears.length
+        ? `<div class="grand-total" style="border-color:#c0b6e9;background:#fcfbff;">
+             <span>${L.monthsSubtotal} — ${totalPresents} ${L.presents.toLowerCase()} · ${da(totalFees)} ${L.fees.toLowerCase()}</span>
+             <span>${da(totalShare)}</span>
+           </div>`
+        : ""
+    }
+
+    ${arrearsHtml}
+
     <div class="grand-total">
-      <span>${L.grandTotal} — ${totalPresents} ${L.presents.toLowerCase()} · ${da(totalFees)} ${L.fees.toLowerCase()}</span>
-      <span>${da(totalShare)}</span>
+      <span>${L.grandTotal} — ${totalPresents} ${L.presents.toLowerCase()} · ${da(totalFees)} ${L.fees.toLowerCase()}${
+        arrears.length ? ` + ${L.arrearsTitle.toLowerCase()} ${da(totalArrears)}` : ""
+      }</span>
+      <span>${da(totalShare + totalArrears)}</span>
     </div>
 
     ${casesHtml}
@@ -462,6 +580,7 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
     <div class="summary-card">
       <h3>${L.settlement}</h3>
       <div class="summary-line"><span>${L.gross}</span><strong>${da(data.gross)}</strong></div>
+      ${totalArrears > 0 ? `<div class="summary-line"><span>${L.arrearsTotal} :</span><strong style="color:#15803d;">${da(totalArrears)}</strong></div>` : ""}
       ${totalExpenses > 0 ? `<div class="summary-line"><span>${L.totalExpenses}</span><strong class="deduct">− ${da(totalExpenses)}</strong></div>` : ""}
       ${totalAcomptes > 0 ? `<div class="summary-line"><span>${L.totalAcomptes}</span><strong class="deduct">− ${da(totalAcomptes)}</strong></div>` : ""}
       ${totalChildren > 0 ? `<div class="summary-line"><span>${L.totalChildren}</span><strong class="deduct">− ${da(totalChildren)}</strong></div>` : ""}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Clock, GraduationCap, MapPin, Search, Users, X } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Input, Select } from "@/components/ui/SearchInput";
@@ -54,7 +54,20 @@ export interface ClassTimingOption {
 }
 
 /** Level filter values: the four school levels plus formations. */
-type LevelValue = CoursLevel | "formation";
+export type LevelValue = CoursLevel | "formation";
+
+/** Où la réception en est dans le catalogue : le niveau et l'année affichés. */
+export interface TimingScope {
+  level: string;
+  year: string;
+}
+
+/** Un niveau lu depuis une fiche : tout ce qui n'est pas connu retombe sur
+ *  « primaire », comme l'écran l'a toujours fait. */
+export function asLevelValue(value?: string): LevelValue {
+  const known: string[] = ["maternelle", "primaire", "moyen", "lycee", "formation"];
+  return (known.includes(value ?? "") ? value : "primaire") as LevelValue;
+}
 
 /** Year options per school level (kindergarten uses sections). */
 export function timingYearOptions(level: LevelValue): string[] {
@@ -292,9 +305,31 @@ export function CurrentInscriptions({
       </div>
 
       {rows.length === 0 ? (
-        <p className="py-3 text-center text-[11px] italic text-muted">
-          Aucun emploi du temps pour l&apos;instant — choisissez-en un dans la liste ci-dessous.
-        </p>
+        <div className="py-3 text-center text-[11px] text-muted">
+          {/* Une fiche créée SANS emploi du temps garde tout de même sa classe
+              et son année : les rappeler ici évite de chercher où l'élève a
+              été inscrit avant de pouvoir lui choisir un créneau. */}
+          {student?.enrollmentLevel || student?.enrollmentYear ? (
+            <>
+              <strong className="block text-ink">
+                Inscrit en{" "}
+                {student.enrollmentLevel === "formation"
+                  ? "Formation"
+                  : coursLevelLabel(student.enrollmentLevel as CoursLevel) ||
+                    student.enrollmentLevel}
+                {student.enrollmentYear ? ` · ${student.enrollmentYear}` : ""}
+              </strong>
+              <span className="italic">
+                Aucun emploi du temps choisi pour l&apos;instant — la liste ci-dessous s&apos;ouvre
+                déjà sur cette classe.
+              </span>
+            </>
+          ) : (
+            <span className="italic">
+              Aucun emploi du temps pour l&apos;instant — choisissez-en un dans la liste ci-dessous.
+            </span>
+          )}
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-line bg-surface">
           <table className="w-full min-w-[760px] text-[11px]">
@@ -391,6 +426,9 @@ export function ClassTimingPicker({
   student,
   savedSubIds,
   showCurrent = false,
+  initialLevel,
+  initialYear,
+  onScopeChange,
 }: {
   selectedSubIds: string[];
   /** The option carries `siblingSubIds`: the other groups of the same cours,
@@ -403,6 +441,18 @@ export function ClassTimingPicker({
   savedSubIds?: string[];
   /** rappeler EN HAUT la classe, l'année et les emplois du temps actuels */
   showCurrent?: boolean;
+  /**
+   * OÙ ROUVRIR LE CATALOGUE quand l'élève n'a AUCUN emploi du temps.
+   *
+   * Une fiche peut très bien avoir été créée « 4AP, on verra le créneau plus
+   * tard » : sans ces deux valeurs, l'écran de modification rouvrait sur un
+   * primaire/1AP qui ne le concernait pas, et la réception devait retrouver sa
+   * classe à la main avant de pouvoir lui choisir un emploi du temps.
+   */
+  initialLevel?: string;
+  initialYear?: string;
+  /** remonte le niveau et l'année affichés, pour que la fiche les enregistre */
+  onScopeChange?: (scope: TimingScope) => void;
 }) {
   const { timingsForLevelYear, timingOf, levelYearOf, subCost, subLabel } = useClassTimings();
   /**
@@ -412,7 +462,16 @@ export function ClassTimingPicker({
    * qui ne le concerne pas.
    */
   const start = useMemo(
-    () => (selectedSubIds.length ? levelYearOf(selectedSubIds[0]) : null),
+    () => {
+      // La première inscription décide d'abord ; à défaut, la classe et
+      // l'année RETENUES sur la fiche ; à défaut seulement, le repli habituel.
+      const fromSubs = selectedSubIds.length ? levelYearOf(selectedSubIds[0]) : null;
+      if (fromSubs) return fromSubs;
+      if (initialLevel) {
+        return { level: asLevelValue(initialLevel), year: initialYear ?? "" };
+      }
+      return null;
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -421,6 +480,13 @@ export function ClassTimingPicker({
     start?.year || timingYearOptions(start?.level ?? "primaire")[0] || "",
   );
   const [search, setSearch] = useState("");
+
+  // Le niveau et l'année affichés remontent à la fiche, qui les enregistre —
+  // c'est ce qui permet de rouvrir ici même un élève sans emploi du temps.
+  useEffect(() => {
+    onScopeChange?.({ level, year });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [level, year]);
 
   const years = timingYearOptions(level);
   const timings = useMemo(
@@ -577,12 +643,12 @@ export function ClassTimingPicker({
                 <span className="flex shrink-0 items-center gap-2">
                   <span className="text-end">
                     <strong className="block">
-                      {t.price} DA
+                      {formatDA(t.price)}
                       {t.isFormation ? ` / ${t.periodMonths} mois` : " / séance"}
                     </strong>
                     {t.hasMonthly && (
                       <span className={picked ? "text-white/80" : "text-warning"}>
-                        {t.monthlySeances} séances · {t.monthlyPrice} DA / mois
+                        {t.monthlySeances} séances · {formatDA(t.monthlyPrice)} / mois
                       </span>
                     )}
                   </span>

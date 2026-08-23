@@ -7,6 +7,7 @@ import {
   cycleSizeOf,
   currentCycleCode,
   isFreeSub,
+  isSchoolOnlySub,
   joinPointFor,
   groupSeanceTotals,
   netPriceFor,
@@ -16,6 +17,7 @@ import {
   studentHasDebt,
   studentListPrice,
 } from "@/lib/helpers";
+import { money, positiveMoney, formatDA } from "@/lib/utils";
 import type {
   AbsencePenalty,
   Announcement,
@@ -58,6 +60,7 @@ import type {
   TeacherChildDebt,
   TeacherExpense,
   TeacherPayment,
+  TeacherPaymentArrear,
   TeacherPaymentDeduction,
   TeacherPaymentMonth,
   UnpaidTeacherSession,
@@ -522,7 +525,41 @@ interface DataActions {
     /** scolarités déjà créditées et portées sur lui (`TeacherChildDebt`) que ce
      *  règlement solde — elles ne reviendront pas sur le suivant */
     childDebtIds?: string[];
+    /**
+     * LES ARRIÉRÉS DÉBLOQUÉS joints au règlement : des parts d'un mois DÉJÀ
+     * réglé, retenues à l'époque parce que l'élève n'avait pas payé, et
+     * libérées depuis. Elles sont soldées comme les autres dues, mais figées à
+     * part pour que la fiche de paie et l'historique les distinguent du mois
+     * courant.
+     */
+    arrearDueIds?: string[];
+    /** leur détail figé, tel qu'il s'imprime sur la fiche de paie */
+    arrears?: TeacherPaymentArrear[];
   }) => Promise<{ ok: boolean; paymentId?: string; sessions?: number; messageKey?: string }>;
+  /**
+   * CORRIGER UN RÈGLEMENT D'ENSEIGNANT DÉJÀ ENREGISTRÉ.
+   *
+   * Seuls le net versé, la date et le libellé se rectifient : ce que le
+   * règlement a SOLDÉ (les présences, les dépenses, les acomptes) ne bouge pas,
+   * sinon la paie du mois suivant se rouvrirait toute seule. Le mouvement de
+   * caisse suit le nouveau montant au dinar près.
+   */
+  updateTeacherPayment: (
+    paymentId: string,
+    fields: { amount?: number; description?: string; paidAt?: string },
+  ) => Promise<{ ok: boolean; messageKey?: string }>;
+  /**
+   * ANNULER UN RÈGLEMENT D'ENSEIGNANT.
+   *
+   * Tout ce qu'il avait soldé REDEVIENT DÛ : les présences repassent en attente
+   * de paiement, les dépenses et les acomptes reviennent sur le prochain
+   * règlement, les scolarités portées sur le père aussi — et le mouvement de
+   * caisse qui l'avait payé disparaît. La fiche de paie n'a donc jamais deux
+   * versions d'une même vérité.
+   */
+  deleteTeacherPayment: (
+    paymentId: string,
+  ) => Promise<{ ok: boolean; amount?: number; messageKey?: string }>;
   /** Buys N séances on one inscription: creates or tops up the
    *  `{studentId, subscriptionId}` enrollment and writes the matching Payment
    *  (gross, remise, net, what was handed over, and the rest left owing). */
@@ -777,25 +814,22 @@ function teacherDueFor(
 ): number {
   if (student) {
     if (isFreeSub(student, sub?.id)) return 0;
-    if (
-      student.studentCase === "school_only" &&
-      session.teacherId &&
-      (student.unpaidTeacherIds ?? []).includes(session.teacherId)
-    ) {
-      return 0;
-    }
+    // « École seule » : l'option se coche emploi par emploi. Sur un emploi
+    // ACTIVÉ l'enseignant ne touche rien pour cet élève ; sur un emploi non
+    // activé, sa part se calcule comme pour n'importe qui d'autre.
+    if (isSchoolOnlySub(student, sub?.id, session.teacherId)) return 0;
   }
 
   const perSeance = sub?.teacherPerSeance ?? 0;
   const gross =
     perSeance > 0
-      ? Math.max(0, Math.round(perSeance))
+      ? positiveMoney(perSeance)
       : teacherShare(db, session.teacherId, base);
 
   // La moitié « enseignant » de la remise, calculée par le MÊME helper que
   // celui qui l'affiche sur la paie et qui la retire du prix de l'élève : les
   // deux côtés du partage ne peuvent donc pas diverger.
-  return Math.max(0, gross - caseReductionCut(student, "teacher", gross));
+  return positiveMoney(gross - caseReductionCut(student, "teacher", gross));
 }
 
 function teacherShare(db: Database, teacherId: string | undefined, base: number): number {
@@ -804,7 +838,7 @@ function teacherShare(db: Database, teacherId: string | undefined, base: number)
   // "monthly" is paid by contract and "per_group" by the emploi du temps —
   // neither earns a percentage of what the student paid.
   if (!teacher || teacher.paymentType !== "percentage") return 0;
-  return Math.round((base * (teacher.percentage ?? 0)) / 100);
+  return positiveMoney((base * (teacher.percentage ?? 0)) / 100);
 }
 
 const MODULE_NAME = (db: Database, id: string) => db.modules.find((m) => m.id === id)?.name ?? "";
@@ -1108,7 +1142,10 @@ export const useData = create<DataStore>((set, get) => ({
             : e,
         );
       }
-      if (matched.teacherId) {
+      // Une part NULLE n'est pas une dette : l'élève est offert ou « école
+      // seule » sur cet emploi, l'enseignant n'a rien à toucher pour lui, et
+      // une ligne à 0 DA le ferait réapparaître sur sa fiche de paie.
+      if (matched.teacherId && teacherDue > 0) {
         patch.unpaidTeacher = [
           ...state.unpaidTeacher,
           {
@@ -1298,7 +1335,9 @@ export const useData = create<DataStore>((set, get) => ({
             : e,
         );
       }
-      if (session.teacherId && !opts?.skipTeacherDue) {
+      // Idem : une part nulle (élève offert ou « école seule » sur cet emploi)
+      // n'ouvre aucune dette et ne doit pas figurer sur la fiche de paie.
+      if (session.teacherId && !opts?.skipTeacherDue && teacherDue > 0) {
         patch.unpaidTeacher = [
           ...state.unpaidTeacher,
           {
@@ -1555,7 +1594,7 @@ export const useData = create<DataStore>((set, get) => ({
     const sub = db.subscriptions.find((s) => s.id === subscriptionId);
     if (!student || !sub) return { ok: false };
 
-    const credit = Math.max(0, Math.round(amount || 0));
+    const credit = positiveMoney(amount || 0);
     if (credit <= 0) return { ok: false };
 
     const code = monthCode || currentCycleCode(db, studentId, subscriptionId);
@@ -2085,23 +2124,31 @@ export const useData = create<DataStore>((set, get) => ({
     if (!session) return { ok: false };
 
     const ids = siblingIds(db, sessionId);
-    const clean = Math.max(Math.round(price || 0), 0);
+    // LE PRIX D'UNE SÉANCE GARDE SES DÉCIMALES : un mois à 4 000 DA sur 3
+    // séances vaut 1 333,33 DA la séance, pas 1 333. Le même soin s'applique à
+    // la part de l'école et à celle de l'enseignant : arrondir chaque division
+    // à l'entier faisait dériver la paie de quelques dinars par séance.
+    const clean = positiveMoney(price || 0);
     const { levelPrice, periodMonths } = opts ?? {};
     // A monthly formula only exists once it holds séances; without them the
     // whole offer is dropped, so an old one never survives its removal.
     const monthlySeances = Math.max(0, Math.round(opts?.monthlySeances ?? 0)) || undefined;
     const monthlyPrice = monthlySeances
-      ? Math.max(0, Math.round(opts?.monthlyPrice ?? monthlySeances * clean))
+      ? positiveMoney(opts?.monthlyPrice ?? monthlySeances * clean)
       : undefined;
     // The school/teacher split only means something on a monthly formula.
     const schoolMonthShare =
       monthlySeances && opts?.schoolMonthShare != null
-        ? Math.min(Math.max(0, Math.round(opts.schoolMonthShare)), monthlyPrice ?? 0)
+        ? Math.min(positiveMoney(opts.schoolMonthShare), monthlyPrice ?? 0)
         : undefined;
     const teacherPerSeance =
       monthlySeances && opts?.teacherPerSeance != null
-        ? Math.max(0, Math.round(opts.teacherPerSeance))
-        : undefined;
+        ? positiveMoney(opts.teacherPerSeance)
+        : monthlySeances && monthlyPrice != null && schoolMonthShare != null
+          // Sans valeur explicite, la part enseignant d'une séance se déduit du
+          // reste du mois — décimales comprises.
+          ? positiveMoney((monthlyPrice - schoolMonthShare) / monthlySeances)
+          : undefined;
     let created = 0;
     let updated = 0;
     const additions: Subscription[] = [];
@@ -2372,27 +2419,77 @@ export const useData = create<DataStore>((set, get) => ({
     }
 
     const settledIds = new Set(unpaid.map((u) => u.id));
+    /**
+     * UN RÈGLEMENT LAISSE TOUJOURS SA LIGNE DANS L'HISTORIQUE.
+     *
+     * Ce chemin-là ne posait qu'un mouvement de caisse : l'argent sortait, mais
+     * l'écran « Historique des règlements » de la fiche enseignant restait
+     * vide — le règlement venait d'être fait et ne s'affichait nulle part. Il
+     * écrit désormais son `teacher_payments`, exactement comme la paie mois par
+     * mois, avec ses présences, son brut et ce qui a été retenu.
+     */
+    const paymentId = uid("tpy");
+    const cashId = uid("csh");
+    const paidAt = new Date().toISOString();
+    const deductions: TeacherPaymentDeduction[] = [
+      ...db.acomptes
+        .filter((a) => a.teacherId === teacherId)
+        .map((a) => ({
+          id: a.id,
+          kind: "acompte" as const,
+          label: "Acompte",
+          description: a.description,
+          amount: a.amount,
+          date: dateKey(a.date),
+        })),
+    ];
+
     set((state) => ({
       unpaidTeacher: state.unpaidTeacher.map((u) =>
-        settledIds.has(u.id) ? { ...u, paid: true } : u,
+        settledIds.has(u.id) ? { ...u, paid: true, paymentId } : u,
       ),
       acomptes: state.acomptes.filter((a) => a.teacherId !== teacherId),
       absences: state.absences.filter((a) => a.teacherId !== teacherId),
+      teacherPayments: [
+        ...state.teacherPayments,
+        {
+          id: paymentId,
+          teacherId,
+          amount: net,
+          method: "percent",
+          percentage: teacher.percentage,
+          studentsCount: new Set(unpaid.map((u) => u.studentId)).size,
+          sessionsCount: new Set(unpaid.map((u) => `${dateKey(u.date)}|${u.sessionId}`)).size,
+          description:
+            `Règlement au pourcentage — ${teacher.firstName} ${teacher.lastName}` +
+            ` (${unpaid.length} présences)`,
+          details: [],
+          gross,
+          expenses: [],
+          acomptes: deductions,
+          childCharges: [],
+          childDebts: [],
+          months: [],
+          arrears: [],
+          cashId,
+          paidAt,
+        },
+      ],
       cash: [
         ...state.cash,
         {
-          id: uid("csh"),
+          id: cashId,
           type: "teacher_payment",
           amount: -net,
-          date: new Date().toISOString(),
+          date: paidAt,
           description:
             `Règlement salaire au pourcentage - ${teacher.firstName} ${teacher.lastName}` +
-            ` (${unpaid.length} présences, brut ${gross} DA, acomptes -${acomptes} DA, absences -${absences} DA)`,
+            ` (${unpaid.length} présences, brut ${formatDA(gross)}, acomptes -${formatDA(acomptes)}, absences -${formatDA(absences)})`,
         },
       ],
     }));
 
-    return { ok: true, net, gross, sessions: unpaid.length, acomptes, absences };
+    return { ok: true, net, gross, sessions: unpaid.length, acomptes, absences, paymentId };
   },
 
   // ---- Workers: badge + hourly settlement -----------------------------------
@@ -2546,6 +2643,8 @@ export const useData = create<DataStore>((set, get) => ({
     acompteIds,
     childCharges,
     childDebtIds,
+    arrearDueIds,
+    arrears,
   }) => {
     const db = get();
     const teacher = db.teachers.find((t) => t.id === teacherId);
@@ -2559,7 +2658,10 @@ export const useData = create<DataStore>((set, get) => ({
     // hold two students living two different months. The old "whole créneau"
     // selection still works for anything that has not been migrated.
     const byId = Array.isArray(dueIds);
-    const dueIdSet = new Set(dueIds ?? []);
+    // Les arriérés débloqués sont soldés par le MÊME règlement : ils suivent
+    // donc le même chemin que les dues du mois, tout en restant listés à part
+    // sur la fiche de paie et dans l'historique.
+    const dueIdSet = new Set([...(dueIds ?? []), ...(arrearDueIds ?? [])]);
     const passagerIdSet = new Set(passagerIds ?? []);
 
     const settledDues = db.unpaidTeacher.filter(
@@ -2598,9 +2700,11 @@ export const useData = create<DataStore>((set, get) => ({
     const studentsCount = detailRows.reduce((s, d) => s + (d.presents ?? 0), 0);
 
     const paymentId = uid("tpy");
+    const cashId = uid("csh");
     const settledDueIds = new Set(settledDues.map((u) => u.id));
     const settledPassagerIds = new Set(settledPassagers.map((i) => i.id));
-    const paidAmount = Math.max(amount, 0);
+    const paidAmount = positiveMoney(amount);
+    const paidAt = new Date().toISOString();
 
     // What is taken off the pay — each line settled here and only here.
     const clearedExpenses = db.teacherExpenses.filter(
@@ -2647,7 +2751,7 @@ export const useData = create<DataStore>((set, get) => ({
 
     set((state) => ({
       unpaidTeacher: state.unpaidTeacher.map((u) =>
-        settledDueIds.has(u.id) ? { ...u, paid: true } : u,
+        settledDueIds.has(u.id) ? { ...u, paid: true, paymentId } : u,
       ),
       independent: state.independent.map((i) =>
         settledPassagerIds.has(i.id) ? { ...i, teacherPaid: true } : i,
@@ -2675,22 +2779,24 @@ export const useData = create<DataStore>((set, get) => ({
             description?.trim() ||
             `Règlement séances ${teacher.firstName} ${teacher.lastName}`,
           details: (details ?? []) as TeacherPayment["details"],
-          gross: Math.max(0, Math.round(gross ?? paidAmount)),
+          gross: positiveMoney(gross ?? paidAmount),
           expenses: expenseSnapshot,
           acomptes: acompteSnapshot,
           childCharges: childCharges ?? [],
           childDebts: childDebtSnapshot,
           months: months ?? [],
-          paidAt: new Date().toISOString(),
+          arrears: arrears ?? [],
+          cashId,
+          paidAt,
         },
       ],
       cash: [
         ...state.cash,
         {
-          id: uid("csh"),
+          id: cashId,
           type: "teacher_payment",
           amount: -paidAmount,
-          date: new Date().toISOString(),
+          date: paidAt,
           description: `Règlement séances ${teacher.firstName} ${teacher.lastName} (${covered} créneau(x))`,
         },
       ],
@@ -2714,6 +2820,97 @@ export const useData = create<DataStore>((set, get) => ({
     }
 
     return { ok: true, paymentId, sessions: covered };
+  },
+
+  /**
+   * CORRIGER UN RÈGLEMENT — le net, la date, le libellé, et rien d'autre.
+   *
+   * Ce que le règlement a soldé n'est pas rejoué : rouvrir des présences à
+   * l'occasion d'une faute de frappe ferait réapparaître un mois déjà payé.
+   * Seul le mouvement de caisse suit le nouveau montant.
+   */
+  updateTeacherPayment: async (paymentId, fields) => {
+    const db = get();
+    const pay = db.teacherPayments.find((p) => p.id === paymentId);
+    if (!pay) return { ok: false, messageKey: "pay.notFound" };
+
+    const amount = fields.amount === undefined ? pay.amount : positiveMoney(fields.amount);
+    const paidAt = fields.paidAt || pay.paidAt;
+    const description = fields.description ?? pay.description;
+    // Le mouvement de caisse du règlement : celui qu'il a nommé, sinon celui
+    // que son montant et sa date désignent (les règlements d'avant la colonne).
+    const cash =
+      db.cash.find((c) => c.id === pay.cashId) ??
+      db.cash.find(
+        (c) =>
+          c.type === "teacher_payment" &&
+          c.amount === -pay.amount &&
+          c.date.slice(0, 10) === pay.paidAt.slice(0, 10),
+      );
+
+    set((state) => ({
+      teacherPayments: state.teacherPayments.map((p) =>
+        p.id === paymentId ? { ...p, amount, paidAt, description, cashId: cash?.id ?? p.cashId } : p,
+      ),
+      cash: cash
+        ? state.cash.map((c) =>
+            c.id === cash.id ? { ...c, amount: -amount, date: paidAt, description } : c,
+          )
+        : state.cash,
+    }));
+
+    return { ok: true };
+  },
+
+  /**
+   * ANNULER UN RÈGLEMENT — tout ce qu'il avait soldé redevient dû.
+   *
+   * Les présences repassent en attente, les dépenses, les acomptes et les
+   * scolarités portées sur le père reviennent sur le prochain règlement, et le
+   * mouvement de caisse qui l'avait payé s'en va avec lui.
+   */
+  deleteTeacherPayment: async (paymentId) => {
+    const db = get();
+    const pay = db.teacherPayments.find((p) => p.id === paymentId);
+    if (!pay) return { ok: false, messageKey: "pay.notFound" };
+
+    const expenseIds = new Set((pay.expenses ?? []).map((e) => e.id));
+    const acompteIds = new Set((pay.acomptes ?? []).map((a) => a.id));
+    const childDebtIds = new Set((pay.childDebts ?? []).map((d) => d.id));
+    const cash =
+      db.cash.find((c) => c.id === pay.cashId) ??
+      db.cash.find(
+        (c) =>
+          c.type === "teacher_payment" &&
+          c.amount === -pay.amount &&
+          c.date.slice(0, 10) === pay.paidAt.slice(0, 10),
+      );
+
+    set((state) => ({
+      teacherPayments: state.teacherPayments.filter((p) => p.id !== paymentId),
+      // Les présences que ce règlement avait soldées redeviennent dues.
+      unpaidTeacher: state.unpaidTeacher.map((u) =>
+        u.paymentId === paymentId ? { ...u, paid: false, paymentId: undefined } : u,
+      ),
+      teacherExpenses: state.teacherExpenses.map((e) =>
+        expenseIds.has(e.id) || e.paymentId === paymentId
+          ? { ...e, paid: false, paymentId: undefined }
+          : e,
+      ),
+      acomptes: state.acomptes.map((a) =>
+        acompteIds.has(a.id) || a.paymentId === paymentId
+          ? { ...a, paid: false, paymentId: undefined }
+          : a,
+      ),
+      teacherChildDebts: state.teacherChildDebts.map((d) =>
+        childDebtIds.has(d.id) || d.paymentId === paymentId
+          ? { ...d, paid: false, paymentId: undefined }
+          : d,
+      ),
+      cash: cash ? state.cash.filter((c) => c.id !== cash.id) : state.cash,
+    }));
+
+    return { ok: true, amount: pay.amount };
   },
 
   // ---- Séances: buying, owing, consuming ------------------------------------
@@ -2743,20 +2940,20 @@ export const useData = create<DataStore>((set, get) => ({
     const count = monthly ? packSeances : Math.max(0, Math.round(seances || 0));
     const discount: SubscriptionDiscount | undefined =
       discountType && (discountValue ?? 0) > 0
-        ? { type: discountType, value: Math.max(0, Math.round(discountValue!)) }
+        ? { type: discountType, value: positiveMoney(discountValue!) }
         : undefined;
 
-    const unitPrice = Math.max(0, Math.round(sub.pricePerSession || 0));
+    const unitPrice = positiveMoney(sub.pricePerSession || 0);
     const grossTotal = monthly
       ? Math.max(
           0,
-          Math.round(packagePrice ?? sub.monthlyPrice ?? packSeances * unitPrice),
+          money(packagePrice ?? sub.monthlyPrice ?? packSeances * unitPrice),
         )
       : unitPrice * count;
     // The remise applies to the whole basket, through the same helper the rest
     // of the app prices séances with — so what is charged is what was shown.
     const netTotal = netPriceFor(grossTotal, discount);
-    const paid = Math.max(0, Math.round(amountPaid || 0));
+    const paid = positiveMoney(amountPaid || 0);
     const rest = Math.max(0, netTotal - paid);
 
     const existing = db.enrollments.find(
@@ -2775,7 +2972,7 @@ export const useData = create<DataStore>((set, get) => ({
           paidSeances: monthly ? count : existing.paidSeances + count,
           consumedSeances: monthly ? 0 : existing.consumedSeances,
           // What was handed over lands on the emploi's solde.
-          balance: (existing.balance ?? 0) + Math.max(0, Math.round(amountPaid || 0)),
+          balance: money((existing.balance ?? 0) + positiveMoney(amountPaid || 0)),
           discount: discount ?? existing.discount,
           startDate: startDate ?? existing.startDate,
           expiryDate: monthly ? expiryDate : expiryDate ?? existing.expiryDate,
@@ -2788,7 +2985,7 @@ export const useData = create<DataStore>((set, get) => ({
           subscriptionId,
           paidSeances: count,
           consumedSeances: 0,
-          balance: Math.max(0, Math.round(amountPaid || 0)),
+          balance: positiveMoney(amountPaid || 0),
           discount,
           startDate: startDate ?? today,
           expiryDate,
@@ -3204,7 +3401,7 @@ export const useData = create<DataStore>((set, get) => ({
       type: "student_payment",
       amount: totals.total,
       date: when,
-      description: `Séance libre de groupe : ${label} — ${totals.students} élève(s) × ${totals.pricePerStudent} DA`,
+      description: `Séance libre de groupe : ${label} — ${totals.students} élève(s) × ${formatDA(totals.pricePerStudent)}`,
     };
     const cashOut: CashTransaction = {
       id: cashOutId,

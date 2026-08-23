@@ -35,6 +35,28 @@ export interface School {
   nis?: string;
   /** one-time registration fee charged once per student on first enrollment */
   registrationFee?: number;
+  /**
+   * QUI DOIT LES FRAIS D'INSCRIPTION.
+   *
+   * Tout le monde ne les paie pas forcément : l'école peut n'en réclamer qu'aux
+   * classes du secondaire, à trois classes précises, ou seulement aux élèves
+   * inscrits sur certains emplois du temps.
+   *
+   *  - `all`      : tous les élèves (le comportement d'origine),
+   *  - `levels`   : tous les élèves des NIVEAUX listés (`registrationFeeLevels`),
+   *  - `classes`  : uniquement les classes listées (`registrationFeeClassIds`),
+   *  - `sessions` : uniquement les emplois du temps listés
+   *                 (`registrationFeeSessionIds`).
+   *
+   * Absent = `all`, pour que les écoles déjà en base ne changent pas de règle.
+   */
+  registrationFeeScope?: RegistrationFeeScope;
+  /** `levels` : les niveaux concernés ("lycee", "moyen", …, "formation") */
+  registrationFeeLevels?: string[];
+  /** `classes` : les classes concernées */
+  registrationFeeClassIds?: string[];
+  /** `sessions` : les emplois du temps concernés */
+  registrationFeeSessionIds?: string[];
   /** master switch for the automatic weekly-absence billing */
   absencePenaltyEnabled?: boolean;
   /** floor date (YYYY-MM-DD): absences are only billed for weeks ending on/after
@@ -44,6 +66,9 @@ export interface School {
    *  a week runs from that day to the same day of the next week */
   absenceWeekStartDay?: number;
 }
+
+/** Sur QUI portent les frais d'inscription — voir `School.registrationFeeScope`. */
+export type RegistrationFeeScope = "all" | "levels" | "classes" | "sessions";
 
 export type ClassType = "cours" | "formation";
 /** School levels — "maternelle" (kindergarten) is the newest one. In the UI
@@ -137,7 +162,31 @@ export interface TeacherPayment {
   /** the emploi-du-temps MONTHS this settlement closed (M1, M2 …) — frozen so
    *  the payslip and the month table still read right once the dues are paid */
   months?: TeacherPaymentMonth[];
+  /**
+   * LES ARRIÉRÉS DÉBLOQUÉS que ce règlement a payés.
+   *
+   * Un mois déjà réglé peut encore devoir quelque chose : l'élève n'avait pas
+   * payé, la part de l'enseignant a donc été retenue. Quand l'élève s'acquitte,
+   * cette part revient — sur le règlement SUIVANT, jamais dans le mois en cours.
+   * Elle est figée ici pour que la fiche de paie et l'historique la montrent
+   * pour ce qu'elle est : un rattrapage, pas le mois du jour.
+   */
+  arrears?: TeacherPaymentArrear[];
+  /** le mouvement de caisse que ce règlement a écrit — annulé avec lui */
+  cashId?: string;
   paidAt: string;
+}
+
+/** Un arriéré débloqué, réglé par un versement postérieur au mois concerné. */
+export interface TeacherPaymentArrear {
+  studentId: string;
+  studentName: string;
+  registrationNumber?: string;
+  sessionId: string;
+  emploi: string;
+  monthCode: string;
+  seances: number;
+  amount: number;
 }
 
 /** One emploi-du-temps month closed by a settlement. */
@@ -509,6 +558,29 @@ export interface Student {
   caseReduction?: CaseReduction;
   /** school_only: teachers NOT paid for this student's presences */
   unpaidTeacherIds?: string[];
+  /**
+   * « École seulement » : SUR QUELS EMPLOIS DU TEMPS l'option est ACTIVE.
+   *
+   * Exactement comme la gratuité, l'option se coche emploi par emploi. Un élève
+   * peut suivre trois modules dont un « école seule » et deux ordinaires : sur
+   * l'emploi activé, la famille ne verse que la part de l'école, l'enseignant
+   * n'est pas payé pour lui et il n'apparaît même pas sur l'écran de paie de cet
+   * enseignant ; sur les deux autres, tout se calcule normalement.
+   *
+   * ABSENT = les fiches d'avant, pilotées par `unpaidTeacherIds` seul.
+   */
+  schoolOnlySubscriptionIds?: string[];
+  /**
+   * OÙ LA RÉCEPTION EN ÉTAIT quand elle a créé la fiche : le niveau (« classe »)
+   * et l'année choisis dans le catalogue d'inscription.
+   *
+   * Un élève peut très bien être créé avec sa classe et son année SANS emploi du
+   * temps — le créneau n'est pas encore ouvert, la famille hésite. Sans ces deux
+   * champs, l'écran de modification rouvrait sur un primaire/1AP qui ne le
+   * concernait pas et la réception devait retrouver la classe à la main.
+   */
+  enrollmentLevel?: string;
+  enrollmentYear?: string;
   parentId?: string;
   subscriptionIds: string[];
   /** formation enrollments: start/expiry per subscription id */
@@ -681,6 +753,8 @@ export interface UnpaidTeacherSession {
   amount: number;
   date: string;
   paid: boolean;
+  /** le règlement qui l'a soldée — annuler ce règlement la rend à nouveau due */
+  paymentId?: string;
 }
 
 export interface TeacherAcompte {

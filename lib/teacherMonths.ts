@@ -34,13 +34,14 @@ import {
   enrollmentCycles,
   enrollmentStart,
   formatDays,
-  groupName,
   isFreeSub,
+  isSchoolOnlySub,
   moduleName,
   monthlyPriceOf,
   netPriceFor,
   registrationNumberOf,
   salleName,
+  sessionGroupsLabel,
   sessionTimeLabel,
   studentCaseLabel,
   studentDebtSummary,
@@ -53,6 +54,7 @@ import {
   studentTeacherPerSeance,
   teacherPerSeanceOf,
 } from "@/lib/helpers";
+import { formatDA } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -182,6 +184,17 @@ export interface TeacherMonth {
   withheld: number;
   /** ce qui peut être réglé maintenant (open − withheld) */
   payable: number;
+  /**
+   * CE MOIS A DÉJÀ ÉTÉ RÉGLÉ à l'enseignant (`settled > 0`).
+   *
+   * Ce qu'il doit encore n'est alors pas « le mois » : ce sont des ARRIÉRÉS,
+   * des parts retenues à l'époque parce que l'élève n'avait pas payé et
+   * libérées depuis. L'écran de paie les sort du tableau du mois et leur donne
+   * leur propre table, pour que chaque mois reste indépendant.
+   */
+  alreadySettled: boolean;
+  /** ce que les arriérés de ce mois représentent (0 si le mois n'est pas réglé) */
+  arrearPayable: number;
   payableDueIds: string[];
   withheldDueIds: string[];
   openPassagerIds: string[];
@@ -259,10 +272,14 @@ function recordMonths(
 /**
  * Les élèves inscrits sur l'emploi, plus ceux qui y ont été pointés.
  *
- * Un élève « école seule » dont CET enseignant fait partie des non-payés n'y
- * figure pas : l'école est payée pour lui, l'enseignant ne l'est délibérément
- * pas, donc l'afficher sur une feuille de paie qui ne lui rapportera jamais
- * rien ne ferait qu'inviter une erreur de calcul.
+ * Un élève « école seule » SUR CET EMPLOI DU TEMPS n'y figure pas : l'école est
+ * payée pour lui, l'enseignant ne l'est délibérément pas, donc l'afficher sur
+ * une feuille de paie qui ne lui rapportera jamais rien ne ferait qu'inviter
+ * une erreur de calcul.
+ *
+ * L'option se coche emploi par emploi : le MÊME élève reste donc listé, et
+ * compté, sur les emplois où elle n'est pas activée — l'enseignant y touche sa
+ * part comme pour n'importe qui d'autre.
  */
 function rosterOf(
   db: Database,
@@ -277,12 +294,7 @@ function rosterOf(
   for (const a of db.attendance) if (a.sessionId === session.id) ids.add(a.studentId);
   return db.students
     .filter((st) => ids.has(st.id))
-    .filter(
-      (st) =>
-        !(
-          st.studentCase === "school_only" && (st.unpaidTeacherIds ?? []).includes(teacherId)
-        ),
-    )
+    .filter((st) => !isSchoolOnlySub(st, sub?.id, teacherId))
     .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
 }
 
@@ -392,8 +404,14 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
     recordsByStudent.get(studentId)?.find((a) => dayKeyOf(a.timestamp) === day);
 
   const duesByMonth = new Map<number, TeacherDue[]>();
+  const rosterIds = new Set(roster.map((st) => st.id));
   for (const u of db.unpaidTeacher) {
     if (u.teacherId !== teacherId || u.sessionId !== session.id) continue;
+    // Un élève « école seule » SUR CET EMPLOI n'a rien à faire ici : il est
+    // délibérément hors de la paie de cet enseignant, et une ligne à 0 DA le
+    // remettrait sur sa fiche de paie sans rien lui rapporter. Les lignes déjà
+    // écrites en base sont donc écartées comme les futures.
+    if (!rosterIds.has(u.studentId) && db.students.some((st) => st.id === u.studentId)) continue;
     const day = dayKeyOf(u.date);
     const rec = recordOn(u.studentId, day);
     const idx =
@@ -507,7 +525,7 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
   if (withheld > 0) {
     alerts.push({
       tone: "warning",
-      text: `${withheld} DA en attente — des élèves n'ont pas payé, la part revient au règlement suivant.`,
+      text: `${formatDA(withheld)} en attente — des élèves n'ont pas payé, la part revient au règlement suivant.`,
     });
   }
 
@@ -518,11 +536,8 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
       ? session.title || `Séance libre — ${moduleName(db, session.moduleId)}`
       : moduleName(db, session.moduleId) || "Emploi du temps",
     className: db.classes.find((c) => c.id === session.classId)?.name ?? "—",
-    groupName: session.isOpen
-      ? (session.groupIds?.length ? session.groupIds : [session.groupId])
-          .map((id) => groupName(db, id))
-          .join(" · ")
-      : groupName(db, session.groupId),
+    // Un emploi du temps peut réunir PLUSIEURS groupes : la paie les nomme tous.
+    groupName: sessionGroupsLabel(db, session),
     salleName: salleName(db, session.salleId),
     daysLabel: formatDays(session.days) || "—",
     timeLabel: sessionTimeLabel(session),
@@ -677,6 +692,7 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
   const open = openDues.reduce((s, d) => s + d.amount, 0);
   const withheld = openDues.filter((d) => d.withheld).reduce((s, d) => s + d.amount, 0);
 
+  const alreadySettled = settled > 0;
   const month: TeacherMonth = {
     key: `${session.id}|${code}`,
     sessionId: session.id,
@@ -703,6 +719,8 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     open,
     withheld,
     payable: open - withheld,
+    alreadySettled,
+    arrearPayable: alreadySettled ? open - withheld : 0,
     payableDueIds: openDues.filter((d) => !d.withheld).map((d) => d.id),
     withheldDueIds: openDues.filter((d) => d.withheld).map((d) => d.id),
     openPassagerIds: [],
@@ -721,17 +739,17 @@ function monthAlerts(m: TeacherMonth): TeacherAlert[] {
   if (unpaid.length > 0) {
     out.push({
       tone: "danger",
-      text: `${unpaid.length} élève(s) n'ont pas réglé ce mois — ${m.studentsDebt} DA reportés sur le mois suivant.`,
+      text: `${unpaid.length} élève(s) n'ont pas réglé ce mois — ${formatDA(m.studentsDebt)} reportés sur le mois suivant.`,
     });
   }
   if (m.withheld > 0) {
     out.push({
       tone: "warning",
-      text: `${m.withheld} DA de part enseignant retenus : réglés dès que ces élèves auront payé.`,
+      text: `${formatDA(m.withheld)} de part enseignant retenus : réglés dès que ces élèves auront payé.`,
     });
   }
   if (m.state === "done" && m.payable > 0) {
-    out.push({ tone: "primary", text: `Mois clos : ${m.payable} DA à régler à l'enseignant.` });
+    out.push({ tone: "primary", text: `Mois clos : ${formatDA(m.payable)} à régler à l'enseignant.` });
   }
   if (m.state === "running" && m.held > 0) {
     out.push({
@@ -785,7 +803,11 @@ function attachPassagers(
  */
 export function defaultPayableMonthKeys(emplois: TeacherEmploi[]): string[] {
   return emplois.flatMap((e) =>
-    e.months.filter((m) => m.state === "done" && m.payable > 0).map((m) => m.key),
+    e.months
+      // Un mois DÉJÀ réglé n'est jamais recoché : ce qu'il doit encore n'est
+      // plus « le mois », ce sont des arriérés, et ils ont leur propre table.
+      .filter((m) => m.state === "done" && m.payable > 0 && !m.alreadySettled)
+      .map((m) => m.key),
   );
 }
 
@@ -846,6 +868,103 @@ export function unpaidStudents(emplois: TeacherEmploi[]): UnpaidStudentRow[] {
     }
   }
   return out.sort((a, b) => b.debt - a.debt || a.name.localeCompare(b.name));
+}
+
+// ---------------------------------------------------------------------------
+// LES ARRIÉRÉS DÉBLOQUÉS — les élèves qui ont payé EN RETARD
+// ---------------------------------------------------------------------------
+
+/**
+ * Un élève qui a payé APRÈS que l'enseignant a été réglé pour son mois.
+ *
+ * C'est le cas que la réception vit tous les mois : au moment de régler le M1,
+ * trois élèves n'avaient rien versé, leur part a donc été RETENUE et
+ * l'enseignant a touché le M1 sans elle. Ces élèves s'acquittent ensuite, et
+ * quand vient le tour du M2, cette part de M1 est de nouveau due.
+ *
+ * Elle n'a rien à faire dans le tableau du M2 : elle appartient au M1 et se
+ * lit avec son mois d'origine. L'écran de paie lui donne donc SA PROPRE TABLE,
+ * et la fiche de paie une section à part.
+ */
+export interface UnlockedArrearRow {
+  key: string;
+  studentId: string;
+  name: string;
+  registrationNumber: string;
+  phone: string;
+  caseLabel: string;
+  sessionId: string;
+  emploi: string;
+  groupName: string;
+  monthCode: string;
+  monthIndex: number;
+  /** les séances de ce mois qui n'ont jamais été payées à l'enseignant */
+  seances: number;
+  /** les jours concernés, du plus ancien au plus récent */
+  dates: string[];
+  /** ce que l'élève a versé sur ce mois (ce qui a débloqué la part) */
+  credited: number;
+  /** ce que ces séances rapportent à l'enseignant */
+  amount: number;
+  dueIds: string[];
+}
+
+/**
+ * Tous les arriérés débloqués d'un enseignant : les parts encore dues sur des
+ * mois DÉJÀ réglés, une ligne par élève et par mois.
+ */
+export function unlockedArrears(emplois: TeacherEmploi[]): UnlockedArrearRow[] {
+  const out: UnlockedArrearRow[] = [];
+  for (const e of emplois) {
+    for (const m of e.months) {
+      if (!m.alreadySettled) continue;
+      const byStudent = new Map<string, UnlockedArrearRow>();
+      for (const d of m.dues) {
+        if (d.paid || d.withheld) continue;
+        const student = m.students.find((st) => st.studentId === d.studentId);
+        const row =
+          byStudent.get(d.studentId) ??
+          ({
+            key: `${e.sessionId}|${m.code}|${d.studentId}`,
+            studentId: d.studentId,
+            name: d.studentName,
+            registrationNumber: d.registrationNumber,
+            phone: student?.phone ?? "",
+            caseLabel: student?.caseLabel ?? "",
+            sessionId: e.sessionId,
+            emploi: e.title,
+            groupName: e.groupName,
+            monthCode: m.code,
+            monthIndex: m.index,
+            seances: 0,
+            dates: [],
+            credited: student?.credited ?? 0,
+            amount: 0,
+            dueIds: [],
+          } satisfies UnlockedArrearRow);
+        row.seances += 1;
+        row.amount += d.amount;
+        row.dueIds.push(d.id);
+        if (!row.dates.includes(d.dateKey)) row.dates.push(d.dateKey);
+        byStudent.set(d.studentId, row);
+      }
+      for (const row of byStudent.values()) {
+        row.dates.sort();
+        out.push(row);
+      }
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      a.emploi.localeCompare(b.emploi) ||
+      a.monthIndex - b.monthIndex ||
+      a.name.localeCompare(b.name),
+  );
+}
+
+/** Ce que les arriérés débloqués totalisent. */
+export function unlockedArrearsTotal(rows: UnlockedArrearRow[]): number {
+  return rows.reduce((s, r) => s + r.amount, 0);
 }
 
 // ---------------------------------------------------------------------------

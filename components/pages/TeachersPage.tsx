@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useData, uid } from "@/lib/store/data";
 import {
   createRoleUser,
@@ -28,9 +28,9 @@ import {
   Clock,
   X,
 } from "lucide-react";
-import type { Teacher, TeacherPaymentType } from "@/lib/types";
+import type { Teacher, TeacherPayment, TeacherPaymentType } from "@/lib/types";
 import { printHtmlDocument } from "@/lib/print";
-import { formatDA } from "@/lib/utils";
+import { formatDA, positiveMoney } from "@/lib/utils";
 import { buildTeacherPaymentReport } from "@/lib/reports/teacherPayment";
 import { buildTeacherSettlementReceipt } from "@/lib/reports/teacherSettlement";
 import { buildTeacherPayslip, type PayslipEmploi } from "@/lib/reports/teacherPayslip";
@@ -74,6 +74,8 @@ export function TeachersPage() {
     push,
     deleteFrom,
     updateItem,
+    updateTeacherPayment,
+    deleteTeacherPayment,
   } = db;
   const { language } = useSettings();
 
@@ -86,6 +88,74 @@ export function TeachersPage() {
   const [isAbsenceOpen, setIsAbsenceOpen] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
+  /**
+   * L'HISTORIQUE DES RÈGLEMENTS — voir, corriger, annuler.
+   *
+   * Un règlement enregistré doit pouvoir être relu dans le détail (les mois
+   * soldés, les présences, les retenues, les arriérés rattrapés), corrigé quand
+   * le montant a été mal saisi, et ANNULÉ quand il n'aurait pas dû exister —
+   * auquel cas tout ce qu'il avait soldé redevient dû.
+   */
+  const [viewedPayment, setViewedPayment] = useState<TeacherPayment | null>(null);
+  const [editedPayment, setEditedPayment] = useState<TeacherPayment | null>(null);
+  const [payAmount, setPayAmount] = useState<number>(0);
+  const [payDate, setPayDate] = useState("");
+  const [payDescription, setPayDescription] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
+
+  // La fiche relue suit le store : corriger un règlement met à jour la fenêtre
+  // ouverte au lieu d'afficher un montant périmé.
+  useEffect(() => {
+    if (!viewedPayment) return;
+    const fresh = teacherPayments.find((p) => p.id === viewedPayment.id);
+    if (!fresh) setViewedPayment(null);
+    else if (fresh !== viewedPayment) setViewedPayment(fresh);
+  }, [teacherPayments, viewedPayment]);
+
+  const openPaymentEdit = (pay: TeacherPayment) => {
+    setEditedPayment(pay);
+    setPayAmount(pay.amount);
+    setPayDate(pay.paidAt.slice(0, 10));
+    setPayDescription(pay.description);
+  };
+
+  const savePaymentEdit = async () => {
+    if (!editedPayment) return;
+    setPayBusy(true);
+    try {
+      // La date garde son heure d'origine : seul le jour se corrige ici.
+      const time = editedPayment.paidAt.slice(10) || "T00:00:00.000Z";
+      await updateTeacherPayment(editedPayment.id, {
+        amount: positiveMoney(payAmount),
+        description: payDescription.trim() || editedPayment.description,
+        paidAt: payDate ? `${payDate}${time}` : editedPayment.paidAt,
+      });
+      setEditedPayment(null);
+    } finally {
+      setPayBusy(false);
+    }
+  };
+
+  const removePayment = async (pay: TeacherPayment) => {
+    if (
+      !confirm(
+        `Annuler ce règlement de ${formatDA(pay.amount)} ?\n\n` +
+          "Tout ce qu'il avait soldé REDEVIENT DÛ : les présences repassent en attente, " +
+          "les dépenses, les acomptes et les scolarités portées sur cet enseignant " +
+          "reviendront sur son prochain règlement. Le mouvement de caisse est supprimé.",
+      )
+    ) {
+      return;
+    }
+    setPayBusy(true);
+    try {
+      await deleteTeacherPayment(pay.id);
+      setViewedPayment(null);
+      setEditedPayment(null);
+    } finally {
+      setPayBusy(false);
+    }
+  };
 
   // Form: Create/Edit Teacher
   const [firstName, setFirstName] = useState("");
@@ -419,6 +489,16 @@ export function TeachersPage() {
           expenses: [...(pay.expenses ?? []), ...(pay.childDebts ?? [])],
           acomptes: pay.acomptes ?? [],
           childCharges: pay.childCharges ?? [],
+          // Les arriérés rattrapés se réimpriment dans leur propre tableau,
+          // avec leur mois d'origine : c'est ce qui les distingue du mois payé.
+          arrears: (pay.arrears ?? []).map((a) => ({
+            studentName: a.studentName,
+            registrationNumber: a.registrationNumber,
+            emploi: a.emploi,
+            monthCode: a.monthCode,
+            seances: a.seances,
+            amount: a.amount,
+          })),
           gross: pay.gross ?? pay.amount,
           net: pay.amount,
         }),
@@ -910,7 +990,7 @@ export function TeachersPage() {
                           {t.isPassager
                             ? "Montant / %"
                             : t.paymentType === "monthly"
-                              ? `${t.monthlyAmount} DA/m`
+                              ? `${formatDA(t.monthlyAmount ?? 0)}/m`
                               : t.paymentType === "per_group"
                                 ? "Tarif emploi du temps"
                                 : `${t.percentage}% / élève`}
@@ -965,16 +1045,16 @@ export function TeachersPage() {
                       <div className="flex items-center gap-1.5">
                         {pay.withheld > 0 && (
                           <Badge tone="warning" className="font-mono font-bold text-[10px]" title="Part retenue : élèves en dette">
-                            ⏳ {pay.withheld} DA
+                            ⏳ {formatDA(pay.withheld)}
                           </Badge>
                         )}
                         {pendingDeductions > 0 && (
                           <Badge tone="danger" className="font-mono font-bold text-[10px]" title="Dépenses et acomptes à retenir">
-                            − {pendingDeductions} DA
+                            − {formatDA(pendingDeductions)}
                           </Badge>
                         )}
                         <Badge tone={owing ? "warning" : "success"} className="font-mono font-bold text-[10px]">
-                          {pay.payable} DA
+                          {formatDA(pay.payable)}
                         </Badge>
                       </div>
                     </div>
@@ -1168,7 +1248,7 @@ export function TeachersPage() {
                   {selectedTeacher.isPassager
                     ? "Réglé à la séance"
                     : selectedTeacher.paymentType === "monthly"
-                      ? `Salaire Fixe: ${selectedTeacher.monthlyAmount} DA / mois`
+                      ? `Salaire Fixe: ${formatDA(selectedTeacher.monthlyAmount ?? 0)} / mois`
                       : selectedTeacher.paymentType === "per_group"
                         ? "Rémunération: par groupe (tarif de chaque emploi du temps)"
                         : `Rémunération: ${selectedTeacher.percentage}% / séance`}
@@ -1315,7 +1395,7 @@ export function TeachersPage() {
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Recette générée</span>
-                      <strong className="text-success text-base font-mono">{revenueGenerated} DA</strong>
+                      <strong className="text-success text-base font-mono">{formatDA(revenueGenerated)}</strong>
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Total versé</span>
@@ -1366,7 +1446,7 @@ export function TeachersPage() {
                                         <span className="text-[9px] text-warning block">{r.passagers} pass.</span>
                                       )}
                                     </td>
-                                    <td className="py-1.5 text-right font-mono">{r.revenue} DA</td>
+                                    <td className="py-1.5 text-right font-mono">{formatDA(r.revenue)}</td>
                                     <td className="py-1.5 text-right">
                                       <Badge tone={r.paid ? "success" : "warning"} className="text-[9px]">
                                         {r.paid ? "Payé" : "Dû"}
@@ -1397,7 +1477,7 @@ export function TeachersPage() {
                             >
                               <div className="min-w-0">
                                 <span className="font-bold text-ink block">
-                                  {p.amount} DA
+                                  {formatDA(p.amount)}
                                   <Badge tone={p.method === "percent" ? "primary" : "neutral"} className="ml-1.5 text-[9px]">
                                     {p.method === "percent" ? `${p.percentage ?? 0}%` : "Montant fixe"}
                                   </Badge>
@@ -1410,13 +1490,37 @@ export function TeachersPage() {
                                   })}
                                 </span>
                               </div>
-                              <button
-                                onClick={() => reprintSettlement(p.id)}
-                                className="p-1.5 rounded-lg hover:bg-primary-50 text-primary shrink-0"
-                                title="Réimprimer le bon"
-                              >
-                                <Printer className="h-4 w-4" />
-                              </button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <button
+                                  onClick={() => setViewedPayment(p)}
+                                  className="rounded-lg p-1.5 text-primary hover:bg-primary-50"
+                                  title="Voir le détail de ce règlement"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => openPaymentEdit(p)}
+                                  className="rounded-lg p-1.5 text-warning hover:bg-warning/10"
+                                  title="Corriger le montant, la date ou le libellé"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => reprintSettlement(p.id)}
+                                  className="rounded-lg p-1.5 text-primary hover:bg-primary-50"
+                                  title="Réimprimer le bon"
+                                >
+                                  <Printer className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => removePayment(p)}
+                                  disabled={payBusy}
+                                  className="rounded-lg p-1.5 text-danger hover:bg-danger/10 disabled:opacity-50"
+                                  title="Annuler ce règlement"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1621,26 +1725,27 @@ export function TeachersPage() {
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Total Acomptes</span>
-                      <strong className="text-warning text-base font-mono">{teacherAcomptes.reduce((s, a) => s + a.amount, 0)} DA</strong>
+                      <strong className="text-warning text-base font-mono">{formatDA(teacherAcomptes.reduce((s, a) => s + a.amount, 0))}</strong>
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Total Dépenses</span>
-                      <strong className="text-warning text-base font-mono">{expensesOf.reduce((s, e) => s + e.amount, 0)} DA</strong>
+                      <strong className="text-warning text-base font-mono">{formatDA(expensesOf.reduce((s, e) => s + e.amount, 0))}</strong>
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Total Absences</span>
-                      <strong className="text-danger text-base font-mono">{teacherAbsences.reduce((s, a) => s + a.amount, 0)} DA</strong>
+                      <strong className="text-danger text-base font-mono">{formatDA(teacherAbsences.reduce((s, a) => s + a.amount, 0))}</strong>
                     </div>
                     <div className="bg-canvas border border-line p-3 rounded-xl text-center">
                       <span className="text-muted text-[10px] uppercase block font-semibold">Total Payé</span>
                       <strong className="text-success text-base font-mono">
-                        {settlementLogs.reduce((t, a) => t + a.amount, 0) +
-                          groupLogs.reduce((t, a) => t + a.amount, 0)}{" "}
-                        DA
+                        {formatDA(
+                          settlementLogs.reduce((t, a) => t + a.amount, 0) +
+                            groupLogs.reduce((t, a) => t + a.amount, 0),
+                        )}
                       </strong>
                       {groupLogs.length > 0 && (
                         <span className="text-[9px] text-primary block">
-                          dont {groupLogs.reduce((t, a) => t + a.amount, 0)} DA de séances de groupe
+                          dont {formatDA(groupLogs.reduce((t, a) => t + a.amount, 0))} de séances de groupe
                         </span>
                       )}
                     </div>
@@ -1665,7 +1770,7 @@ export function TeachersPage() {
                           >
                             <div className="min-w-0">
                               <strong className="block text-ink">
-                                {pay.amount} DA net
+                                {formatDA(pay.amount)} net
                                 <Badge tone="neutral" className="ml-1.5 text-[9px]">
                                   {pay.method === "percent"
                                     ? `${pay.percentage ?? 0} %`
@@ -1682,30 +1787,71 @@ export function TeachersPage() {
                                   hour: "2-digit",
                                   minute: "2-digit",
                                 })}
-                                {pay.gross != null && ` · brut ${pay.gross} DA`}
+                                {pay.gross != null && ` · brut ${formatDA(pay.gross)}`}
                                 {(pay.expenses?.length ?? 0) + (pay.acomptes?.length ?? 0) > 0 &&
                                   ` · ${(pay.expenses?.length ?? 0)} dépense(s), ${(pay.acomptes?.length ?? 0)} acompte(s) retenus`}
                                 {(pay.childDebts?.length ?? 0) > 0 &&
                                   ` · ${pay.childDebts!.length} scolarité(s) d'enfant retenue(s)`}
+                                {(pay.arrears?.length ?? 0) > 0 &&
+                                  ` · ${pay.arrears!.length} arriéré(s) débloqué(s)`}
                               </span>
                               {(pay.months ?? []).length > 0 && (
                                 <div className="mt-1 flex flex-wrap gap-1">
                                   {(pay.months ?? []).map((m, i) => (
                                     <Badge key={`${m.sessionId}-${m.monthCode}-${i}`} tone="primary" className="text-[9px]">
                                       {m.title} · {m.monthCode} · {m.seances} séance(s) ·{" "}
-                                      {m.gross} DA
+                                      {formatDA(m.gross)}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              {(pay.arrears ?? []).length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {(pay.arrears ?? []).map((a, i) => (
+                                    <Badge
+                                      key={`${a.studentId}-${a.monthCode}-${i}`}
+                                      tone="success"
+                                      className="text-[9px]"
+                                    >
+                                      ⏱ {a.studentName} · {a.emploi} {a.monthCode} ·{" "}
+                                      {formatDA(a.amount)}
                                     </Badge>
                                   ))}
                                 </div>
                               )}
                             </div>
-                            <button
-                              onClick={() => reprintSettlement(pay.id)}
-                              className="shrink-0 rounded-lg p-1.5 text-primary hover:bg-primary-50"
-                              title="Réimprimer la fiche de paie"
-                            >
-                              <Printer className="h-4 w-4" />
-                            </button>
+                            {/* Voir · Modifier · Imprimer · Supprimer */}
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                onClick={() => setViewedPayment(pay)}
+                                className="rounded-lg p-1.5 text-primary hover:bg-primary-50"
+                                title="Voir le détail de ce règlement"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => openPaymentEdit(pay)}
+                                className="rounded-lg p-1.5 text-warning hover:bg-warning/10"
+                                title="Corriger le montant, la date ou le libellé"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => reprintSettlement(pay.id)}
+                                className="rounded-lg p-1.5 text-primary hover:bg-primary-50"
+                                title="Réimprimer la fiche de paie"
+                              >
+                                <Printer className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => removePayment(pay)}
+                                disabled={payBusy}
+                                className="rounded-lg p-1.5 text-danger hover:bg-danger/10 disabled:opacity-50"
+                                title="Annuler ce règlement — tout ce qu'il a soldé redevient dû"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1744,7 +1890,7 @@ export function TeachersPage() {
                                   </td>
                                   <td className="py-1.5 text-center font-mono">{gt.students}</td>
                                   <td className="py-1.5 text-right font-mono font-bold text-warning">
-                                    {gt.teacherTotal} DA
+                                    {formatDA(gt.teacherTotal)}
                                   </td>
                                 </tr>
                               );
@@ -1762,7 +1908,7 @@ export function TeachersPage() {
                       <h4 className="text-xs font-bold uppercase tracking-wider text-warning">
                         À retenir sur le prochain règlement
                       </h4>
-                      <Badge tone="danger" className="font-mono font-bold">− {pendingTotal} DA</Badge>
+                      <Badge tone="danger" className="font-mono font-bold">− {formatDA(pendingTotal)}</Badge>
                     </div>
                     {unpaidExpenses.length === 0 && unpaidAcomptesOf.length === 0 ? (
                       <p className="text-[11px] italic text-muted">
@@ -1792,7 +1938,7 @@ export function TeachersPage() {
                                 )}
                               </td>
                               <td className="py-1.5 text-right font-mono font-bold text-danger">
-                                {e.amount} DA
+                                {formatDA(e.amount)}
                               </td>
                             </tr>
                           ))}
@@ -1811,7 +1957,7 @@ export function TeachersPage() {
                                 )}
                               </td>
                               <td className="py-1.5 text-right font-mono font-bold text-danger">
-                                {a.amount} DA
+                                {formatDA(a.amount)}
                               </td>
                             </tr>
                           ))}
@@ -1839,7 +1985,7 @@ export function TeachersPage() {
                             </div>
                             <div className="text-right shrink-0">
                               <span className="font-mono font-bold block text-sm">
-                                {log.type === "absence" ? "-" : ""}{log.amount} DA
+                                {log.type === "absence" ? "-" : ""}{formatDA(log.amount)}
                               </span>
                               <span className="text-[9px] text-muted block font-mono">{log.date}</span>
                             </div>
@@ -1942,7 +2088,7 @@ export function TeachersPage() {
                                     <span className="font-bold text-ink block">{moduleName}</span>
                                     <span className="text-[10px] text-muted">{groupName}</span>
                                   </td>
-                                  <td className="p-3 font-bold text-primary font-mono">{u.amount} DA</td>
+                                  <td className="p-3 font-bold text-primary font-mono">{formatDA(u.amount)}</td>
                                   <td className="p-3 text-right">
                                     <Badge tone={u.paid ? "success" : "warning"} className="font-bold">
                                       {u.paid ? "Payée" : "En attente"}
@@ -2164,6 +2310,319 @@ export function TeachersPage() {
             <Button onClick={handlePrintTeacherReport}>Générer & Imprimer</Button>
           </div>
         </div>
+      </Modal>
+
+      {/* -----------------------------------------------------------------
+          VOIR UN RÈGLEMENT — tout ce qu'il a soldé, en toutes lettres.
+
+          Un règlement n'est pas qu'un montant : ce sont des mois d'emplois du
+          temps, des présences, des retenues (dépenses, acomptes, scolarités
+          d'enfants) et, depuis peu, des arriérés rattrapés. Le détail est FIGÉ
+          au moment du paiement, donc il se relit à l'identique des mois plus
+          tard, même si les emplois du temps ont changé depuis.
+          ----------------------------------------------------------------- */}
+      <Modal
+        open={!!viewedPayment}
+        onClose={() => setViewedPayment(null)}
+        title="Détail du règlement"
+        wide
+      >
+        {viewedPayment && (
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                {
+                  label: "Net versé",
+                  value: formatDA(viewedPayment.amount),
+                  tone: "text-success",
+                },
+                {
+                  label: "Brut des séances",
+                  value: formatDA(viewedPayment.gross ?? viewedPayment.amount),
+                  tone: "text-ink",
+                },
+                {
+                  label: "Présences",
+                  value: String(viewedPayment.studentsCount),
+                  tone: "text-primary",
+                },
+                {
+                  label: "Créneaux réglés",
+                  value: String(viewedPayment.sessionsCount),
+                  tone: "text-primary",
+                },
+              ].map((stat) => (
+                <div key={stat.label} className="rounded-xl border border-line bg-canvas p-3 text-center">
+                  <span className="block text-[9px] font-bold uppercase tracking-wider text-muted">
+                    {stat.label}
+                  </span>
+                  <strong className={`mt-0.5 block font-mono text-base ${stat.tone}`}>
+                    {stat.value}
+                  </strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-line bg-canvas/40 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-ink">{viewedPayment.description}</span>
+                <Badge tone="neutral" className="font-mono text-[10px]">
+                  {new Date(viewedPayment.paidAt).toLocaleString("fr-DZ", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </Badge>
+              </div>
+              <span className="mt-1 block text-[10px] text-muted">
+                Mode :{" "}
+                {viewedPayment.method === "percent"
+                  ? `pourcentage (${viewedPayment.percentage ?? 0} %)`
+                  : viewedPayment.method === "group"
+                    ? "par groupe — tarif de chaque emploi du temps"
+                    : "montant fixe"}
+                {" · "}Reçu N° PAY-{viewedPayment.id.slice(0, 8).toUpperCase()}
+              </span>
+            </div>
+
+            {/* Les mois soldés */}
+            <div className="rounded-xl border border-line bg-surface p-3">
+              <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+                📅 Mois d&apos;emploi du temps soldés ({(viewedPayment.months ?? []).length})
+              </h4>
+              {(viewedPayment.months ?? []).length === 0 ? (
+                <p className="py-2 text-center text-[11px] italic text-muted">
+                  Aucun mois figé sur ce règlement.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-[11px]">
+                    <thead className="bg-canvas/60">
+                      <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                        <th className="px-2 py-1.5">Emploi du temps</th>
+                        <th className="px-2 py-1.5">Groupe</th>
+                        <th className="px-2 py-1.5 text-center">Mois</th>
+                        <th className="px-2 py-1.5 text-center">Séances</th>
+                        <th className="px-2 py-1.5 text-center">Élèves</th>
+                        <th className="px-2 py-1.5 text-right">Part enseignant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(viewedPayment.months ?? []).map((m, i) => (
+                        <tr key={`${m.sessionId}-${m.monthCode}-${i}`} className="border-t border-line/50">
+                          <td className="px-2 py-1.5 font-semibold text-ink">{m.title}</td>
+                          <td className="px-2 py-1.5 text-muted">{m.groupName}</td>
+                          <td className="px-2 py-1.5 text-center">
+                            <Badge tone="primary" className="text-[9px]">{m.monthCode}</Badge>
+                          </td>
+                          <td className="px-2 py-1.5 text-center font-mono">{m.seances}</td>
+                          <td className="px-2 py-1.5 text-center font-mono">{m.students}</td>
+                          <td className="px-2 py-1.5 text-right font-mono font-bold text-success">
+                            {formatDA(m.gross)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Les arriérés rattrapés */}
+            {(viewedPayment.arrears ?? []).length > 0 && (
+              <div className="rounded-xl border border-success/30 bg-success/5 p-3">
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-success">
+                  ⏱ Arriérés débloqués — élèves ayant payé en retard (
+                  {viewedPayment.arrears!.length})
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-[11px]">
+                    <thead className="bg-canvas/60">
+                      <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                        <th className="px-2 py-1.5">N°</th>
+                        <th className="px-2 py-1.5">Élève</th>
+                        <th className="px-2 py-1.5">Emploi du temps</th>
+                        <th className="px-2 py-1.5 text-center">Mois d&apos;origine</th>
+                        <th className="px-2 py-1.5 text-center">Séances</th>
+                        <th className="px-2 py-1.5 text-right">Part rattrapée</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {viewedPayment.arrears!.map((a, i) => (
+                        <tr key={`${a.studentId}-${a.monthCode}-${i}`} className="border-t border-line/50">
+                          <td className="px-2 py-1.5 font-mono text-[10px] text-muted">
+                            {a.registrationNumber ?? "—"}
+                          </td>
+                          <td className="px-2 py-1.5 font-semibold text-ink">{a.studentName}</td>
+                          <td className="px-2 py-1.5 text-muted">{a.emploi}</td>
+                          <td className="px-2 py-1.5 text-center">
+                            <Badge tone="primary" className="text-[9px]">{a.monthCode}</Badge>
+                          </td>
+                          <td className="px-2 py-1.5 text-center font-mono">{a.seances}</td>
+                          <td className="px-2 py-1.5 text-right font-mono font-bold text-success">
+                            {formatDA(a.amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Ce qui a été retenu */}
+            {[
+              { title: "🧾 Dépenses retenues", rows: viewedPayment.expenses ?? [] },
+              { title: "💵 Acomptes retenus", rows: viewedPayment.acomptes ?? [] },
+              {
+                title: "🎓 Scolarités d'enfants portées sur ce salaire",
+                rows: viewedPayment.childDebts ?? [],
+              },
+            ]
+              .filter((block) => block.rows.length > 0)
+              .map((block) => (
+                <div key={block.title} className="rounded-xl border border-danger/25 bg-danger/5 p-3">
+                  <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-danger">
+                    {block.title} ({block.rows.length})
+                  </h4>
+                  <table className="w-full text-[11px]">
+                    <tbody>
+                      {block.rows.map((r) => (
+                        <tr key={r.id} className="border-t border-line/50">
+                          <td className="px-2 py-1.5 font-mono text-[10px] text-muted">
+                            {formatDateFr(r.date)}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <strong className="text-ink">{r.label}</strong>
+                            {r.description && (
+                              <span className="block text-[10px] text-muted">{r.description}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono font-bold text-danger">
+                            − {formatDA(r.amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+
+            {/* Les enfants réglés sur ce salaire */}
+            {(viewedPayment.childCharges ?? []).length > 0 && (
+              <div className="rounded-xl border border-primary/25 bg-primary-50/30 p-3">
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-primary">
+                  👨‍👧 Enfants scolarisés sur ce salaire ({viewedPayment.childCharges!.length})
+                </h4>
+                {viewedPayment.childCharges!.map((c) => (
+                  <div key={c.studentId} className="border-t border-line/50 py-1.5">
+                    <strong className="text-ink">
+                      {c.studentName}
+                      {c.registrationNumber && (
+                        <span className="ml-1.5 font-mono text-[10px] text-muted">
+                          N° {c.registrationNumber}
+                        </span>
+                      )}
+                    </strong>
+                    <span className="float-right font-mono font-bold text-danger">
+                      − {formatDA(c.amount)}
+                    </span>
+                    <span className="block text-[10px] text-muted">
+                      {c.lines.map((l) => `${l.label} ${l.monthCode} (${formatDA(l.amount)})`).join(" · ")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2 border-t border-line pt-4">
+              <Button variant="outline" onClick={() => reprintSettlement(viewedPayment.id)}>
+                <Printer className="mr-1.5 h-4 w-4" /> Réimprimer
+              </Button>
+              <Button variant="outline" onClick={() => openPaymentEdit(viewedPayment)}>
+                <Edit className="mr-1.5 h-4 w-4" /> Corriger
+              </Button>
+              <Button
+                onClick={() => removePayment(viewedPayment)}
+                disabled={payBusy}
+                className="bg-danger text-white hover:bg-danger/90"
+              >
+                <Trash2 className="mr-1.5 h-4 w-4" /> Annuler le règlement
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* -----------------------------------------------------------------
+          CORRIGER UN RÈGLEMENT — le net, la date, le libellé.
+
+          Ce que le règlement a SOLDÉ n'est pas rejoué : rouvrir des présences
+          pour une faute de frappe ferait réapparaître un mois déjà payé. Pour
+          revenir vraiment en arrière, il faut l'annuler.
+          ----------------------------------------------------------------- */}
+      <Modal
+        open={!!editedPayment}
+        onClose={() => setEditedPayment(null)}
+        title="Corriger le règlement"
+      >
+        {editedPayment && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-muted">
+                  Net versé (DA)
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={payAmount || ""}
+                  onChange={(e) =>
+                    setPayAmount(positiveMoney(Number(e.target.value.replace(",", ".")) || 0))
+                  }
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-muted">Date</label>
+                <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-muted">Libellé</label>
+              <Input
+                value={payDescription}
+                onChange={(e) => setPayDescription(e.target.value)}
+                placeholder="Règlement M2 — …"
+              />
+            </div>
+            <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[10px] leading-relaxed text-warning">
+              Seuls le montant, la date et le libellé changent — le mouvement de caisse suit. Les
+              présences, les dépenses et les acomptes que ce règlement a soldés restent soldés :
+              pour les rouvrir, <strong>annulez</strong> le règlement.
+            </p>
+            <div className="flex justify-between gap-2 border-t border-line pt-4">
+              <Button
+                variant="outline"
+                onClick={() => removePayment(editedPayment)}
+                disabled={payBusy}
+                className="text-danger"
+              >
+                <Trash2 className="mr-1.5 h-4 w-4" /> Annuler le règlement
+              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setEditedPayment(null)}>
+                  Fermer
+                </Button>
+                <Button onClick={savePaymentEdit} disabled={payBusy}>
+                  {payBusy ? "Enregistrement…" : "Enregistrer"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

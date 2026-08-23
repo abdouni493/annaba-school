@@ -47,6 +47,7 @@ import {
   studentEnrollments,
   totalRemainingSeances,
 } from "@/lib/helpers";
+import { formatDA } from "@/lib/utils";
 
 interface PageProps {
   slug: string;
@@ -194,7 +195,7 @@ function ParentHomeView({
           <ul className="list-disc pl-5 font-bold">
             {indebtedChildren.map((c) => (
               <li key={c.id}>
-                {c.firstName} {c.lastName} — dette de {childInfo(c.id).debt} DA
+                {c.firstName} {c.lastName} — dette de {formatDA(childInfo(c.id).debt)}
               </li>
             ))}
           </ul>
@@ -244,7 +245,7 @@ function ParentHomeView({
                   </strong>
                   <span className="text-[9px] text-muted block mt-1 font-mono">Carte RFID: {child.rfid}</span>
                   {info.debt > 0 && (
-                    <span className="text-[9px] font-bold text-danger block">Dette : {info.debt} DA</span>
+                    <span className="text-[9px] font-bold text-danger block">Dette : {formatDA(info.debt)}</span>
                   )}
                 </div>
                 <div className="h-10 w-10 bg-primary-50 rounded-xl flex items-center justify-center text-primary font-bold">
@@ -342,7 +343,7 @@ function ParentChildrenView({
                     >
                       {c.isFree ? "Gratuit" : `${info.remaining} séance(s)`}
                     </Badge>
-                    {info.debt > 0 && <Badge tone="danger">Dette : {info.debt} DA</Badge>}
+                    {info.debt > 0 && <Badge tone="danger">Dette : {formatDA(info.debt)}</Badge>}
                   </div>
                 </div>
 
@@ -908,7 +909,7 @@ function ParentPaymentsView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-xl text-emerald-700 dark:text-emerald-200 font-black">
-                {totalPaid} DA
+                {formatDA(totalPaid)}
               </strong>
               <ArrowUpCircle className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             </div>
@@ -923,7 +924,7 @@ function ParentPaymentsView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-xl text-rose-700 dark:text-rose-200 font-black">
-                {totalDebt} DA
+                {formatDA(totalDebt)}
               </strong>
               <ArrowDownCircle className="h-5 w-5 text-rose-600 dark:text-rose-400" />
             </div>
@@ -1089,7 +1090,7 @@ function ParentPaymentsView({
                           Séances : <strong className="text-ink">{p.seancesPurchased}</strong>
                         </span>
                         <span className="text-muted">
-                          Prix séance : <strong className="text-ink">{p.unitPrice} DA</strong>
+                          Prix séance : <strong className="text-ink">{formatDA(p.unitPrice)}</strong>
                         </span>
                         <span className="text-muted">
                           Remise :{" "}
@@ -1100,7 +1101,7 @@ function ParentPaymentsView({
                           </strong>
                         </span>
                         <span className="text-muted">
-                          Net : <strong className="text-primary">{p.netTotal} DA</strong>
+                          Net : <strong className="text-primary">{formatDA(p.netTotal)}</strong>
                         </span>
                       </div>
                     )}
@@ -1109,10 +1110,10 @@ function ParentPaymentsView({
                   <div className="border-t border-line/60 pt-3 mt-3 flex items-center justify-between">
                     <span className="text-[10px] text-muted flex items-center gap-1">
                       <span className={`h-1.5 w-1.5 rounded-full ${p.rest > 0 ? "bg-danger" : "bg-success"}`} />
-                      {p.rest > 0 ? `Reste à payer : ${p.rest} DA` : "Payé intégralement"}
+                      {p.rest > 0 ? `Reste à payer : ${formatDA(p.rest)}` : "Payé intégralement"}
                     </span>
                     <Badge tone="success" className="font-mono font-bold text-xs px-2.5 py-0.5">
-                      {p.amountPaid} DA
+                      {formatDA(p.amountPaid)}
                     </Badge>
                   </div>
                 </CardBody>

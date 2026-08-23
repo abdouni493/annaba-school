@@ -23,6 +23,7 @@ import {
 } from "@/components/whatsapp/WhatsAppMessageModal";
 import { isSendablePhone } from "@/lib/whatsapp/phone";
 import { studentDebt, totalRemainingSeances } from "@/lib/helpers";
+import { formatDA } from "@/lib/utils";
 
 export function ParentsPage() {
   const db = useData();
@@ -588,7 +589,7 @@ export function ParentsPage() {
                           {c.isFree ? "Gratuit" : `${totalRemainingSeances(db, c.id)} séance(s)`}
                         </Badge>
                         {studentDebt(db, c.id) > 0 && (
-                          <Badge tone="danger">Dette : {studentDebt(db, c.id)} DA</Badge>
+                          <Badge tone="danger">Dette : {formatDA(studentDebt(db, c.id))}</Badge>
                         )}
                       </div>
                     </div>

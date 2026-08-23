@@ -23,6 +23,7 @@ import {
 } from "@/lib/whatsapp/templates";
 import type { OutgoingMessage, SendResult } from "@/lib/whatsapp/types";
 import { AlertTriangle, Check, MessageCircle, Send, X } from "lucide-react";
+import { formatDA } from "@/lib/utils";
 
 export interface WhatsAppRecipient {
   id: string;
@@ -288,7 +289,7 @@ export function WhatsAppMessageModal({
               {students.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name} — {s.remainingSeances} séance(s)
-                  {s.debt > 0 ? ` · dette ${s.debt} DA` : ""}
+                  {s.debt > 0 ? ` · dette ${formatDA(s.debt)}` : ""}
                 </option>
               ))}
             </Select>

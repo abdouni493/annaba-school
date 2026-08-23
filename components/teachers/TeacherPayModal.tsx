@@ -43,7 +43,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { printHtmlDocument } from "@/lib/print";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money, positiveMoney } from "@/lib/utils";
 import {
   cycleLead,
   cycleSlots,
@@ -64,6 +64,7 @@ import {
   studentArrearsBefore,
   teacherChildRows,
   teacherEmplois,
+  unlockedArrears,
   type ChildLineState,
   type MonthPayState,
   type TeacherChildRow,
@@ -88,6 +89,7 @@ import type {
   AttendanceStatus,
   Teacher,
   TeacherChildCharge,
+  TeacherPaymentArrear,
   TeacherPaymentDeduction,
   TeacherPaymentDetail,
   TeacherPaymentMonth,
@@ -271,7 +273,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
     if (child.amount <= 0) return;
     if (
       !confirm(
-        `Encaisser ${child.amount} DA de la famille de ${child.studentName}, maintenant ? ` +
+        `Encaisser ${formatDA(child.amount)} de la famille de ${child.studentName}, maintenant ? ` +
           "Le montant n'a alors plus à être retenu sur le salaire de son père.",
       )
     ) {
@@ -295,7 +297,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
       addToast({
         type: "success",
         title: "Encaissé auprès de la famille",
-        message: `${child.amount} DA — rien à retenir sur le salaire de son père.`,
+        message: `${formatDA(child.amount)} — rien à retenir sur le salaire de son père.`,
         studentName: child.studentName,
       });
     } finally {
@@ -309,17 +311,51 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
     [teacher, db.sessions, db.attendance, db.unpaidTeacher, db.payments, db.enrollments, db.students, db.subscriptions, db.independent],
   );
 
-  /** Ce qui doit encore quelque chose : les autres mois n'ont rien à régler. */
+  /**
+   * CHAQUE MOIS EST INDÉPENDANT.
+   *
+   * Ce qui reste dû sur un mois DÉJÀ RÉGLÉ n'est pas « le mois » : ce sont des
+   * arriérés — des parts retenues à l'époque parce que l'élève n'avait pas
+   * payé, libérées depuis. Elles ne se mélangent donc pas au mois en cours :
+   * elles sortent d'ici et ont leur propre table, plus bas.
+   */
   const owingEmplois = useMemo(
     () =>
       emplois
         .map((e) => ({
           ...e,
-          months: e.months.filter((m) => m.open > 0 || m.passagers.length > 0),
+          months: e.months.filter(
+            (m) => !m.alreadySettled && (m.open > 0 || m.passagers.length > 0),
+          ),
         }))
         .filter((e) => e.months.length > 0),
     [emplois],
   );
+
+  /**
+   * LES ARRIÉRÉS DÉBLOQUÉS — les élèves qui ont payé EN RETARD.
+   *
+   * Le cas exact que la réception vit tous les mois : au moment de régler le
+   * M1, trois élèves n'avaient rien versé, leur part a été retenue et
+   * l'enseignant a touché le M1 sans elle. Ces élèves s'acquittent ensuite ; au
+   * moment de régler le M2, ces parts de M1 sont de nouveau dues. Elles sont
+   * cochées d'office, réglées par le même versement, et listées à part — sur
+   * l'écran comme sur la fiche de paie imprimée.
+   */
+  const arrearRows = useMemo(() => unlockedArrears(emplois), [emplois]);
+  // Cochés d'office AU MONTAGE, comme les mois clos : ces parts sont dues, il
+  // n'y a aucune raison de les faire attendre un règlement de plus.
+  const [arrearKeys, setArrearKeys] = useState<string[]>(() =>
+    unlockedArrears(teacherEmplois(db, teacher.id)).map((r) => r.key),
+  );
+
+  const chosenArrears = arrearRows.filter((r) => arrearKeys.includes(r.key));
+  const arrearsTotal = chosenArrears.reduce((sum, r) => sum + r.amount, 0);
+  const arrearsAllTotal = arrearRows.reduce((sum, r) => sum + r.amount, 0);
+  const toggleArrear = (key: string) =>
+    setArrearKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
 
   const unpaidExpenses = teacherExpenses.filter((e) => e.teacherId === teacher.id && !e.paid);
   const unpaidAcomptes = acomptes.filter((a) => a.teacherId === teacher.id && !a.paid);
@@ -365,16 +401,25 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
   /** Ce qu'une présence rapporte, selon la formule choisie. */
   const dueShare = (d: TeacherDue): number => {
     if (method === "group") return d.amount;
-    if (method === "percent") return Math.round((d.fee * pct) / 100);
-    const amount = Math.max(0, Math.round(fixedAmount || 0));
-    if (chosenFees > 0) return Math.round((amount * d.fee) / chosenFees);
-    return chosenDues.length > 0 ? Math.round(amount / chosenDues.length) : 0;
+    // Les répartitions gardent leurs décimales : un pourcentage ou un partage
+    // qui ne tombe pas juste ne doit pas être arrondi à chaque présence, sinon
+    // la somme des lignes cesse d'égaler le total versé.
+    if (method === "percent") return money((d.fee * pct) / 100);
+    const amount = positiveMoney(fixedAmount || 0);
+    if (chosenFees > 0) return money((amount * d.fee) / chosenFees);
+    return chosenDues.length > 0 ? money(amount / chosenDues.length) : 0;
   };
 
-  const gross =
+  const monthsGross =
     method === "fixed"
-      ? Math.max(0, Math.round(fixedAmount || 0))
+      ? positiveMoney(fixedAmount || 0)
       : chosenDues.reduce((s, d) => s + dueShare(d), 0);
+  /**
+   * Le brut du règlement = les mois cochés + les arriérés débloqués. Un
+   * arriéré est payé au tarif de SON mois (ce que la présence avait généré),
+   * jamais au pourcentage du mois courant : il appartient au passé.
+   */
+  const gross = money(monthsGross + arrearsTotal);
 
   const monthShare = (m: TeacherMonth) => payableDuesOf(m).reduce((s, d) => s + dueShare(d), 0);
 
@@ -397,8 +442,10 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
   const acomptesTotal = chosenAcomptes.reduce((s, a) => s + a.amount, 0);
   const childrenTotal = chosenChildren.reduce((s, c) => s + c.amount, 0);
   const childDebtsTotal = chosenChildDebts.reduce((s, d) => s + d.amount, 0);
-  const deductionsTotal = expensesTotal + acomptesTotal + childrenTotal + childDebtsTotal;
-  const net = gross - deductionsTotal;
+  const deductionsTotal = money(
+    expensesTotal + acomptesTotal + childrenTotal + childDebtsTotal,
+  );
+  const net = money(gross - deductionsTotal);
 
   /** La forme figée que le règlement enregistre pour les enfants. */
   const childCharges: TeacherChildCharge[] = chosenChildren.map((c) => ({
@@ -600,8 +647,10 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 
   const submit = async () => {
     if (!teacher) return;
-    if (chosen.length === 0) {
-      alert("Sélectionnez au moins un mois à régler.");
+    // Un règlement peut ne contenir QUE des arriérés : les élèves d'un mois
+    // déjà payé se sont acquittés depuis, et c'est cela qu'on règle aujourd'hui.
+    if (chosen.length === 0 && chosenArrears.length === 0) {
+      alert("Sélectionnez au moins un mois — ou un arriéré débloqué — à régler.");
       return;
     }
     if (gross <= 0) {
@@ -610,7 +659,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
     }
     // Tout est retenu : régler quand même paierait une somme que les présences
     // ne solderaient pas — elles reviendraient au prochain paiement.
-    if (chosenDues.length === 0 && chosenPassagers.length === 0) {
+    if (chosenDues.length === 0 && chosenPassagers.length === 0 && chosenArrears.length === 0) {
       alert(
         "Aucune présence réglable dans les mois cochés : elles sont toutes retenues " +
           "parce que les élèves n'ont pas payé. Encaissez leurs soldes d'abord.",
@@ -620,8 +669,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
     if (
       net < 0 &&
       !confirm(
-        `Les retenues (${deductionsTotal} DA) dépassent le brut (${gross} DA).\n` +
-          `L'enseignant sera enregistré à ${net} DA. Continuer ?`,
+        `Les retenues (${formatDA(deductionsTotal)}) dépassent le brut (${formatDA(gross)}).\n` +
+          `L'enseignant sera enregistré à ${formatDA(net)}. Continuer ?`,
       )
     ) {
       return;
@@ -690,6 +739,17 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
       amount: d.amount,
       date: d.date,
     }));
+    /** Les arriérés, figés tels qu'ils s'impriment sur la fiche de paie. */
+    const arrearSnapshot: TeacherPaymentArrear[] = chosenArrears.map((r) => ({
+      studentId: r.studentId,
+      studentName: r.name,
+      registrationNumber: r.registrationNumber,
+      sessionId: r.sessionId,
+      emploi: r.emploi,
+      monthCode: r.monthCode,
+      seances: r.seances,
+      amount: r.amount,
+    }));
     const paidAt = new Date().toISOString();
 
     setSaving(true);
@@ -704,11 +764,18 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
         percentage: method === "percent" ? pct : undefined,
         details,
         months: monthSnapshot,
-        description: `Règlement ${chosen.map((m) => m.code).join(", ")} — ${teacher.firstName} ${teacher.lastName}`,
+        description:
+          `Règlement ${chosen.map((m) => m.code).join(", ") || "arriérés"} — ` +
+          `${teacher.firstName} ${teacher.lastName}` +
+          (chosenArrears.length > 0
+            ? ` (+ ${chosenArrears.length} arriéré(s) débloqué(s))`
+            : ""),
         expenseIds: chosenExpenses.map((e) => e.id),
         acompteIds: chosenAcomptes.map((a) => a.id),
         childCharges,
         childDebtIds: chosenChildDebts.map((d) => d.id),
+        arrearDueIds: chosenArrears.flatMap((r) => r.dueIds),
+        arrears: arrearSnapshot,
       });
 
       if (!res.ok) {
@@ -718,7 +785,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 
       onClose();
 
-      if (confirm(`Paiement de ${net} DA enregistré. Imprimer la fiche de paie ?`)) {
+      if (confirm(`Paiement de ${formatDA(net)} enregistré. Imprimer la fiche de paie ?`)) {
         printHtmlDocument(
           buildTeacherPayslip({
             teacher,
@@ -735,6 +802,16 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
             gross,
             net,
             withheld: { count: withheldStudents, amount: withheldTotal },
+            arrears: chosenArrears.map((r) => ({
+              studentName: r.name,
+              registrationNumber: r.registrationNumber,
+              emploi: r.emploi,
+              groupName: r.groupName,
+              monthCode: r.monthCode,
+              seances: r.seances,
+              dates: r.dates,
+              amount: r.amount,
+            })),
           }),
         );
       }
@@ -817,20 +894,33 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
               </div>
               <p className="text-[11px] leading-relaxed text-muted">
                 {openMonths.length} mois non réglé(s) sur {emplois.length} emploi(s) du temps —
-                dont <strong className="text-primary">{closedOwing.length} mois clos</strong>. Les
-                mois déjà payés ne sont plus listés : ce que vous voyez ci-dessous est exactement ce
-                qui reste dû.
+                dont <strong className="text-primary">{closedOwing.length} mois clos</strong>.{" "}
+                <strong className="text-ink">Chaque mois est indépendant</strong> : ce qu&apos;un
+                mois DÉJÀ réglé doit encore (un élève qui a payé en retard) ne se mélange pas au
+                mois courant — il apparaît dans la table « Arriérés débloqués »
+                {arrearsAllTotal > 0 ? (
+                  <>
+                    {" "}
+                    (<strong className="text-success">{formatDA(arrearsAllTotal)}</strong>)
+                  </>
+                ) : null}
+                , et sur la fiche de paie imprimée.
               </p>
             </div>
 
             {/* ---- résumé de la sélection ------------------------------ */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               <Stat label="Mois réglés" value={String(chosen.length)} />
               <Stat label="Présences payées" value={String(chosenDues.length)} tone="text-ink" />
               <Stat
                 label="Montant généré"
                 value={formatDA(chosenRevenue)}
                 tone="text-success"
+              />
+              <Stat
+                label="Arriérés débloqués"
+                value={formatDA(arrearsTotal)}
+                tone={arrearsTotal > 0 ? "text-success" : "text-muted"}
               />
               <Stat
                 label="Retenu (élèves en dette)"
@@ -888,8 +978,11 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                   <Input
                     type="number"
                     min={0}
+                    step="0.01"
                     value={fixedAmount || ""}
-                    onChange={(e) => setFixedAmount(Number(e.target.value))}
+                    onChange={(e) =>
+                      setFixedAmount(positiveMoney(Number(e.target.value.replace(",", ".")) || 0))
+                    }
                     placeholder="Ex: 4000"
                     className="w-48"
                   />
@@ -999,6 +1092,146 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                 </div>
               ))}
             </div>
+
+            {/* -----------------------------------------------------------
+                LES ARRIÉRÉS DÉBLOQUÉS — leur propre tableau, indépendant.
+
+                Le cas exact que la réception vit tous les mois : au moment de
+                régler le M1, des élèves n'avaient pas payé, leur part a donc
+                été RETENUE et l'enseignant a touché le M1 sans elle. Ces élèves
+                s'acquittent ensuite ; quand vient le tour du M2, ces parts de
+                M1 sont de nouveau dues.
+
+                Elles n'ont rien à faire dans le tableau du M2 : elles
+                appartiennent au M1 et se lisent avec leur mois d'origine, leurs
+                dates et leurs séances. Elles sont cochées d'office, réglées par
+                le même versement, et imprimées à part sur la fiche de paie.
+                ----------------------------------------------------------- */}
+            {arrearRows.length > 0 && (
+              <div className="overflow-hidden rounded-2xl border-2 border-success/40">
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-success/10 p-3">
+                  <div className="min-w-0">
+                    <strong className="flex items-center gap-1.5 text-sm text-success">
+                      <HandCoins className="h-4 w-4" />
+                      Arriérés débloqués — élèves ayant payé en retard (
+                      {arrearRows.length})
+                    </strong>
+                    <span className="block text-[11px] leading-relaxed text-muted">
+                      Ces parts appartiennent à des <strong className="text-ink">mois déjà
+                      réglés</strong> : elles avaient été retenues faute de paiement de
+                      l&apos;élève. Il s&apos;est acquitté depuis — elles sont donc dues
+                      aujourd&apos;hui, et réglées avec ce versement <strong>sans se mélanger au
+                      mois en cours</strong>.
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="success" className="font-mono font-bold">
+                      {formatDA(arrearsTotal)} sélectionné(s)
+                    </Badge>
+                    {arrearsTotal !== arrearsAllTotal && (
+                      <Badge tone="neutral" className="font-mono text-[10px]">
+                        sur {formatDA(arrearsAllTotal)}
+                      </Badge>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setArrearKeys(
+                          arrearKeys.length === arrearRows.length
+                            ? []
+                            : arrearRows.map((r) => r.key),
+                        )
+                      }
+                    >
+                      Tout cocher / décocher
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto bg-surface">
+                  <table className="w-full min-w-[820px] text-[11px]">
+                    <thead className="bg-canvas/60">
+                      <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                        <th className="px-2 py-2 text-center">Régler</th>
+                        <th className="px-2 py-2">N°</th>
+                        <th className="px-2 py-2">Élève</th>
+                        <th className="px-2 py-2">Emploi du temps</th>
+                        <th className="px-2 py-2 text-center">Mois d&apos;origine</th>
+                        <th className="px-2 py-2 text-center">Séances</th>
+                        <th className="px-2 py-2">Dates concernées</th>
+                        <th className="px-2 py-2 text-right">Versé par l&apos;élève</th>
+                        <th className="px-2 py-2 text-right">Part rattrapée</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {arrearRows.map((r) => {
+                        const picked = arrearKeys.includes(r.key);
+                        return (
+                          <tr
+                            key={r.key}
+                            className={`border-t border-line/60 ${
+                              picked ? "bg-success/5" : ""
+                            }`}
+                          >
+                            <td className="px-2 py-2 text-center">
+                              <input
+                                type="checkbox"
+                                checked={picked}
+                                onChange={() => toggleArrear(r.key)}
+                                className="h-4 w-4"
+                              />
+                            </td>
+                            <td className="px-2 py-2 font-mono text-[10px] text-muted">
+                              {r.registrationNumber}
+                            </td>
+                            <td className="px-2 py-2">
+                              <strong className="block text-ink">{r.name}</strong>
+                              {r.caseLabel && (
+                                <Badge tone="warning" className="mt-0.5 text-[8px]">
+                                  {r.caseLabel}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-2 py-2 text-muted">
+                              {r.emploi}
+                              <span className="block text-[9px]">{r.groupName}</span>
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <Badge tone="primary" className="font-bold text-[9px]">
+                                {r.monthCode}
+                              </Badge>
+                            </td>
+                            <td className="px-2 py-2 text-center font-mono font-bold text-ink">
+                              {r.seances}
+                            </td>
+                            <td className="px-2 py-2 font-mono text-[9px] text-muted">
+                              {r.dates.map((d) => formatDateFr(d)).join(" · ") || "—"}
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-primary">
+                              {formatDA(r.credited)}
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono font-black text-success">
+                              {formatDA(r.amount)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-success/40 bg-success/5">
+                        <td colSpan={8} className="px-2 py-2 text-right text-[10px] font-bold uppercase text-muted">
+                          Total des arriérés cochés
+                        </td>
+                        <td className="px-2 py-2 text-right font-mono text-sm font-black text-success">
+                          {formatDA(arrearsTotal)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* ---- l'école choisit ce qu'elle avance, mois par mois ------ */}
             {cover && (
@@ -1216,9 +1449,26 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                 <table className="w-full min-w-[420px] text-xs">
                   <tbody>
                     <SummaryLine
-                      label={`Total des élèves (${chosenDues.length} présence(s) sur ${chosen.length} mois)`}
-                      value={formatDA(gross)}
+                      label={`Mois réglés (${chosenDues.length} présence(s) sur ${chosen.length} mois)`}
+                      value={formatDA(monthsGross)}
                       tone="text-success"
+                    />
+                    {/* Les arriérés se lisent SUR LEUR PROPRE LIGNE : ils
+                        appartiennent à des mois déjà payés, et les fondre dans
+                        le total du mois courant rendrait le calcul illisible. */}
+                    {arrearsTotal > 0 && (
+                      <SummaryLine
+                        label={`Arriérés débloqués (${chosenArrears.length} élève-mois : ${chosenArrears
+                          .map((r) => `${r.name} ${r.monthCode}`)
+                          .join(", ")})`}
+                        value={`+ ${formatDA(arrearsTotal)}`}
+                        tone="text-success"
+                      />
+                    )}
+                    <SummaryLine
+                      label="Brut total"
+                      value={formatDA(gross)}
+                      tone="text-ink"
                     />
                     <SummaryLine
                       label={`Dépenses (${chosenExpenses.length})`}
@@ -1262,6 +1512,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                     {chosen.map((m) => m.code).join(", ") || "aucun mois"} ·{" "}
                     {chosenDues.length} présence(s)
                     {chosenPassagers.length > 0 && ` · ${chosenPassagers.length} passager(s)`}
+                    {chosenArrears.length > 0 &&
+                      ` · ${chosenArrears.length} arriéré(s) débloqué(s)`}
                   </span>
                   {withheldTotal > 0 && (
                     <span className="mt-1 block rounded-lg bg-danger/10 px-2 py-1 font-semibold text-danger">
@@ -1275,7 +1527,12 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                   <Button variant="outline" onClick={onClose}>
                     Annuler
                   </Button>
-                  <Button onClick={submit} disabled={saving || gross <= 0 || chosen.length === 0}>
+                  <Button
+                    onClick={submit}
+                    disabled={
+                      saving || gross <= 0 || (chosen.length === 0 && chosenArrears.length === 0)
+                    }
+                  >
                     {saving ? "Enregistrement..." : `Payer ${formatDA(net)}`}
                   </Button>
                 </div>

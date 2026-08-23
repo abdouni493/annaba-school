@@ -37,9 +37,17 @@ import { TeacherPages } from "@/components/pages/TeacherPages";
 import { PresenceSheet } from "@/components/attendance/PresenceSheet";
 import { CreateStudentModal } from "@/components/students/CreateStudentModal";
 import { StudentSituationModal } from "@/components/students/StudentSituationModal";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money } from "@/lib/utils";
 import {
   DAY_LABELS_FR,
+  cycleSizeOf,
+  monthlyPriceOf,
+  schoolMonthShareOf,
+  schoolPerSeanceOf,
+  seancePriceOf,
+  sessionGroupsLabel,
+  teacherMonthShareOf,
+  teacherPerSeanceOf,
   classLabel,
   dayKeyOf,
   formatDateFr,
@@ -213,6 +221,58 @@ function AdminDashboard() {
   const dayMarks = attendance.filter(
     (a) => dayKeyOf(a.timestamp) === date && dayTimings.some((s) => s.id === a.sessionId),
   ).length;
+
+  /**
+   * LE TARIF DE CHAQUE EMPLOI DU TEMPS DU JOUR, DANS LE DÉTAIL.
+   *
+   * La question que la réception se pose vingt fois par jour : « ce créneau,
+   * il coûte combien à l'élève, il rapporte combien à l'école, et combien à
+   * l'enseignant ? » Les trois nombres sortent d'une seule division — le prix
+   * du mois par le nombre de séances du mois — et cette division ne tombe
+   * presque jamais juste : 4 000 DA sur 3 séances font 1 333,33 DA, pas 1 333.
+   * Les montants sont donc affichés AVEC LEUR VIRGULE, exactement comme ils
+   * sont facturés à l'élève et payés à l'enseignant.
+   */
+  const dayTariffs = useMemo(
+    () =>
+      dayTimings.map((s) => {
+        const sub = subscriptions.find((x) => x.sessionId === s.id);
+        const size = cycleSizeOf(sub);
+        const seance = sub ? seancePriceOf(sub) : money(s.openPrice ?? 0);
+        const school = sub ? schoolPerSeanceOf(sub) : seance;
+        const teacher = sub ? teacherPerSeanceOf(sub) : 0;
+        const { roster, marked } = progressOf(s);
+        return {
+          session: s,
+          sub,
+          priced: !!sub && (sub.monthlySeances ?? 0) > 0,
+          size,
+          monthPrice: monthlyPriceOf(sub),
+          schoolMonth: sub ? schoolMonthShareOf(sub) : 0,
+          teacherMonth: sub ? teacherMonthShareOf(sub) : 0,
+          seance,
+          school,
+          teacher,
+          roster,
+          marked,
+          // Ce que la journée a effectivement produit sur ce créneau.
+          dayRevenue: money(marked * seance),
+          daySchool: money(marked * school),
+          dayTeacher: money(marked * teacher),
+        };
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dayTimings, subscriptions, progress],
+  );
+
+  const dayTotals = dayTariffs.reduce(
+    (acc, r) => ({
+      revenue: money(acc.revenue + r.dayRevenue),
+      school: money(acc.school + r.daySchool),
+      teacher: money(acc.teacher + r.dayTeacher),
+    }),
+    { revenue: 0, school: 0, teacher: 0 },
+  );
 
   const openSession = sessions.find((s) => s.id === openSessionId) ?? null;
   const openDow = JS_DAYS[new Date(`${openDate}T12:00:00`).getDay()];
@@ -713,6 +773,125 @@ function AdminDashboard() {
             Chaque emploi du temps porte sa couleur, la ligne donne son créneau horaire et la
             colonne sa salle. Un clic ouvre la feuille de présence de cette date.
           </p>
+
+          {/* -------------------------------------------------------------
+              LE COÛT D'UNE SÉANCE, EMPLOI PAR EMPLOI.
+
+              Trois nombres sortent d'une seule division — le prix du mois par
+              le nombre de séances qu'il contient : ce que l'élève paie, ce que
+              l'école garde, ce qui revient à l'enseignant. Cette division ne
+              tombe presque jamais juste (4 000 DA sur 3 séances = 1 333,33 DA),
+              alors les montants gardent leur virgule : arrondis au dinar, ils
+              faisaient dériver la paie de l'enseignant d'un mois sur l'autre.
+              ------------------------------------------------------------- */}
+          {dayTariffs.length > 0 && (
+            <div className="space-y-2 rounded-2xl border border-primary/25 bg-primary-50/20 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                  💰 Coût d&apos;une séance — emplois du temps du jour
+                </span>
+                <span className="flex flex-wrap gap-1.5">
+                  <Badge tone="success" className="font-mono text-[10px]">
+                    Encaissé aujourd&apos;hui {formatDA(dayTotals.revenue)}
+                  </Badge>
+                  <Badge tone="primary" className="font-mono text-[10px]">
+                    Part école {formatDA(dayTotals.school)}
+                  </Badge>
+                  <Badge tone="warning" className="font-mono text-[10px]">
+                    Part enseignants {formatDA(dayTotals.teacher)}
+                  </Badge>
+                </span>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+                <table className="w-full min-w-[860px] text-[11px]">
+                  <thead className="bg-canvas/60">
+                    <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                      <th className="px-2 py-1.5">Emploi du temps</th>
+                      <th className="px-2 py-1.5">Groupe(s)</th>
+                      <th className="px-2 py-1.5 text-center">Mois</th>
+                      <th className="px-2 py-1.5 text-right">Prix du mois</th>
+                      <th className="px-2 py-1.5 text-right">Séance élève</th>
+                      <th className="px-2 py-1.5 text-right">Part école / séance</th>
+                      <th className="px-2 py-1.5 text-right">Part prof / séance</th>
+                      <th className="px-2 py-1.5 text-center">Pointés</th>
+                      <th className="px-2 py-1.5 text-right">Généré ce jour</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dayTariffs.map((r) => (
+                      <tr key={r.session.id} className="border-t border-line/50">
+                        <td className="px-2 py-1.5">
+                          <strong className="text-ink">{sessionTitle(r.session)}</strong>
+                          {!r.priced && (
+                            <Badge tone="warning" className="ml-1.5 text-[8px]">
+                              sans tarif mensuel
+                            </Badge>
+                          )}
+                          <span className="block text-[9px] text-muted">
+                            {teacherName(db, r.session.teacherId)}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-muted">
+                          {sessionGroupsLabel(db, r.session)}
+                        </td>
+                        <td className="px-2 py-1.5 text-center font-mono text-muted">
+                          {r.size} séance(s)
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-ink">
+                          {formatDA(r.monthPrice)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono font-bold text-primary">
+                          {formatDA(r.seance)}
+                          <span className="block text-[8px] font-normal text-muted">
+                            {formatDA(r.monthPrice)} ÷ {r.size}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-ink">
+                          {formatDA(r.school)}
+                          <span className="block text-[8px] text-muted">
+                            {formatDA(r.schoolMonth)} ÷ {r.size}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono font-bold text-warning">
+                          {formatDA(r.teacher)}
+                          <span className="block text-[8px] font-normal text-muted">
+                            {formatDA(r.teacherMonth)} ÷ {r.size}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-center font-mono">
+                          {r.marked}/{r.roster}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono font-black text-success">
+                          {formatDA(r.dayRevenue)}
+                          <span className="block text-[8px] font-normal text-muted">
+                            dont {formatDA(r.dayTeacher)} au prof
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-primary/30 bg-primary-50/40">
+                      <td colSpan={8} className="px-2 py-2 text-right text-[10px] font-bold uppercase text-muted">
+                        Total de la journée
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono text-sm font-black text-success">
+                        {formatDA(dayTotals.revenue)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              <p className="text-[10px] leading-relaxed text-muted">
+                Prix d&apos;une séance = <strong className="text-ink">prix du mois ÷ séances du
+                mois</strong>, décimales comprises. La part de l&apos;école et celle de
+                l&apos;enseignant se divisent de la même façon : c&apos;est exactement ce que
+                l&apos;élève paie et ce que l&apos;enseignant touche sur son écran de règlement.
+              </p>
+            </div>
+          )}
         </CardBody>
       </Card>
 

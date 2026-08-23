@@ -33,6 +33,7 @@ import {
   ArrowDownCircle,
 } from "lucide-react";
 import type { Teacher, ScheduleSession, Student, AttendanceStatus } from "@/lib/types";
+import { formatDA } from "@/lib/utils";
 
 interface PageProps {
   slug: string;
@@ -190,7 +191,7 @@ function TeacherDashboardView({
               <span className="text-white/80 font-bold uppercase tracking-wider block text-[10px]">Rémunération Contrat</span>
               <strong className="text-2xl font-extrabold block mt-1">
                 {teacher.paymentType === "monthly"
-                  ? `${teacher.monthlyAmount} DA / mois`
+                  ? `${formatDA(teacher.monthlyAmount ?? 0)} / mois`
                   : teacher.paymentType === "per_group"
                     ? "Par groupe"
                     : `${teacher.percentage}% par élève`}
@@ -208,7 +209,7 @@ function TeacherDashboardView({
               <div>
                 <span className="text-muted font-bold uppercase tracking-wider block text-[10px]">Séances impayées</span>
                 <strong className="text-2xl font-extrabold text-ink block mt-1">
-                  {unpaidSessCount} séances ({unpaidSessAmount} DA)
+                  {unpaidSessCount} séances ({formatDA(unpaidSessAmount)})
                 </strong>
               </div>
             </CardBody>
@@ -911,13 +912,13 @@ function TeacherSalaryView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-lg text-primary-700 dark:text-primary-200 font-black">
-                {totalEarnedSessions} DA
+                {formatDA(totalEarnedSessions)}
               </strong>
               <DollarSign className="h-4.5 w-4.5 text-primary shrink-0" />
             </div>
             <div className="text-[9px] text-muted pt-1 flex justify-between">
-              <span>Payé: {settledSessions} DA</span>
-              <span>Attente: {pendingSessions} DA</span>
+              <span>Payé: {formatDA(settledSessions)}</span>
+              <span>Attente: {formatDA(pendingSessions)}</span>
             </div>
           </CardBody>
         </Card>
@@ -930,7 +931,7 @@ function TeacherSalaryView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-lg text-amber-700 dark:text-amber-200 font-black">
-                {totalAcomptes} DA
+                {formatDA(totalAcomptes)}
               </strong>
               <Wallet className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400 shrink-0" />
             </div>
@@ -948,7 +949,7 @@ function TeacherSalaryView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-lg text-rose-700 dark:text-rose-200 font-black">
-                {totalPenalties} DA
+                {formatDA(totalPenalties)}
               </strong>
               <AlertTriangle className="h-4.5 w-4.5 text-rose-600 dark:text-rose-400 shrink-0" />
             </div>
@@ -966,7 +967,7 @@ function TeacherSalaryView({
             </span>
             <div className="flex justify-between items-baseline">
               <strong className="text-lg font-black font-sans">
-                {netDueBalance} DA
+                {formatDA(netDueBalance)}
               </strong>
               {netDueBalance >= 0 ? (
                 <ArrowUpCircle className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -1105,7 +1106,7 @@ function TeacherSalaryView({
                             Crédit de cours
                           </span>
                           <Badge tone={s.paid ? "success" : "warning"} className="font-mono font-bold text-xs px-2.5 py-0.5">
-                            +{s.amount} DA
+                            +{formatDA(s.amount)}
                           </Badge>
                         </div>
                       </CardBody>
@@ -1197,7 +1198,7 @@ function TeacherSalaryView({
                               Paiement caisse
                             </span>
                             <Badge tone={item.isAcompte ? "warning" : "success"} className="font-mono font-bold text-xs px-2.5 py-0.5">
-                              +{Math.abs(item.amount)} DA
+                              +{formatDA(Math.abs(item.amount))}
                             </Badge>
                           </div>
                         </CardBody>
@@ -1273,7 +1274,7 @@ function TeacherSalaryView({
                             Retenue sur salaire
                           </span>
                           <Badge tone="danger" className="font-mono font-bold text-xs px-2.5 py-0.5">
-                            -{ab.cost} DA
+                            -{formatDA(ab.cost)}
                           </Badge>
                         </div>
                       </CardBody>

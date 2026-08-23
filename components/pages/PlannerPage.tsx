@@ -33,6 +33,8 @@ import {
   minutesOf,
   monthlyPriceOf,
   schoolMonthShareOf,
+  schoolPerSeanceOf,
+  sessionGroupIds,
   sessionSalleIds,
   sessionSalleOn,
   sessionTimeLabel,
@@ -41,7 +43,7 @@ import {
   teacherMonthShareOf,
   teacherPerSeanceOf,
 } from "@/lib/helpers";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money, positiveMoney } from "@/lib/utils";
 import { formatDateFr } from "@/lib/helpers";
 import { printHtmlDocument } from "@/lib/print";
 import {
@@ -151,7 +153,18 @@ export function PlannerPage() {
   const [title, setTitle] = useState("");
   const [classId, setClassId] = useState("");
   const [moduleId, setModuleId] = useState("");
-  const [groupId, setGroupId] = useState("");
+  /**
+   * LES GROUPES DE L'EMPLOI DU TEMPS — plusieurs, pas un seul.
+   *
+   * Un même créneau réunit souvent deux demi-groupes : même module, même
+   * enseignant, même salle, même heure. `groupIds` porte la liste complète et
+   * `groupId` (la colonne historique) garde le PREMIER, pour que le scan, la
+   * feuille de présence et la base continuent de lire un groupe sans rien
+   * savoir de la nouveauté.
+   */
+  const [groupIds, setGroupIds] = useState<string[]>([]);
+  const groupId = groupIds[0] ?? "";
+  const [groupSearch, setGroupSearch] = useState("");
   const [salleId, setSalleId] = useState("");
   const [teacherId, setTeacherId] = useState("");
   const [selectedDays, setSelectedDays] = useState<Day[]>([]);
@@ -179,15 +192,29 @@ export function PlannerPage() {
   const [monthPrice, setMonthPrice] = useState<number>(0);
   const [schoolShare, setSchoolShare] = useState<number>(0);
 
-  const pricePerSeance = monthSeances > 0 ? Math.round(monthPrice / monthSeances) : 0;
-  const teacherShare = Math.max(0, monthPrice - schoolShare);
-  const teacherPerSeance = monthSeances > 0 ? Math.round(teacherShare / monthSeances) : 0;
+  /**
+   * LE PRIX D'UNE SÉANCE GARDE SES DÉCIMALES.
+   *
+   * Un mois à 4 000 DA sur 3 séances vaut 1 333,33 DA la séance — pas 1 333. Et
+   * si l'école en garde 2 200, il reste 1 800 DA à l'enseignant, soit 600 DA
+   * par séance sur 3, mais 257,14 DA sur 7. Arrondir chaque division à l'entier
+   * faisait perdre ou gagner quelques dinars à chaque présence, et l'écart se
+   * voyait sur la paie du mois.
+   */
+  const pricePerSeance = monthSeances > 0 ? money(monthPrice / monthSeances) : 0;
+  const teacherShare = positiveMoney(monthPrice - schoolShare);
+  const teacherPerSeance = monthSeances > 0 ? money(teacherShare / monthSeances) : 0;
+  const schoolPerSeance =
+    monthSeances > 0 ? money(Math.min(schoolShare, monthPrice) / monthSeances) : 0;
 
   const resetPricing = () => {
     setMonthSeances(0);
     setMonthPrice(0);
     setSchoolShare(0);
   };
+
+  /** Un montant saisi à la main : les décimales sont acceptées (1 333,33). */
+  const readMoney = (value: string) => positiveMoney(Number(value.replace(",", ".")) || 0);
 
   /** Writes the tariff of the emploi du temps (and of every group of the same
    *  cours) once the créneau itself is saved. */
@@ -417,6 +444,103 @@ export function PlannerPage() {
   /** The days still waiting for a room — what the save button warns about. */
   const daysWithoutSalle = orderedDays.filter((d) => !(daySalles[d] || salleId));
 
+  /**
+   * LE CHOIX DES GROUPES — plusieurs cases à cocher, pas une liste déroulante.
+   *
+   * Un emploi du temps peut réunir deux demi-groupes sur le même créneau. Le
+   * champ se cherche par le nom quand l'école en compte beaucoup, et le premier
+   * groupe coché reste celui que la base garde en colonne `group_id`.
+   */
+  const renderGroupField = () => {
+    const q = groupSearch.trim().toLowerCase();
+    const shown = q ? groups.filter((g) => g.name.toLowerCase().includes(q)) : groups;
+    return (
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="block text-xs font-semibold text-muted font-sans">
+            Groupe(s){" "}
+            <span className="text-[10px] font-normal text-muted">
+              — plusieurs groupes possibles
+            </span>
+          </label>
+          <button
+            onClick={() => setShowAddGroup(!showAddGroup)}
+            className="text-xs text-primary hover:underline"
+          >
+            + Nouveau groupe
+          </button>
+        </div>
+
+        {showAddGroup && (
+          <div className="mb-2 flex gap-2">
+            <Input
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Nom du groupe (ex: Groupe C)"
+              className="flex-1"
+            />
+            <Button size="sm" onClick={handleCreateGroup}>
+              Créer
+            </Button>
+          </div>
+        )}
+
+        {groups.length > 6 && (
+          <div className="relative mb-2">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+            <Input
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+              placeholder="Rechercher un groupe…"
+              className="pl-9"
+            />
+          </div>
+        )}
+
+        <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl border border-line bg-canvas/30 p-2">
+          {shown.length === 0 ? (
+            <p className="p-1.5 text-[11px] italic text-muted">
+              Aucun groupe — créez-en un avec « + Nouveau groupe ».
+            </p>
+          ) : (
+            shown.map((g) => {
+              const picked = groupIds.includes(g.id);
+              const first = groupIds[0] === g.id;
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => toggleGroup(g.id)}
+                  className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                    picked
+                      ? "border-primary bg-primary text-white"
+                      : "border-line bg-surface text-ink hover:bg-primary-50"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5" /> {g.name}
+                    {first && groupIds.length > 1 && (
+                      <span className="rounded bg-white/25 px-1 py-0.5 text-[8px] font-bold">
+                        principal
+                      </span>
+                    )}
+                  </span>
+                  <input type="checkbox" checked={picked} readOnly className="h-3.5 w-3.5" />
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        <p className="mt-1 text-[10px] text-muted">
+          {groupIds.length === 0
+            ? "Aucun groupe coché — l'emploi du temps peut être créé et complété plus tard."
+            : `${groupIds.length} groupe(s) : ${groupIds.map(getGroupName).join(" · ")}.`}
+        </p>
+      </div>
+    );
+  };
+
   const handleCreateModule = () => {
     if (!newModuleName.trim()) return;
     const newId = uid("mod");
@@ -430,10 +554,14 @@ export function PlannerPage() {
     if (!newGroupName.trim()) return;
     const newId = uid("grp");
     push("groups", { id: newId, name: newGroupName });
-    setGroupId(newId);
+    setGroupIds((prev) => [...prev, newId]);
     setNewGroupName("");
     setShowAddGroup(false);
   };
+
+  /** Cocher / décocher un groupe de l'emploi du temps. */
+  const toggleGroup = (id: string) =>
+    setGroupIds((prev) => (prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id]));
 
   /**
    * Deux salles ne peuvent pas porter le même nom : l'écran choisit une salle
@@ -723,7 +851,9 @@ export function PlannerPage() {
       id: uid("ses"),
       classId,
       moduleId,
+      // `groupId` = le premier groupe (la colonne historique), `groupIds` = tous.
       groupId,
+      groupIds,
       teacherId,
       ...sallePayload(),
       ...timingPayload(),
@@ -749,6 +879,7 @@ export function PlannerPage() {
       classId,
       moduleId,
       groupId,
+      groupIds,
       teacherId,
       ...sallePayload(),
       ...timingPayload(),
@@ -794,7 +925,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
     setTitle("");
     setClassId("");
     setModuleId("");
-    setGroupId("");
+    setGroupIds([]);
+    setGroupSearch("");
     setSalleId("");
     setTeacherId("");
     setTeacherSearch("");
@@ -812,7 +944,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
     setTitle(s.title || "");
     setClassId(s.classId);
     setModuleId(s.moduleId);
-    setGroupId(s.groupId);
+    setGroupIds(sessionGroupIds(s));
+    setGroupSearch("");
     setSalleId(s.salleId);
     setTeacherId(s.teacherId);
     setTeacherSearch("");
@@ -861,7 +994,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
             <td style="font-weight:bold;">${L.days[day]}</td>
             <td style="font-family:monospace; font-weight:700;">${sessionTimesOn(s, day).startTime} – ${sessionTimesOn(s, day).endTime}</td>
             <td>${getModuleName(s.moduleId)}</td>
-            <td>${getGroupName(s.groupId)}</td>
+            <td>${sessionGroupIds(s).map(getGroupName).join(" · ")}</td>
             <td>${getClassName(s.classId)}</td>
             <td>${getTeacherName(s.teacherId)}</td>
             <td>${getSalleName(s.salleId)}</td>
@@ -880,7 +1013,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
             <td style="width:18%; font-weight:bold; color:#5c567a;">${L.module} :</td>
             <td style="width:32%; font-weight:bold; font-size:1.1em;">${getModuleName(s.moduleId)}</td>
             <td style="width:18%; font-weight:bold; color:#5c567a;">${L.group} :</td>
-            <td style="width:32%;">${getGroupName(s.groupId)}</td>
+            <td style="width:32%;">${sessionGroupIds(s).map(getGroupName).join(" · ")}</td>
           </tr>
           <tr>
             <td style="font-weight:bold; color:#5c567a;">${L.classLevel} :</td>
@@ -1428,7 +1561,9 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 <option value="">Tous les cours</option>
                 {sessions.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.isOpen ? `🎯 ${sessionTitle(s)}` : `${sessionTitle(s)} - ${getGroupName(s.groupId)}`}
+                    {s.isOpen
+                      ? `🎯 ${sessionTitle(s)}`
+                      : `${sessionTitle(s)} - ${sessionGroupIds(s).map(getGroupName).join(" · ")}`}
                   </option>
                 ))}
               </Select>
@@ -1563,7 +1698,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                               </strong>
                               <span className="block text-[9px] opacity-80 font-bold truncate">
                                 {s.isOpen
-                                  ? `Séance libre · ${openSessionPrice(s)} DA`
+                                  ? `Séance libre · ${formatDA(openSessionPrice(s))}`
                                   : getClassName(s.classId)}
                               </span>
                             </div>
@@ -1629,8 +1764,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                             )}
                             <Badge tone="primary" className="font-bold">
                               {s.isOpen
-                                ? `${(s.groupIds ?? [s.groupId]).length} groupe(s)`
-                                : getGroupName(s.groupId)}
+                                ? `${sessionGroupIds(s).length} groupe(s)`
+                                : sessionGroupIds(s).map(getGroupName).join(" · ") || "—"}
                             </Badge>
                           </div>
                         </div>
@@ -1676,7 +1811,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                               </div>
                               <div className="flex items-center gap-2">
                                 <Users className="h-3.5 w-3.5 text-primary shrink-0" />
-                                <span>Tarif séance: <strong className="text-primary">{openSessionPrice(s)} DA</strong></span>
+                                <span>Tarif séance: <strong className="text-primary">{formatDA(openSessionPrice(s))}</strong></span>
                               </div>
                             </>
                           )}
@@ -2084,34 +2219,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               )}
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-muted font-sans">Groupe</label>
-                <button onClick={() => setShowAddGroup(!showAddGroup)} className="text-xs text-primary hover:underline">
-                  + Nouveau groupe
-                </button>
-              </div>
-              {showAddGroup ? (
-                <div className="flex gap-2">
-                  <Input
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    placeholder="Nom du groupe (ex: Groupe C)"
-                    className="flex-1"
-                  />
-                  <Button size="sm" onClick={handleCreateGroup}>Créer</Button>
-                </div>
-              ) : (
-                <Select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="w-full">
-                  <option value="">Sélectionner un groupe</option>
-                  {groups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </div>
+            {renderGroupField()}
 
             {renderSalleField()}
 
@@ -2127,7 +2235,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               <span className="text-[10px] text-muted block font-semibold mb-1 font-sans">Nom suggéré de l&apos;emploi du temps</span>
               <div className="font-bold text-ink line-clamp-2">
                 {classId ? classes.find((c) => c.id === classId)?.name : "?"} -{" "}
-                {moduleId ? getModuleName(moduleId) : "?"} (Gr: {groupId ? getGroupName(groupId) : "?"} / Salle:{" "}
+                {moduleId ? getModuleName(moduleId) : "?"} (Gr:{" "}
+                {groupIds.length ? groupIds.map(getGroupName).join(" · ") : "?"} / Salle:{" "}
                 {salleId ? getSalleName(salleId) : "?"}) par {teacherId ? getTeacherName(teacherId) : "?"}
               </div>
             </div>
@@ -2172,7 +2281,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 type="number"
                 min={0}
                 value={monthPrice || ""}
-                onChange={(e) => setMonthPrice(Math.max(0, Number(e.target.value) || 0))}
+                onChange={(e) => setMonthPrice(readMoney(e.target.value))}
+                step="0.01"
                 placeholder="Ex: 4000"
               />
             </div>
@@ -2196,7 +2306,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 min={0}
                 max={monthPrice || undefined}
                 value={schoolShare || ""}
-                onChange={(e) => setSchoolShare(Math.max(0, Number(e.target.value) || 0))}
+                onChange={(e) => setSchoolShare(readMoney(e.target.value))}
+                step="0.01"
                 placeholder="Ex: 2200"
               />
             </div>
@@ -2226,7 +2337,9 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               garde <strong className="text-ink">{formatDA(Math.min(schoolShare, monthPrice))}</strong>,
               l&apos;enseignant reçoit <strong className="text-success">{formatDA(teacherShare)}</strong>{" "}
               soit <strong className="text-success">{formatDA(teacherPerSeance)}</strong> par séance
-              assurée.
+              assurée — et l&apos;école <strong className="text-primary">{formatDA(schoolPerSeance)}</strong>{" "}
+              par séance. Les divisions gardent leurs décimales : un mois qui ne tombe pas juste se
+              répartit au centime, jamais arrondi au dinar.
             </p>
           ) : (
             <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[10px] text-warning">
@@ -2283,17 +2396,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               </Select>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Groupe</label>
-              <Select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="w-full">
-                <option value="">Sélectionner un groupe</option>
-                {groups.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {renderGroupField()}
 
             {renderSalleField()}
 
@@ -2343,7 +2446,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 type="number"
                 min={0}
                 value={monthPrice || ""}
-                onChange={(e) => setMonthPrice(Math.max(0, Number(e.target.value) || 0))}
+                onChange={(e) => setMonthPrice(readMoney(e.target.value))}
+                step="0.01"
                 placeholder="Ex: 4000"
               />
             </div>
@@ -2367,7 +2471,8 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 min={0}
                 max={monthPrice || undefined}
                 value={schoolShare || ""}
-                onChange={(e) => setSchoolShare(Math.max(0, Number(e.target.value) || 0))}
+                onChange={(e) => setSchoolShare(readMoney(e.target.value))}
+                step="0.01"
                 placeholder="Ex: 2200"
               />
             </div>
@@ -2397,7 +2502,9 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               garde <strong className="text-ink">{formatDA(Math.min(schoolShare, monthPrice))}</strong>,
               l&apos;enseignant reçoit <strong className="text-success">{formatDA(teacherShare)}</strong>{" "}
               soit <strong className="text-success">{formatDA(teacherPerSeance)}</strong> par séance
-              assurée.
+              assurée — et l&apos;école <strong className="text-primary">{formatDA(schoolPerSeance)}</strong>{" "}
+              par séance. Les divisions gardent leurs décimales : un mois qui ne tombe pas juste se
+              répartit au centime, jamais arrondi au dinar.
             </p>
           ) : (
             <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[10px] text-warning">
@@ -2435,7 +2542,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                   <div>
                     <span className="text-[10px] text-muted block uppercase">Tarif séance</span>
-                    <strong className="text-primary">{openSessionPrice(selectedSession)} DA</strong>
+                    <strong className="text-primary">{formatDA(openSessionPrice(selectedSession))}</strong>
                   </div>
                   <div>
                     <span className="text-[10px] text-muted block uppercase">Classes</span>
@@ -2446,7 +2553,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                   <div>
                     <span className="text-[10px] text-muted block uppercase">Groupes</span>
                     <strong className="text-ink">
-                      {(selectedSession.groupIds ?? [selectedSession.groupId]).map(getGroupName).join(" · ")}
+                      {sessionGroupIds(selectedSession).map(getGroupName).join(" · ")}
                     </strong>
                   </div>
                   <div>
@@ -2475,9 +2582,12 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 <span className="font-semibold text-ink">{getClassName(selectedSession.classId)}</span>
               </div>
               <div>
-                <span className="text-[10px] text-muted block uppercase font-sans">Groupe / Salle</span>
+                <span className="text-[10px] text-muted block uppercase font-sans">
+                  Groupe(s) / Salle
+                </span>
                 <span className="font-semibold text-ink">
-                  {getGroupName(selectedSession.groupId)} - {getSalleName(selectedSession.salleId)}
+                  {sessionGroupIds(selectedSession).map(getGroupName).join(" · ") || "—"} -{" "}
+                  {getSalleName(selectedSession.salleId)}
                 </span>
               </div>
               <div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useData, uid } from "@/lib/store/data";
 import {
+  COURS_LEVELS,
   classLabel,
   courseKeyOf,
   formatDateFr,
@@ -10,13 +11,16 @@ import {
   hasMonthlyPlan,
   monthlyPriceOf,
   monthlySeancesValue,
+  registrationFeeScopeLabel,
   schoolMonthShareOf,
+  schoolPerSeanceOf,
+  sessionGroupsLabel,
   studentName,
   teacherMonthShareOf,
   teacherPerSeanceOf,
   todayIso,
 } from "@/lib/helpers";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money, positiveMoney } from "@/lib/utils";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -43,9 +47,16 @@ import {
   Gift,
   Power,
 } from "lucide-react";
-import type { FreePeriod, FreePeriodStat, Subscription, ScheduleSession } from "@/lib/types";
+import type {
+  FreePeriod,
+  FreePeriodStat,
+  RegistrationFeeScope,
+  Subscription,
+  ScheduleSession,
+} from "@/lib/types";
 
 export function SubscriptionsPage() {
+  const db = useData();
   const {
     school,
     subscriptions: allSubscriptions,
@@ -102,20 +113,89 @@ export function SubscriptionsPage() {
   const [schoolMonthShare, setSchoolMonthShare] = useState<number>(0);
   const [busy, setBusy] = useState(false);
 
-  // The teacher's share is always the remainder of the month price, and his
-  // per-séance pay is that remainder spread over the séances of the month.
-  const teacherMonthShare = Math.max(0, (monthlyPrice || 0) - (schoolMonthShare || 0));
+  /**
+   * LA RÉPARTITION SE FAIT AU CENTIME, PAS AU DINAR.
+   *
+   * La part de l'enseignant est toujours le reste du prix du mois, et sa paie
+   * par séance ce reste divisé par les séances du mois. Cette division tombe
+   * rarement juste — 1 000 DA sur 3 séances font 333,33 DA — et l'arrondir à
+   * l'entier faisait dériver sa paie de quelques dinars à chaque présence.
+   */
+  const teacherMonthShare = positiveMoney((monthlyPrice || 0) - (schoolMonthShare || 0));
   const teacherPerSeanceCalc =
-    monthlySeances > 0 ? Math.max(0, Math.round(teacherMonthShare / monthlySeances)) : 0;
+    monthlySeances > 0 ? money(teacherMonthShare / monthlySeances) : 0;
+  const schoolPerSeanceCalc =
+    monthlySeances > 0 ? money((schoolMonthShare || 0) / monthlySeances) : 0;
+  const seancePriceCalc = monthlySeances > 0 ? money((monthlyPrice || 0) / monthlySeances) : 0;
+
+  /** Un montant saisi à la main : la virgule est acceptée (1 333,33). */
+  const readMoney = (value: string) => positiveMoney(Number(value.replace(",", ".")) || 0);
 
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
   // Global one-time registration fee (school-wide setting)
   const [registrationFee, setRegistrationFee] = useState<number>(school?.registrationFee ?? 0);
   const [feeSaved, setFeeSaved] = useState(false);
+  /**
+   * QUI DOIT LES FRAIS D'INSCRIPTION.
+   *
+   * Tout le monde ne les paie pas forcément : l'école peut ne les réclamer
+   * qu'aux classes du secondaire, à trois classes précises, ou seulement aux
+   * élèves inscrits sur certains emplois du temps. Le périmètre choisi ici est
+   * exactement celui que l'écran « Nouvel élève » interroge avant de réclamer
+   * quoi que ce soit à la famille.
+   */
+  const [feeScope, setFeeScope] = useState<RegistrationFeeScope>(
+    school?.registrationFeeScope ?? "all",
+  );
+  const [feeLevels, setFeeLevels] = useState<string[]>(school?.registrationFeeLevels ?? []);
+  const [feeClassIds, setFeeClassIds] = useState<string[]>(school?.registrationFeeClassIds ?? []);
+  const [feeSessionIds, setFeeSessionIds] = useState<string[]>(
+    school?.registrationFeeSessionIds ?? [],
+  );
+  const [feeSessionSearch, setFeeSessionSearch] = useState("");
+
+  const toggleIn = (list: string[], id: string) =>
+    list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+
+  /** Les emplois du temps proposés à la recherche du périmètre « emplois ». */
+  const feeSessionOptions = useMemo(() => {
+    const q = feeSessionSearch.trim().toLowerCase();
+    return sessions
+      .map((se) => {
+        const cls = classes.find((c) => c.id === se.classId);
+        return {
+          id: se.id,
+          label: se.title || modules.find((m) => m.id === se.moduleId)?.name || "Emploi du temps",
+          className: cls?.name ?? "—",
+          year: cls?.type === "formation" ? cls.formationLevel ?? "" : cls?.year ?? "",
+          groups: sessionGroupsLabel(db, se),
+          teacher: (() => {
+            const t = teachers.find((x) => x.id === se.teacherId);
+            return t ? `${t.firstName} ${t.lastName}` : "—";
+          })(),
+          days: formatDays(se.days),
+        };
+      })
+      .filter(
+        (o) =>
+          !q ||
+          `${o.label} ${o.className} ${o.year} ${o.groups} ${o.teacher} ${o.days}`
+            .toLowerCase()
+            .includes(q),
+      )
+      .sort((a, b) => a.className.localeCompare(b.className) || a.label.localeCompare(b.label));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, classes, modules, teachers, feeSessionSearch]);
 
   const handleSaveRegistrationFee = () => {
-    updateSchool({ registrationFee: Math.max(0, registrationFee || 0) });
+    updateSchool({
+      registrationFee: positiveMoney(registrationFee || 0),
+      registrationFeeScope: feeScope,
+      registrationFeeLevels: feeScope === "levels" ? feeLevels : [],
+      registrationFeeClassIds: feeScope === "classes" ? feeClassIds : [],
+      registrationFeeSessionIds: feeScope === "sessions" ? feeSessionIds : [],
+    });
     setFeeSaved(true);
     setTimeout(() => setFeeSaved(false), 2000);
   };
@@ -460,9 +540,10 @@ export function SubscriptionsPage() {
                 type="number"
                 min={0}
                 value={monthlyPrice || ""}
+                step="0.01"
                 onChange={(e) => {
                   setMonthlyPriceDirty(true);
-                  setMonthlyPrice(Number(e.target.value));
+                  setMonthlyPrice(readMoney(e.target.value));
                 }}
                 placeholder={String(monthComputedTotal || 4000)}
               />
@@ -474,7 +555,7 @@ export function SubscriptionsPage() {
                   }}
                   className="mt-1 text-[10px] font-bold text-primary hover:underline"
                 >
-                  Reprendre le total calculé ({monthComputedTotal} DA)
+                  Reprendre le total calculé ({formatDA(monthComputedTotal)})
                 </button>
               )}
             </div>
@@ -492,10 +573,9 @@ export function SubscriptionsPage() {
               min={0}
               max={monthlyPrice || undefined}
               value={schoolMonthShare || ""}
+              step="0.01"
               onChange={(e) =>
-                setSchoolMonthShare(
-                  Math.min(Math.max(0, Number(e.target.value) || 0), monthlyPrice || 0),
-                )
+                setSchoolMonthShare(Math.min(readMoney(e.target.value), monthlyPrice || 0))
               }
               placeholder="Ex: 2000"
             />
@@ -508,31 +588,50 @@ export function SubscriptionsPage() {
           <div className="space-y-1 rounded-xl border border-line bg-surface p-3 text-xs">
             <div className="flex justify-between">
               <span className="text-muted">
-                Total calculé ({monthlySeances || 0} × {pricePerSession || 0} DA) :
+                Total calculé ({monthlySeances || 0} × {formatDA(pricePerSession || 0)}) :
               </span>
-              <strong className="text-ink">{monthComputedTotal} DA</strong>
+              <strong className="text-ink">{formatDA(monthComputedTotal)}</strong>
             </div>
             <div className="flex justify-between border-t border-line pt-1">
               <span className="font-semibold text-muted">Prix du mois facturé :</span>
-              <strong className="text-sm text-primary">{monthlyPrice || 0} DA</strong>
+              <strong className="text-sm text-primary">{formatDA(monthlyPrice || 0)}</strong>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted">Prix d&apos;une séance du mois :</span>
+              <strong className="text-ink">
+                {formatDA(seancePriceCalc)}
+                <span className="ml-1 font-normal text-[10px] text-muted">
+                  ({formatDA(monthlyPrice || 0)} ÷ {monthlySeances || 0})
+                </span>
+              </strong>
             </div>
             <div className="flex justify-between">
               <span className="text-muted">Part de l&apos;école :</span>
-              <strong className="text-ink">{schoolMonthShare || 0} DA</strong>
+              <strong className="text-ink">
+                {formatDA(schoolMonthShare || 0)}
+                <span className="ml-1 font-normal text-[10px] text-muted">
+                  soit {formatDA(schoolPerSeanceCalc)} / séance
+                </span>
+              </strong>
             </div>
             <div className="flex justify-between">
               <span className="text-muted">Part de l&apos;enseignant :</span>
-              <strong className="text-success">{teacherMonthShare} DA</strong>
+              <strong className="text-success">{formatDA(teacherMonthShare)}</strong>
             </div>
             <div className="flex justify-between border-t border-line pt-1">
               <span className="font-semibold text-muted">Paie enseignant / séance :</span>
               <strong className="text-sm text-primary">
-                {teacherPerSeanceCalc} DA
+                {formatDA(teacherPerSeanceCalc)}
                 <span className="ml-1 font-normal text-[10px] text-muted">
-                  ({teacherMonthShare} ÷ {monthlySeances || 0})
+                  ({formatDA(teacherMonthShare)} ÷ {monthlySeances || 0})
                 </span>
               </strong>
             </div>
+            <p className="border-t border-line pt-1 text-[10px] leading-relaxed text-muted">
+              Les divisions gardent leurs <strong className="text-ink">décimales</strong> : un mois
+              qui ne tombe pas juste se répartit au centime près, jamais arrondi au dinar — sinon la
+              paie de l&apos;enseignant dérive de quelques dinars à chaque séance.
+            </p>
             {monthSaving !== 0 && monthlySeances > 0 && (
               <div className="flex justify-between">
                 <span className="text-muted">
@@ -540,7 +639,7 @@ export function SubscriptionsPage() {
                 </span>
                 <strong className={monthSaving > 0 ? "text-success" : "text-warning"}>
                   {monthSaving > 0 ? "−" : "+"}
-                  {Math.abs(monthSaving)} DA
+                  {formatDA(Math.abs(monthSaving))}
                 </strong>
               </div>
             )}
@@ -614,7 +713,7 @@ export function SubscriptionsPage() {
                   {nameOf(salles, sib.salleId)}
                 </span>
                 <Badge tone={priced ? "success" : "warning"} className="text-[9px] px-1.5 py-0">
-                  {priced ? `Actuel: ${priced.pricePerSession} DA` : "Sans tarif"}
+                  {priced ? `Actuel: ${formatDA(priced.pricePerSession)}` : "Sans tarif"}
                 </Badge>
               </div>
             );
@@ -633,40 +732,230 @@ export function SubscriptionsPage() {
         </Button>
       </div>
 
-      {/* Global one-time registration fee (school-wide, set once and editable) */}
+      {/* -----------------------------------------------------------------
+          LES FRAIS D'INSCRIPTION — leur montant, ET QUI LES DOIT.
+
+          Tout le monde ne les paie pas forcément. L'école choisit ici son
+          périmètre : tous les élèves, tout un NIVEAU (« tout le secondaire »),
+          certaines CLASSES, ou seulement les élèves inscrits sur certains
+          EMPLOIS DU TEMPS — qui se cherchent par leur nom. L'écran « Nouvel
+          élève » interroge exactement ce périmètre : un enfant qui ne coche que
+          des emplois hors périmètre ne se voit rien réclamer.
+          ----------------------------------------------------------------- */}
       <Card className="mb-6">
-        <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-end">
-          <div className="flex flex-1 items-start gap-3">
-            <div className="rounded-xl bg-primary-50 p-2.5 text-primary">
-              <Wallet className="h-5 w-5" />
+        <CardBody className="space-y-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div className="flex flex-1 items-start gap-3">
+              <div className="rounded-xl bg-primary-50 p-2.5 text-primary">
+                <Wallet className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-ink">Frais d&apos;inscription uniques</h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Payés une seule fois par élève, à sa première inscription. Choisissez le montant
+                  puis <strong className="text-ink">qui doit les régler</strong>.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-ink">Frais d&apos;inscription uniques</h3>
-              <p className="mt-0.5 text-xs text-muted">
-                Frais payés une seule fois par étudiant lors de sa première inscription. Modifiable à tout moment.
-              </p>
+            <div className="flex items-end gap-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-muted">Montant (DA)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={registrationFee || ""}
+                  onChange={(e) => setRegistrationFee(readMoney(e.target.value))}
+                  placeholder="Ex: 1000"
+                  className="w-32"
+                />
+              </div>
+              <Button onClick={handleSaveRegistrationFee} className="flex items-center gap-2">
+                {feeSaved ? (
+                  <>
+                    <Check className="h-4 w-4" /> Enregistré
+                  </>
+                ) : (
+                  "Enregistrer"
+                )}
+              </Button>
             </div>
           </div>
-          <div className="flex items-end gap-2">
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Montant (DA)</label>
-              <Input
-                type="number"
-                value={registrationFee || ""}
-                onChange={(e) => setRegistrationFee(Number(e.target.value))}
-                placeholder="Ex: 1000"
-                className="w-32"
-              />
+
+          {/* Qui les doit ? */}
+          <div className="space-y-3 rounded-2xl border border-primary/25 bg-primary-50/25 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                🎯 Qui doit payer ces frais ?
+              </span>
+              <Badge tone="primary" className="text-[9px]">
+                {registrationFeeScopeLabel(db, {
+                  ...(school ?? ({} as never)),
+                  registrationFeeScope: feeScope,
+                  registrationFeeLevels: feeLevels,
+                  registrationFeeClassIds: feeClassIds,
+                  registrationFeeSessionIds: feeSessionIds,
+                })}
+              </Badge>
             </div>
-            <Button onClick={handleSaveRegistrationFee} className="flex items-center gap-2">
-              {feeSaved ? (
-                <>
-                  <Check className="h-4 w-4" /> Enregistré
-                </>
-              ) : (
-                "Enregistrer"
-              )}
-            </Button>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(
+                [
+                  { value: "all", label: "Tous les élèves", hint: "Aucune exception" },
+                  { value: "levels", label: "Par niveau", hint: "Ex: tout le secondaire" },
+                  { value: "classes", label: "Par classe", hint: "Classes choisies" },
+                  { value: "sessions", label: "Par emploi du temps", hint: "Créneaux choisis" },
+                ] as { value: RegistrationFeeScope; label: string; hint: string }[]
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFeeScope(opt.value)}
+                  className={`rounded-xl border px-2.5 py-2 text-left text-[11px] font-semibold transition-colors ${
+                    feeScope === opt.value
+                      ? "border-primary bg-primary text-white"
+                      : "border-line bg-surface text-ink hover:bg-primary-50"
+                  }`}
+                >
+                  <span className="block">{opt.label}</span>
+                  <span
+                    className={`block text-[9px] font-normal ${
+                      feeScope === opt.value ? "text-white/80" : "text-muted"
+                    }`}
+                  >
+                    {opt.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {feeScope === "levels" && (
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ...COURS_LEVELS.map((l) => ({ value: l.value as string, label: l.label })),
+                  { value: "formation", label: "Formations" },
+                ].map((l) => {
+                  const picked = feeLevels.includes(l.value);
+                  return (
+                    <button
+                      key={l.value}
+                      type="button"
+                      onClick={() => setFeeLevels(toggleIn(feeLevels, l.value))}
+                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                        picked
+                          ? "border-primary bg-primary text-white"
+                          : "border-line bg-surface text-ink hover:bg-primary-50"
+                      }`}
+                    >
+                      {l.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {feeScope === "classes" && (
+              <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-line bg-surface p-2">
+                {classes.length === 0 ? (
+                  <p className="p-1.5 text-[11px] italic text-muted">Aucune classe enregistrée.</p>
+                ) : (
+                  classes.map((c) => {
+                    const picked = feeClassIds.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setFeeClassIds(toggleIn(feeClassIds, c.id))}
+                        className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors ${
+                          picked
+                            ? "border-primary bg-primary text-white"
+                            : "border-line bg-surface text-ink hover:bg-primary-50"
+                        }`}
+                      >
+                        <span className="font-semibold">
+                          {c.name}
+                          <span
+                            className={`ml-1.5 text-[9px] font-normal ${
+                              picked ? "text-white/80" : "text-muted"
+                            }`}
+                          >
+                            {c.type === "formation" ? c.formationLevel : `${c.coursLevel ?? ""} ${c.year ?? ""}`}
+                          </span>
+                        </span>
+                        <input type="checkbox" checked={picked} readOnly className="h-3.5 w-3.5" />
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {feeScope === "sessions" && (
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+                  <Input
+                    value={feeSessionSearch}
+                    onChange={(e) => setFeeSessionSearch(e.target.value)}
+                    placeholder="Rechercher un emploi du temps (module, classe, groupe, enseignant…)"
+                    className="pl-9"
+                  />
+                </div>
+                <div className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-line bg-surface p-2">
+                  {feeSessionOptions.length === 0 ? (
+                    <p className="p-1.5 text-[11px] italic text-muted">
+                      Aucun emploi du temps ne correspond à cette recherche.
+                    </p>
+                  ) : (
+                    feeSessionOptions.map((o) => {
+                      const picked = feeSessionIds.includes(o.id);
+                      return (
+                        <button
+                          key={o.id}
+                          type="button"
+                          onClick={() => setFeeSessionIds(toggleIn(feeSessionIds, o.id))}
+                          className={`flex w-full items-start justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition-colors ${
+                            picked
+                              ? "border-primary bg-primary text-white"
+                              : "border-line bg-surface text-ink hover:bg-primary-50"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <strong className="block">{o.label}</strong>
+                            <span
+                              className={`block text-[9px] ${picked ? "text-white/80" : "text-muted"}`}
+                            >
+                              {o.className}
+                              {o.year ? ` · ${o.year}` : ""} · {o.groups} · {o.teacher}
+                              {o.days ? ` · ${o.days}` : ""}
+                            </span>
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={picked}
+                            readOnly
+                            className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                          />
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                {feeSessionIds.length > 0 && (
+                  <p className="text-[10px] text-muted">
+                    {feeSessionIds.length} emploi(s) du temps soumis aux frais d&apos;inscription.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <p className="rounded-xl border border-line bg-surface p-2.5 text-[10px] leading-relaxed text-muted">
+              À la création d&apos;un élève, l&apos;écran ne réclame les frais que si l&apos;un des
+              emplois du temps cochés entre dans ce périmètre. Il propose alors de les encaisser
+              tout de suite <strong className="text-ink">ou de créer la fiche avec la dette</strong>,
+              qui reste visible jusqu&apos;à son règlement.
+            </p>
           </div>
         </CardBody>
       </Card>
@@ -786,7 +1075,7 @@ export function SubscriptionsPage() {
                     )}
                     <div className="flex justify-between text-muted">
                       <span>Prix d&apos;une séance:</span>
-                      <strong className="text-primary">{sub.pricePerSession} DA</strong>
+                      <strong className="text-primary">{formatDA(sub.pricePerSession)}</strong>
                     </div>
                     {hasMonthlyPlan(sub) && (
                       <>
@@ -797,7 +1086,7 @@ export function SubscriptionsPage() {
                         <div className="flex justify-between text-muted">
                           <span>Prix du mois:</span>
                           <strong className="text-primary">
-                            {monthlyPriceOf(sub)} DA
+                            {formatDA(monthlyPriceOf(sub))}
                             {monthlySeancesValue(sub) > monthlyPriceOf(sub) && (
                               <span className="ms-1 font-normal text-muted line-through">
                                 {monthlySeancesValue(sub)}
@@ -813,7 +1102,7 @@ export function SubscriptionsPage() {
                         </div>
                         <div className="flex justify-between text-muted">
                           <span>Paie ens. / séance:</span>
-                          <strong className="text-primary">{teacherPerSeanceOf(sub)} DA</strong>
+                          <strong className="text-primary">{formatDA(teacherPerSeanceOf(sub))}</strong>
                         </div>
                       </>
                     )}
@@ -855,7 +1144,7 @@ export function SubscriptionsPage() {
                 <div className="border-t border-line pt-3 mt-3 flex items-center justify-between text-xs">
                   <span className="text-muted">Séances vendues</span>
                   <strong className="text-success font-bold text-sm bg-success/10 px-2 py-1 rounded-lg">
-                    {totalGains} DA
+                    {formatDA(totalGains)}
                   </strong>
                 </div>
               </CardBody>
@@ -946,9 +1235,9 @@ export function SubscriptionsPage() {
                               isSelected ? "bg-white/20" : "bg-success/15 text-success"
                             }`}
                           >
-                            {priced.pricePerSession} DA
+                            {formatDA(priced.pricePerSession)}
                             {hasMonthlyPlan(priced) &&
-                              ` · ${monthlyPriceOf(priced)} DA/mois`}
+                              ` · ${formatDA(monthlyPriceOf(priced))}/mois`}
                           </span>
                         )}
                         {isSelected && <span className="text-xs font-bold bg-white/20 px-2 py-0.5 rounded">Sélectionné</span>}
@@ -1129,7 +1418,7 @@ export function SubscriptionsPage() {
                 <div className="bg-surface border border-line p-4 rounded-xl space-y-3">
                   <div className="flex justify-between items-center text-sm border-b border-line pb-2">
                     <span className="text-muted">Prix d&apos;une séance:</span>
-                    <strong className="text-primary font-bold">{selectedSub.pricePerSession} DA</strong>
+                    <strong className="text-primary font-bold">{formatDA(selectedSub.pricePerSession)}</strong>
                   </div>
                   {hasMonthlyPlan(selectedSub) && (
                     <>
@@ -1142,9 +1431,9 @@ export function SubscriptionsPage() {
                       <div className="flex justify-between items-center text-sm border-b border-line pb-2">
                         <span className="text-muted">Prix du mois:</span>
                         <strong className="text-primary font-bold">
-                          {monthlyPriceOf(selectedSub)} DA
+                          {formatDA(monthlyPriceOf(selectedSub))}
                           <span className="ms-1 text-[10px] font-normal text-muted">
-                            (séances à l&apos;unité : {monthlySeancesValue(selectedSub)} DA)
+                            (séances à l&apos;unité : {formatDA(monthlySeancesValue(selectedSub))})
                           </span>
                         </strong>
                       </div>
@@ -1164,7 +1453,7 @@ export function SubscriptionsPage() {
                   )}
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-muted font-semibold">Séances vendues (total encaissé):</span>
-                    <strong className="text-success font-extrabold text-lg">{calculateSubscriptionGains(selectedSub)} DA</strong>
+                    <strong className="text-success font-extrabold text-lg">{formatDA(calculateSubscriptionGains(selectedSub))}</strong>
                   </div>
                 </div>
               </div>
@@ -1179,7 +1468,7 @@ export function SubscriptionsPage() {
                         <div className="flex items-center justify-between">
                           <strong className="text-ink font-semibold">{nameOf(groups, sib.groupId)}</strong>
                           <Badge tone={priced ? "success" : "warning"} className="text-[9px] px-1.5 py-0">
-                            {priced ? `${priced.pricePerSession} DA` : "Sans tarif"}
+                            {priced ? `${formatDA(priced.pricePerSession)}` : "Sans tarif"}
                           </Badge>
                         </div>
                         <span className="mt-0.5 block text-[10px] text-muted">

@@ -35,6 +35,7 @@ import {
   printDocument,
   signaturesHtml,
 } from "@/lib/printTemplates";
+import { formatDA } from "@/lib/utils";
 
 const LABELS = {
   fr: {
@@ -45,7 +46,7 @@ const LABELS = {
     phone: "Téléphone :",
     email: "Email :",
     contract: "Rémunération :",
-    monthlyContract: (a: number) => `Fixe Mensuel (${a} DA/mois)`,
+    monthlyContract: (a: number) => `Fixe Mensuel (${formatDA(a)}/mois)`,
     percentContract: (p: number) => `Pourcentage — ${p}% par élève présent`,
     passagerContract: "Enseignant passager (réglé à la séance)",
     groupContract: "Par groupe — tarif enseignant de chaque emploi du temps",
