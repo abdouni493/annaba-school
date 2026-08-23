@@ -131,6 +131,9 @@ export interface TeacherPayment {
   acomptes?: TeacherPaymentDeduction[];
   /** his children's inscriptions, settled out of his pay */
   childCharges?: TeacherChildCharge[];
+  /** the child schoolings that had ALREADY been credited and booked on him
+   *  (`TeacherChildDebt`), cleared by this settlement */
+  childDebts?: TeacherPaymentDeduction[];
   /** the emploi-du-temps MONTHS this settlement closed (M1, M2 …) — frozen so
    *  the payslip and the month table still read right once the dues are paid */
   months?: TeacherPaymentMonth[];
@@ -174,6 +177,41 @@ export interface TeacherChildCharge {
   /** what he owes, emploi by emploi */
   lines: { subscriptionId: string; label: string; monthCode: string; amount: number }[];
   amount: number;
+}
+
+/**
+ * UNE SCOLARITÉ D'ENFANT PORTÉE EN DETTE SUR SON PÈRE ENSEIGNANT.
+ *
+ * Un fils d'enseignant n'a pas à attendre la paie de son père pour être en
+ * règle : la réception peut solder son mois depuis la feuille de présence du
+ * groupe, sans ouvrir le moindre écran de paie. Deux chemins s'offrent alors,
+ * et l'un d'eux écrit cette ligne :
+ *
+ *  - « la famille paie maintenant » : l'argent entre en caisse comme n'importe
+ *    quel versement, et RIEN n'est retenu au père (aucune ligne ici) ;
+ *  - « à porter sur le salaire du père » : le solde de l'enfant est crédité
+ *    tout de suite — ses mois cessent d'être en dette, la part que ses séances
+ *    rapportent à l'enseignant se débloque — et le montant est inscrit ICI, en
+ *    attente. Le prochain règlement du père le lit, le retient sur son net et
+ *    le passe à `paid` : il ne peut donc être retenu qu'UNE fois.
+ */
+export interface TeacherChildDebt {
+  id: string;
+  /** l'enseignant père sur qui la somme est portée */
+  teacherId: string;
+  studentId: string;
+  /** l'emploi du temps crédité (absent = une dette hors emploi : restes, frais) */
+  subscriptionId?: string;
+  /** le mois de cet emploi qui a été soldé (M1, M2 …) */
+  monthCode?: string;
+  /** ce que la ligne dit sur la fiche de paie */
+  label: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  /** déjà retenu sur un règlement — il ne revient jamais sur le suivant */
+  paid?: boolean;
+  paymentId?: string;
+  createdAt?: string;
 }
 
 export interface TeacherPaymentDetail {
@@ -272,6 +310,19 @@ export interface ScheduleSession {
   salleIds?: string[];
   /** price of one séance libre (mirrored into the auto-created subscription) */
   openPrice?: number;
+  /**
+   * Le jour où la réception a SUPPRIMÉ cet emploi du temps (YYYY-MM-DD).
+   *
+   * Un emploi du temps n'est jamais effacé : le supprimer l'ARCHIVE. La ligne
+   * reste en base, donc les présences qui y ont été pointées, les soldes et les
+   * paiements des élèves, et les parts déjà dues à l'enseignant continuent de
+   * s'afficher — avec le nom du module, du groupe et de la salle. Il disparaît
+   * simplement des écrans qui servent à travailler aujourd'hui (grille, feuille
+   * de présence, catalogue d'inscription).
+   *
+   * Absent = emploi du temps vivant.
+   */
+  archivedAt?: string;
 }
 
 /**
@@ -306,6 +357,9 @@ export interface Subscription {
    *  teacherMonthShare / monthlySeances. Stored so every settlement reads it
    *  directly instead of recomputing. */
   teacherPerSeance?: number;
+  /** l'emploi du temps de ce tarif a été supprimé : le tarif est archivé avec
+   *  lui, pour que les soldes et les paiements qu'il porte restent lisibles */
+  archivedAt?: string;
 }
 
 /**
@@ -508,12 +562,17 @@ export type PaymentType = "subscription_payment" | "debt_payment";
  * WHERE the money of a movement came from:
  *  - `cash`: the family handed it over at the desk (the default),
  *  - `teacher_salary`: it was taken off a teacher-father's pay — no cash moved,
+ *  - `teacher_debt`: the school credited a teacher-father's child NOW and
+ *     booked what it cost ON THE FATHER, to be taken off his NEXT settlement
+ *     (see `TeacherChildDebt`). No cash moved either: the school will simply
+ *     hand him less. It is the deferred twin of `teacher_salary` — the child is
+ *     settled today, the father pays for it on payday,
  *  - `school_cash`: the SCHOOL covered the student's debt out of its own
  *     caisse, so the teacher could be settled today. The caisse then carries
  *     both movements: the payment booked on the student, and the outflow that
  *     paid for it.
  */
-export type PaymentSource = "cash" | "teacher_salary" | "school_cash";
+export type PaymentSource = "cash" | "teacher_salary" | "teacher_debt" | "school_cash";
 
 /**
  * One cash movement of a student: either a purchase of séances (with its

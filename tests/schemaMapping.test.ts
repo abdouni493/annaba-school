@@ -62,7 +62,7 @@ describe("the column map matches supabase/schema.sql", () => {
   it("covers every collection of the store exactly once", () => {
     const tables = specs.map(([, spec]) => spec.table);
     expect(new Set(tables).size).toBe(tables.length);
-    expect(COLLECTION_ORDER.length).toBe(33);
+    expect(COLLECTION_ORDER.length).toBe(34);
   });
 
   for (const [key, spec] of specs) {

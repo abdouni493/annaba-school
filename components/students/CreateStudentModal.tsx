@@ -11,9 +11,16 @@
  * sheet (where the emploi du temps of the group arrives pre-ticked).
  *
  * Reception types the identity, picks the billing case, ticks the emplois du
- * temps the student follows and — for EACH of them — how much the family pays
- * now: that money becomes the opening SOLDE of that emploi. Saving offers the
- * bon d'inscription, which prints the identity, the emplois and every solde.
+ * temps the student follows and — for EACH of them — L'AVANCE que la famille
+ * verse aujourd'hui : cet argent devient le SOLDE d'ouverture de cet emploi.
+ *
+ * L'enregistrement propose alors DEUX documents, dans cet ordre :
+ *  1. le REÇU DE L'AVANCE, dès qu'un dinar a été versé — c'est une entrée
+ *     d'argent, elle mérite sa propre pièce, avec le mois crédité et le solde
+ *     qui en résulte emploi par emploi. Le versement part en même temps dans la
+ *     caisse et dans l'historique des paiements de l'élève ;
+ *  2. le BON D'INSCRIPTION, qui récapitule l'identité, les emplois du temps et
+ *     ce qui a été versé sur chacun.
  *
  * La GRATUITÉ se coche emploi du temps par emploi du temps : un « cas spécial »
  * arrive avec tous ses emplois cochés « offert », et décocher l'un d'eux le
@@ -37,7 +44,11 @@ import { Badge } from "@/components/ui/Badge";
 import { BookOpen, Check, Gift, Trash2, Wallet } from "lucide-react";
 import { createRoleUser, resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
 import { formatDA } from "@/lib/utils";
-import { inscriptionVoucherHtml } from "@/lib/reports/documents";
+import {
+  inscriptionVoucherHtml,
+  soldReceiptHtml,
+  type SoldReceiptLine,
+} from "@/lib/reports/documents";
 import { PrintAsk } from "@/components/attendance/PresenceSheet";
 import {
   ClassTimingPicker,
@@ -85,24 +96,37 @@ export interface StudentFicheProps {
   onCreated?: (student: Student) => void;
 }
 
+/** Un document que la fiche propose d'imprimer une fois enregistrée. */
+export interface PrintOffer {
+  html: string;
+  question: string;
+}
+
 export function CreateStudentModal(props: StudentFicheProps) {
-  /** The bon d'inscription lives OUT here: it is offered once the screen has
-   *  closed, so it must survive the form's unmount. */
-  const [voucher, setVoucher] = useState<string | null>(null);
+  /**
+   * Les documents vivent HORS du formulaire : ils sont proposés une fois
+   * l'écran fermé, donc ils doivent survivre à son démontage. Ils sont proposés
+   * l'un après l'autre — le reçu de l'avance d'abord, parce que c'est de
+   * l'argent et que la famille l'attend au guichet, le bon d'inscription
+   * ensuite — et refuser le premier n'empêche jamais d'imprimer le second.
+   */
+  const [offers, setOffers] = useState<PrintOffer[]>([]);
+  const current = offers[0];
   return (
     <>
       {props.open && (
         <StudentFiche
           key={props.student?.id ?? `new|${(props.defaultSubIds ?? []).join("|")}`}
           {...props}
-          onVoucher={setVoucher}
+          onPrintOffers={setOffers}
         />
       )}
-      {voucher && (
+      {current && (
         <PrintAsk
-          html={voucher}
-          onClose={() => setVoucher(null)}
-          question="Imprimer le bon d'inscription de l'élève ?"
+          key={current.question}
+          html={current.html}
+          onClose={() => setOffers((prev) => prev.slice(1))}
+          question={current.question}
         />
       )}
     </>
@@ -115,8 +139,8 @@ function StudentFiche({
   joinDate,
   student: editing,
   onCreated,
-  onVoucher,
-}: StudentFicheProps & { onVoucher: (html: string) => void }) {
+  onPrintOffers,
+}: StudentFicheProps & { onPrintOffers: (offers: PrintOffer[]) => void }) {
   const db = useData();
   const {
     school,
@@ -447,18 +471,28 @@ function StudentFiche({
       push("students", student);
       await setStudentPassword(studentId, password);
 
-      // Each solde is credited on its own emploi, on the month he COMES IN on:
-      // a child registered during M2 pays for M2, never for a month he missed.
-      // Les emplois offerts sont sautes : il n’y a rien a encaisser dessus.
+      // L'AVANCE est créditée sur son propre emploi, au mois où l'élève ENTRE :
+      // un enfant inscrit en M2 paie pour M2, jamais pour un mois qu'il a
+      // manqué. Chaque versement laisse sa trace dans la caisse et dans
+      // l'historique des paiements de l'élève, comme n'importe quel autre.
+      // Les emplois offerts sont sautés : il n'y a rien à encaisser dessus.
+      const advanceLines: SoldReceiptLine[] = [];
       for (const subId of paidSubIds) {
         const amount = Math.max(0, Math.round(solds[subId] || 0));
         if (amount <= 0) continue;
-        await addSold({
+        const code = joinPointOf(subId).monthCode;
+        const res = await addSold({
           studentId,
           subscriptionId: subId,
           amount,
-          monthCode: joinPointOf(subId).monthCode,
-          description: `Inscription — solde initial (${subLabel(subId)})`,
+          monthCode: code,
+          description: `Avance à l'inscription (${subLabel(subId)})`,
+        });
+        advanceLines.push({
+          label: subLabel(subId),
+          monthCode: res.monthCode ?? code,
+          amount,
+          balanceAfter: res.balance ?? amount,
         });
       }
 
@@ -474,26 +508,47 @@ function StudentFiche({
         studentName: `${firstName} ${lastName}`,
       });
 
-      onVoucher(
-        inscriptionVoucherHtml(db, {
-          student,
-          language,
-          registrationFee: registrationDue,
-          lines: subIds.map((subId) => {
-            const sub = subscriptions.find((s) => s.id === subId);
-            const offered = freeOn(subId);
-            return {
-              // Le bon d’inscription dit ce que la famille paie réellement :
-              // un emploi offert y apparaît à 0 DA et le dit en toutes lettres.
-              label: offered ? `${subLabel(subId)} (offert)` : subLabel(subId),
-              monthSeances: cycleSizeOf(sub),
-              unitPrice: offered ? 0 : sub?.pricePerSession ?? 0,
-              sold: offered ? 0 : Math.max(0, Math.round(solds[subId] || 0)),
-              monthCode: joinPointOf(subId).monthCode,
-            };
-          }),
+      const voucher = inscriptionVoucherHtml(db, {
+        student,
+        language,
+        registrationFee: registrationDue,
+        lines: subIds.map((subId) => {
+          const sub = subscriptions.find((s) => s.id === subId);
+          const offered = freeOn(subId);
+          return {
+            // Le bon d'inscription dit ce que la famille paie réellement :
+            // un emploi offert y apparaît à 0 DA et le dit en toutes lettres.
+            label: offered ? `${subLabel(subId)} (offert)` : subLabel(subId),
+            monthSeances: cycleSizeOf(sub),
+            unitPrice: offered ? 0 : sub?.pricePerSession ?? 0,
+            sold: offered ? 0 : Math.max(0, Math.round(solds[subId] || 0)),
+            monthCode: joinPointOf(subId).monthCode,
+          };
         }),
-      );
+      });
+
+      // De l'argent a changé de main : il lui faut sa propre pièce, offerte
+      // AVANT le bon d'inscription. C'est ce reçu-là que la famille repart avec.
+      onPrintOffers([
+        ...(advanceLines.length > 0
+          ? [
+              {
+                html: soldReceiptHtml(db, {
+                  student,
+                  language,
+                  title: "Reçu d'avance — inscription",
+                  lines: advanceLines,
+                  note:
+                    registrationDue > 0
+                      ? `Frais d'inscription de ${formatDA(registrationDue)} portés à sa fiche, à régler séparément.`
+                      : undefined,
+                }),
+                question: `Imprimer le reçu de l'avance de ${formatDA(totalSold)} ?`,
+              },
+            ]
+          : []),
+        { html: voucher, question: "Imprimer le bon d'inscription de l'élève ?" },
+      ]);
 
       onCreated?.(student);
       setBusy(false);
@@ -729,7 +784,23 @@ function StudentFiche({
               </span>
             </div>
 
-            <ClassTimingPicker selectedSubIds={subIds} onToggle={toggleTiming} />
+            {isEdit && (
+              <p className="text-[10px] leading-relaxed text-muted">
+                Le tableau ci-dessous rappelle sa <strong>classe</strong>, son{" "}
+                <strong>année</strong> et les <strong>emplois du temps</strong> qu&apos;il suit,
+                avec le solde de chacun. Retirez-en un, cochez-en un autre dans la liste, puis{" "}
+                <strong>Enregistrer les modifications</strong> : ce qui part est désinscrit sans
+                rien perdre de son historique, ce qui arrive l&apos;inscrit là où en est le groupe.
+              </p>
+            )}
+
+            <ClassTimingPicker
+              selectedSubIds={subIds}
+              onToggle={toggleTiming}
+              student={editing}
+              savedSubIds={editing?.subscriptionIds}
+              showCurrent
+            />
 
             {subIds.length > 0 && (
               <div className="space-y-2">
@@ -737,7 +808,7 @@ function StudentFiche({
                   <Wallet className="h-3 w-3" />{" "}
                   {isEdit
                     ? "Solde à AJOUTER sur chaque emploi du temps (laisser 0 pour ne rien encaisser)"
-                    : "Solde versé pour chaque emploi du temps"}
+                    : "Avance versée pour chaque emploi du temps (laisser 0 s'il ne paie rien aujourd'hui)"}
                 </span>
                 {subIds.map((subId) => {
                   const sub = subscriptions.find((s) => s.id === subId);
@@ -827,7 +898,7 @@ function StudentFiche({
                           <>
                             <div>
                               <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                                {isEdit ? "Solde à ajouter (DA)" : "Solde payé (DA)"}
+                                {isEdit ? "Solde à ajouter (DA)" : "Avance versée (DA)"}
                               </label>
                               <Input
                                 type="number"
@@ -863,10 +934,20 @@ function StudentFiche({
 
                 <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary-50/40 px-3 py-2">
                   <span className="text-xs font-semibold text-muted">
-                    {isEdit ? "Total encaissé maintenant" : "Total versé à l'inscription"}
+                    {isEdit ? "Total encaissé maintenant" : "Avance totale versée à l'inscription"}
                   </span>
                   <strong className="text-sm text-primary">{formatDA(totalSold)}</strong>
                 </div>
+
+                {!isEdit && totalSold > 0 && (
+                  <p className="rounded-xl border border-success/40 bg-success/10 p-2.5 text-[10px] leading-relaxed text-success">
+                    🧾 Après la création, l&apos;écran proposera d&apos;imprimer le{" "}
+                    <strong>reçu de cette avance</strong> puis le{" "}
+                    <strong>bon d&apos;inscription</strong>. L&apos;avance entre dans la caisse et
+                    apparaît aussitôt dans l&apos;historique des paiements de l&apos;élève, emploi
+                    du temps et mois compris.
+                  </p>
+                )}
 
                 <p className="text-[10px] text-muted">
                   ℹ️ L&apos;élève entre sur chaque emploi du temps LÀ OÙ EN EST LE GROUPE : son

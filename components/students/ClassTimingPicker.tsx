@@ -1,18 +1,27 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Clock, MapPin, Search, Users, X } from "lucide-react";
+import { Clock, GraduationCap, MapPin, Search, Users, X } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
 import { Input, Select } from "@/components/ui/SearchInput";
 import { useData } from "@/lib/store/data";
 import {
   COURS_LEVELS,
   courseKeyOf,
+  coursLevelLabel,
   formatDays,
+  groupName,
   hasMonthlyPlan,
+  isFreeSub,
+  moduleName,
   monthlyPriceOf,
+  salleName,
+  sessionTimeLabel,
+  soldFor,
+  teacherName,
 } from "@/lib/helpers";
 import { formatDA } from "@/lib/utils";
-import type { CoursLevel } from "@/lib/types";
+import type { CoursLevel, Student } from "@/lib/types";
 
 /**
  * One sellable timing of a class: the schedule row plus the tariff it is sold
@@ -86,10 +95,13 @@ export function useClassTimings() {
   const timingsOf = (classId: string): ClassTimingOption[] => {
     const cls0 = classes.find((c) => c.id === classId);
     const rows = sessions
+      // Un emploi du temps supprimé n'est plus au catalogue : on ne peut plus y
+      // inscrire personne, même si sa ligne reste en base pour l'historique.
+      .filter((s) => !s.archivedAt)
       .filter((s) => s.classId === classId || s.classIds?.includes(classId))
       .flatMap((s) => {
         const sub = subscriptions.find((x) => x.sessionId === s.id);
-        if (!sub) return [];
+        if (!sub || sub.archivedAt) return [];
         const cls = classes.find((c) => c.id === s.classId);
         const mod = modules.find((m) => m.id === s.moduleId)?.name ?? "Module";
         const t = teachers.find((te) => te.id === s.teacherId);
@@ -205,6 +217,168 @@ export function useClassTimings() {
 }
 
 /**
+ * « OÙ EN EST-IL, LÀ, MAINTENANT ? » — les inscriptions en cours de l'élève,
+ * écrites en toutes lettres au-dessus du catalogue.
+ *
+ * Avant de déplacer un enfant, la réception a besoin de voir ce qu'il suit
+ * DÉJÀ : dans quelle classe, sur quelle année, sur quels emplois du temps, avec
+ * quel enseignant et à quelles heures. Sans ce rappel, cocher un créneau dans la
+ * liste du dessous relève du pari — c'est justement ainsi qu'on inscrit un élève
+ * de 4AP sur un créneau de 3AP sans s'en apercevoir.
+ *
+ * Le tableau lit la SÉLECTION EN COURS, pas seulement ce qui est enregistré :
+ * dans un écran de modification, il montre donc l'état dans lequel la fiche sera
+ * sauvegardée, ligne ajoutée comprise. Chaque ligne se retire d'un clic.
+ */
+export function CurrentInscriptions({
+  subIds,
+  student,
+  savedSubIds,
+  onRemove,
+  title = "Inscriptions actuelles de l'élève",
+}: {
+  /** les emplois du temps cochés — ce que la fiche portera une fois enregistrée */
+  subIds: string[];
+  /** la fiche, quand elle existe : elle apporte le solde et les cas de gratuité */
+  student?: Student | null;
+  /** ce que la fiche porte DÉJÀ en base, pour distinguer les ajouts en attente */
+  savedSubIds?: string[];
+  /** retirer cet emploi du temps de la sélection */
+  onRemove?: (subId: string) => void;
+  title?: string;
+}) {
+  const db = useData();
+  const { subscriptions, sessions, classes } = db;
+
+  const rows = subIds.flatMap((subId) => {
+    const sub = subscriptions.find((s) => s.id === subId);
+    if (!sub) return [];
+    const session = sessions.find((s) => s.id === sub.sessionId);
+    if (!session) return [];
+    const cls = classes.find((c) => c.id === session.classId);
+    return [
+      {
+        subId,
+        label: session.title || moduleName(db, session.moduleId) || "Emploi du temps",
+        className: cls?.name ?? "—",
+        levelLabel:
+          cls?.type === "formation"
+            ? `Formation ${cls.formationLevel ?? ""}`.trim()
+            : coursLevelLabel(cls?.coursLevel) || "—",
+        year: cls?.type === "formation" ? "" : cls?.year ?? "",
+        groupName: groupName(db, session.groupId),
+        salleName: salleName(db, session.salleId),
+        teacherName: teacherName(db, session.teacherId),
+        daysLabel: formatDays(session.days) || "—",
+        timeLabel: sessionTimeLabel(session),
+        unitPrice: sub.pricePerSession,
+        balance: student ? soldFor(db, student.id, subId) : 0,
+        offered: student ? isFreeSub(student, subId) : false,
+        archived: !!session.archivedAt,
+        pending: savedSubIds ? !savedSubIds.includes(subId) : false,
+      },
+    ];
+  });
+
+  return (
+    <div className="rounded-xl border border-primary/25 bg-primary-50/25 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+          <GraduationCap className="h-3.5 w-3.5" /> {title}
+        </span>
+        <span className="text-[10px] font-semibold text-muted">
+          {rows.length} emploi(s) du temps
+        </span>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="py-3 text-center text-[11px] italic text-muted">
+          Aucun emploi du temps pour l&apos;instant — choisissez-en un dans la liste ci-dessous.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+          <table className="w-full min-w-[760px] text-[11px]">
+            <thead className="bg-canvas/60">
+              <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                <th className="px-2 py-1.5">Classe</th>
+                <th className="px-2 py-1.5">Niveau / Année</th>
+                <th className="px-2 py-1.5">Emploi du temps</th>
+                <th className="px-2 py-1.5">Groupe</th>
+                <th className="px-2 py-1.5">Jours &amp; heures</th>
+                <th className="px-2 py-1.5">Enseignant</th>
+                <th className="px-2 py-1.5 text-right">Séance</th>
+                {student && <th className="px-2 py-1.5 text-right">Solde</th>}
+                {onRemove && <th className="px-2 py-1.5 text-right">Action</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.subId} className="border-t border-line/50">
+                  <td className="px-2 py-1.5 font-semibold text-ink">{r.className}</td>
+                  <td className="px-2 py-1.5 text-muted">
+                    {r.levelLabel}
+                    {r.year ? ` · ${r.year}` : ""}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <strong className="text-ink">{r.label}</strong>
+                    <span className="flex flex-wrap gap-1">
+                      {r.pending && (
+                        <Badge tone="warning" className="text-[8px]">
+                          à enregistrer
+                        </Badge>
+                      )}
+                      {r.offered && (
+                        <Badge tone="success" className="text-[8px]">
+                          offert
+                        </Badge>
+                      )}
+                      {r.archived && (
+                        <Badge tone="neutral" className="text-[8px]">
+                          emploi supprimé
+                        </Badge>
+                      )}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-muted">{r.groupName}</td>
+                  <td className="px-2 py-1.5 text-muted">
+                    {r.daysLabel}
+                    <span className="block font-mono text-[9px]">{r.timeLabel}</span>
+                    <span className="block text-[9px]">Salle {r.salleName}</span>
+                  </td>
+                  <td className="px-2 py-1.5 text-muted">{r.teacherName}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{formatDA(r.unitPrice)}</td>
+                  {student && (
+                    <td className="px-2 py-1.5 text-right font-mono">
+                      <span className={r.balance < 0 ? "text-danger" : "text-success"}>
+                        {r.balance < 0
+                          ? `${formatDA(-r.balance)} dus`
+                          : `${formatDA(r.balance)} d'avance`}
+                      </span>
+                    </td>
+                  )}
+                  {onRemove && (
+                    <td className="px-2 py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => onRemove(r.subId)}
+                        title="Retirer cet emploi du temps — son historique reste sur sa fiche"
+                        className="inline-flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-[9px] font-bold text-danger transition-colors hover:bg-danger/10"
+                      >
+                        <X className="h-3 w-3" /> Retirer
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * Enrollment picker following your flow: pick the class LEVEL, then the YEAR,
  * then every timing of that level/year is listed — searchable by name — and one
  * or several can be ticked. The running total cost of what is ticked is shown
@@ -214,12 +388,21 @@ export function ClassTimingPicker({
   selectedSubIds,
   onToggle,
   showTotal = true,
+  student,
+  savedSubIds,
+  showCurrent = false,
 }: {
   selectedSubIds: string[];
   /** The option carries `siblingSubIds`: the other groups of the same cours,
    *  which the caller drops when the student is moved from one to another. */
   onToggle: (option: ClassTimingOption) => void;
   showTotal?: boolean;
+  /** la fiche concernée : elle fait apparaître ses soldes sur le rappel du haut */
+  student?: Student | null;
+  /** ce que la fiche porte DÉJÀ en base, pour marquer les ajouts en attente */
+  savedSubIds?: string[];
+  /** rappeler EN HAUT la classe, l'année et les emplois du temps actuels */
+  showCurrent?: boolean;
 }) {
   const { timingsForLevelYear, timingOf, levelYearOf, subCost, subLabel } = useClassTimings();
   /**
@@ -259,6 +442,20 @@ export function ClassTimingPicker({
 
   return (
     <div className="space-y-3">
+      {/* Ce qu'il suit DÉJÀ — classe, année, créneaux — avant de toucher à quoi
+          que ce soit. Sans ce rappel, on coche à l'aveugle. */}
+      {showCurrent && (
+        <CurrentInscriptions
+          subIds={selectedSubIds}
+          student={student}
+          savedSubIds={savedSubIds}
+          onRemove={(subId) => {
+            const option = timingOf(subId);
+            if (option) onToggle(option);
+          }}
+        />
+      )}
+
       {/* Step 1 + 2: level and year */}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div>

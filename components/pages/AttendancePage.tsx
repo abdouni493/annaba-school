@@ -79,10 +79,13 @@ export function AttendancePage() {
 
   const sheetDow = JS_DAYS[new Date(`${sheetDate}T12:00:00`).getDay()];
 
-  /** Emplois du temps that actually exist on the selected day. */
+  /** Emplois du temps that actually exist on the selected day. Un emploi
+   *  SUPPRIMÉ n'y figure plus : on ne pointe pas un groupe qui n'existe plus —
+   *  mais ses présences passées, elles, restent dans l'historique ci-dessous. */
   const daySessions = useMemo(
     () =>
       sessions
+        .filter((s) => !s.archivedAt)
         .filter((s) => s.days.includes(sheetDow))
         .filter((s) => !s.periodStart || s.periodStart <= sheetDate)
         .filter((s) => !s.periodEnd || s.periodEnd >= sheetDate)

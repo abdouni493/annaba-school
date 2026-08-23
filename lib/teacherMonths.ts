@@ -200,6 +200,9 @@ export interface TeacherEmploi {
   daysLabel: string;
   timeLabel: string;
   isOpen: boolean;
+  /** l'emploi du temps a été SUPPRIMÉ : il ne tient plus séance, mais ce qu'il
+   *  doit encore à l'enseignant reste dû et se règle ici comme avant */
+  archived: boolean;
   size: number;
   unitPrice: number;
   /** tarif enseignant d'une séance, quand l'abonnement le porte */
@@ -332,6 +335,11 @@ function emptyMonthStudent(
  * Tout ce qu'un enseignant a enseigné, emploi du temps par emploi du temps et
  * mois par mois — avec, pour chaque mois, l'état de paiement de chaque élève et
  * la part qui reste due à l'enseignant.
+ *
+ * Les emplois SUPPRIMÉS y figurent toujours, marqués comme tels : un cours qui
+ * s'arrête n'efface pas ce qu'il devait encore à celui qui l'a donné. C'est
+ * précisément parce qu'une suppression archive au lieu d'effacer que ces mois-là
+ * restent réglables, avec le nom du module et du groupe sous les yeux.
  */
 export function teacherEmplois(db: Database, teacherId: string): TeacherEmploi[] {
   return db.sessions
@@ -519,6 +527,7 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
     daysLabel: formatDays(session.days) || "—",
     timeLabel: sessionTimeLabel(session),
     isOpen: !!session.isOpen,
+    archived: !!session.archivedAt,
     size,
     unitPrice: listPrice,
     perSeance,
@@ -899,11 +908,15 @@ export function studentArrearsBefore(
  *  - `due`      : rien n'a été versé, le montant sort du salaire du père ;
  *  - `family`   : LA FAMILLE A PAYÉ ELLE-MÊME, avant que le père ne soit réglé —
  *                 il n'y a plus rien à retenir sur son salaire ;
+ *  - `charged`  : le mois a été SOLDÉ D'AVANCE au guichet et porté sur le
+ *                 salaire du père : l'enfant est en règle, la part que ses
+ *                 séances rapportent est débloquée, et la retenue attend en bas
+ *                 de cette paie (elle n'est donc pas retenue deux fois) ;
  *  - `salary`   : déjà retenu sur un règlement précédent ;
  *  - `school`   : l'école a avancé la dette de sa caisse ;
  *  - `pending`  : le mois n'a rien consommé encore.
  */
-export type ChildLineState = "due" | "family" | "salary" | "school" | "pending";
+export type ChildLineState = "due" | "family" | "charged" | "salary" | "school" | "pending";
 
 /** Un mois d'un emploi du temps d'un enfant d'enseignant. */
 export interface TeacherChildLine {
@@ -918,6 +931,9 @@ export interface TeacherChildLine {
   expected: number;
   /** ce que la FAMILLE a versé d'elle-même sur ce mois */
   paidByFamily: number;
+  /** ce qui a été crédité d'avance et PORTÉ sur le salaire du père : la retenue
+   *  est en attente, elle sera prise sur son prochain règlement */
+  chargedToFather: number;
   /** ce qu'un règlement du père a déjà retenu */
   paidFromSalary: number;
   /** ce que la caisse de l'école a avancé */
@@ -949,6 +965,9 @@ export interface TeacherChildRow {
   amount: number;
   /** ce que la famille a déjà versé elle-même, AVANT le règlement du père */
   paidByFamily: number;
+  /** ce qui a été soldé d'avance au guichet et porté sur le salaire du père —
+   *  la retenue est en attente, listée à part sur la paie */
+  chargedToFather: number;
   /** ce que des règlements précédents ont déjà retenu */
   paidFromSalary: number;
   /** l'enfant a payé d'avance : il ne reste rien à retenir sur ce salaire */
@@ -990,13 +1009,15 @@ export function teacherChildRows(db: Database, teacherId: string): TeacherChildR
           const state: ChildLineState =
             debt > 0
               ? "due"
-              : credits.family > 0
-                ? "family"
-                : credits.school > 0
-                  ? "school"
-                  : credits.salary > 0
-                    ? "salary"
-                    : "pending";
+              : credits.charged > 0
+                ? "charged"
+                : credits.family > 0
+                  ? "family"
+                  : credits.school > 0
+                    ? "school"
+                    : credits.salary > 0
+                      ? "salary"
+                      : "pending";
           lines.push({
             subscriptionId: subId,
             label,
@@ -1005,6 +1026,7 @@ export function teacherChildRows(db: Database, teacherId: string): TeacherChildR
             unitPrice,
             expected: cycle.consumed,
             paidByFamily: credits.family,
+            chargedToFather: credits.charged,
             paidFromSalary: credits.salary,
             paidBySchool: credits.school,
             amount: debt,
@@ -1033,6 +1055,7 @@ export function teacherChildRows(db: Database, teacherId: string): TeacherChildR
         currentSeances: lines.filter((l) => l.current).reduce((s, l) => s + l.seances, 0),
         amount,
         paidByFamily: lines.reduce((s, l) => s + l.paidByFamily, 0),
+        chargedToFather: lines.reduce((s, l) => s + l.chargedToFather, 0),
         paidFromSalary: lines.reduce((s, l) => s + l.paidFromSalary, 0),
         settledBeforePay: amount === 0 && lines.some((l) => l.paidByFamily > 0),
       } satisfies TeacherChildRow;

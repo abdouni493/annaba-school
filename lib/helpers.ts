@@ -189,7 +189,42 @@ export function courseKeyOf(session: ScheduleSession): string {
 /** Every timing of the same cours (i.e. all its groups), week-order sorted. */
 export function siblingSessions(db: Database, session: ScheduleSession): ScheduleSession[] {
   const key = courseKeyOf(session);
-  return db.sessions.filter((s) => courseKeyOf(s) === key);
+  return db.sessions.filter((s) => courseKeyOf(s) === key && !isArchivedSession(s));
+}
+
+/**
+ * UN EMPLOI DU TEMPS SUPPRIMÉ N'EST PAS EFFACÉ, IL EST ARCHIVÉ.
+ *
+ * Sa ligne reste en base avec son tarif, si bien que tout ce qui s'y rattache —
+ * présences pointées, soldes, paiements des élèves, parts dues à l'enseignant —
+ * garde un nom sur les écrans d'historique au lieu de se réduire à un tiret.
+ *
+ * Ces deux fonctions tracent la frontière : les écrans qui servent à TRAVAILLER
+ * (grille, feuille de présence, catalogue d'inscription, tarifs) ne lisent que
+ * les emplois vivants ; les écrans qui RELISENT le passé lisent tout.
+ */
+export function isArchivedSession(session?: ScheduleSession): boolean {
+  return !!session?.archivedAt;
+}
+
+/** Les emplois du temps encore vivants — ce que proposent les écrans de travail. */
+export function activeSessions(db: Database): ScheduleSession[] {
+  return db.sessions.filter((s) => !s.archivedAt);
+}
+
+/** Le tarif d'un emploi supprimé est archivé avec lui : il ne s'inscrit plus. */
+export function activeSubscriptions(db: Database): Subscription[] {
+  const dead = new Set(db.sessions.filter((s) => s.archivedAt).map((s) => s.id));
+  return db.subscriptions.filter((sub) => !sub.archivedAt && !dead.has(sub.sessionId));
+}
+
+/** Cet abonnement appartient-il à un emploi du temps supprimé ? */
+export function isArchivedSub(db: Database, subscriptionId?: string): boolean {
+  if (!subscriptionId) return false;
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return false;
+  if (sub.archivedAt) return true;
+  return isArchivedSession(db.sessions.find((s) => s.id === sub.sessionId));
 }
 
 /** Full session label. `withGroup=false` drops the group (used by the
@@ -1106,6 +1141,9 @@ export interface CycleCredits {
   family: number;
   /** retenu sur le salaire d'un enseignant père */
   salary: number;
+  /** crédité d'avance et PORTÉ sur le salaire du père — la retenue attend sa
+   *  prochaine paie (`TeacherChildDebt`) */
+  charged: number;
   /** couvert par la caisse de l'école */
   school: number;
   total: number;
@@ -1117,13 +1155,14 @@ export function cycleCredits(
   subscriptionId: string,
   code: string,
 ): CycleCredits {
-  const out: CycleCredits = { family: 0, salary: 0, school: 0, total: 0 };
+  const out: CycleCredits = { family: 0, salary: 0, charged: 0, school: 0, total: 0 };
   for (const p of db.payments) {
     if (p.studentId !== studentId || p.subscriptionId !== subscriptionId) continue;
     if ((p.monthCode || "M1") !== code) continue;
     const amount = Math.max(0, Math.round(p.amountPaid || 0));
     if (amount <= 0) continue;
     if (p.paidFrom === "teacher_salary") out.salary += amount;
+    else if (p.paidFrom === "teacher_debt") out.charged += amount;
     else if (p.paidFrom === "school_cash") out.school += amount;
     else out.family += amount;
     out.total += amount;
@@ -1562,4 +1601,123 @@ export function teacherGroupSeanceTotal(db: Database, teacherId: string): number
 /** Readable hours of a séance libre de groupe. */
 export function groupSeanceTimeLabel(g: GroupSeance): string {
   return `${g.startTime || "--:--"} → ${g.endTime || "--:--"}`;
+}
+
+// ---------------------------------------------------------------------------
+// Où en est un élève de ses inscriptions — classe, année, emploi du temps
+// ---------------------------------------------------------------------------
+
+/**
+ * UNE INSCRIPTION D'ÉLÈVE, LUE EN TOUTES LETTRES.
+ *
+ * Avant de changer un élève de créneau, la réception a besoin de voir où il en
+ * est : dans QUELLE classe, sur QUELLE année, et sur QUEL emploi du temps. La
+ * question paraît triviale, mais l'information était éclatée entre trois tables
+ * — la classe porte le niveau et l'année, l'emploi porte le module, le groupe,
+ * la salle et l'enseignant, l'abonnement porte le prix.
+ *
+ * Cette ligne les réunit, une fois, pour tous les écrans qui inscrivent.
+ */
+export interface StudentInscriptionRow {
+  subscriptionId: string;
+  sessionId: string;
+  /** intitulé de l'emploi du temps (son titre, sinon le module) */
+  label: string;
+  className: string;
+  /** « Primaire », « Formation » … */
+  levelLabel: string;
+  /** l'année ou la section de la classe ("4AP", "Grande section", …) */
+  year: string;
+  groupName: string;
+  salleName: string;
+  teacherName: string;
+  daysLabel: string;
+  timeLabel: string;
+  /** prix d'une séance pour CET élève (son cas et sa remise appliqués) */
+  unitPrice: number;
+  /** son solde sur cet emploi du temps — négatif = ce qu'il doit */
+  balance: number;
+  /** cet emploi du temps lui est offert */
+  offered: boolean;
+  /** l'emploi du temps a été supprimé : la ligne n'est plus qu'un souvenir */
+  archived: boolean;
+  /** le jour où il a été retiré du groupe, s'il l'a été */
+  leftOn?: string;
+  /** il suit encore cet emploi du temps aujourd'hui */
+  current: boolean;
+}
+
+/**
+ * Les inscriptions d'un élève, celles d'aujourd'hui d'abord.
+ *
+ * `includePast` ajoute les emplois qu'il a QUITTÉS : sa fiche les garde, datés
+ * de la sortie, et un écran qui l'inscrit ailleurs gagne à les montrer — c'est
+ * souvent la raison pour laquelle on le déplace.
+ */
+export function studentInscriptionRows(
+  db: Database,
+  student: Student,
+  opts: { includePast?: boolean } = {},
+): StudentInscriptionRow[] {
+  const ids = opts.includePast
+    ? studentSubscriptionHistory(db, student)
+    : student.subscriptionIds;
+
+  return ids
+    .flatMap((subId) => {
+      const sub = db.subscriptions.find((s) => s.id === subId);
+      if (!sub) return [];
+      const session = db.sessions.find((s) => s.id === sub.sessionId);
+      if (!session) return [];
+      const cls = classOf(db, session.classId);
+      const current = student.subscriptionIds.includes(subId);
+      return [
+        {
+          subscriptionId: subId,
+          sessionId: session.id,
+          label: session.title || moduleName(db, session.moduleId) || "Emploi du temps",
+          className: cls?.name ?? "—",
+          levelLabel:
+            cls?.type === "formation"
+              ? `Formation ${cls.formationLevel ?? ""}`.trim()
+              : coursLevelLabel(cls?.coursLevel),
+          year: cls?.type === "formation" ? "" : cls?.year ?? "",
+          groupName: groupName(db, session.groupId),
+          salleName: salleName(db, session.salleId),
+          teacherName: teacherName(db, session.teacherId),
+          daysLabel: formatDays(session.days) || "—",
+          timeLabel: sessionTimeLabel(session),
+          unitPrice: netPriceFor(
+            studentListPrice(student, sub),
+            db.enrollments.find((e) => e.studentId === student.id && e.subscriptionId === subId)
+              ?.discount ?? student.subscriptionDiscounts?.[subId],
+          ),
+          balance: soldFor(db, student.id, subId),
+          offered: isFreeSub(student, subId),
+          archived: isArchivedSession(session),
+          leftOn: unsubscribedAtOf(db, student.id, subId),
+          current,
+        } satisfies StudentInscriptionRow,
+      ];
+    })
+    .sort(
+      (a, b) =>
+        Number(b.current) - Number(a.current) ||
+        a.className.localeCompare(b.className) ||
+        a.label.localeCompare(b.label),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Scolarités d'enfants portées sur le salaire de leur père
+// ---------------------------------------------------------------------------
+
+/** Ce qui attend d'être retenu sur le prochain règlement d'un enseignant. */
+export function teacherChildDebtsOf(db: Database, teacherId: string) {
+  return db.teacherChildDebts.filter((d) => d.teacherId === teacherId && !d.paid);
+}
+
+/** Son total — ce que sa prochaine paie va lui coûter en scolarités. */
+export function teacherChildDebtTotal(db: Database, teacherId: string): number {
+  return teacherChildDebtsOf(db, teacherId).reduce((s, d) => s + d.amount, 0);
 }

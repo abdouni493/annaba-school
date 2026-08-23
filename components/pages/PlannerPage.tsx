@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import type { DayTime, ScheduleSession, Day, Subscription, Teacher } from "@/lib/types";
 import {
+  activeSessions,
   clashingDays,
   formatDays,
   isFreeSub,
@@ -109,7 +110,6 @@ export function PlannerPage() {
   const db = useData();
   const {
     school,
-    sessions,
     classes,
     modules,
     groups,
@@ -118,10 +118,18 @@ export function PlannerPage() {
     students,
     subscriptions,
     push,
-    deleteFrom,
     updateItem,
     setSubscriptionPrice,
+    archiveSession,
   } = db;
+  /**
+   * La grille ne montre QUE les emplois du temps vivants. Un emploi supprimé est
+   * archivé, pas effacé : sa ligne reste en base pour que les présences, les
+   * soldes, les paiements et les parts d'enseignant qu'il porte gardent un nom
+   * sur les écrans d'historique — mais il n'a plus rien à faire sur un
+   * calendrier qui sert à organiser la semaine à venir.
+   */
+  const sessions = useMemo(() => activeSessions(db), [db.sessions]);
   const { language } = useSettings();
 
   // View mode toggle
@@ -752,16 +760,34 @@ export function PlannerPage() {
     resetForm();
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Êtes-vous sûr de vouloir supprimer cet emploi du temps ?")) {
-      // The auto-created subscription of a séance libre would otherwise be left
-      // behind (Postgres cascades the row, but the local store must follow).
-      subscriptions
-        .filter((su) => su.sessionId === id)
-        .forEach((su) => deleteFrom("subscriptions", su.id));
-      deleteFrom("sessions", id);
-      setIsDetailsOpen(false);
+  /**
+   * SUPPRIMER UN EMPLOI DU TEMPS SANS PERDRE SON HISTOIRE.
+   *
+   * Effacer la ligne effacerait aussi son tarif, et avec lui les inscriptions
+   * qui s'y accrochent : les présences pointées, les soldes et les paiements des
+   * élèves, les parts déjà dues à l'enseignant deviendraient orphelins et
+   * s'afficheraient en tirets partout où on les relit. On l'ARCHIVE donc : il
+   * sort de la grille, de la feuille de présence et du catalogue d'inscription,
+   * ses élèves en sont désinscrits à la date du jour — et tout le reste demeure,
+   * lisible et nommé, dans les historiques.
+   */
+  const handleDelete = async (id: string) => {
+    const enrolled = subscriptions
+      .filter((su) => su.sessionId === id)
+      .reduce(
+        (n, su) => n + students.filter((st) => st.subscriptionIds.includes(su.id)).length,
+        0,
+      );
+    const warning =
+      `Supprimer cet emploi du temps ?
+
+${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jour.
+` : ""}Rien n'est perdu : les présences déjà pointées, les paiements et les soldes des élèves, ainsi que les parts dues à l'enseignant, restent visibles dans les historiques avec le nom de cet emploi du temps.`;
+    if (!confirm(warning)) {
+      return;
     }
+    await archiveSession(id);
+    setIsDetailsOpen(false);
   };
 
   const resetForm = () => {

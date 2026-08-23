@@ -153,6 +153,8 @@ function AdminDashboard() {
       sessions
         .filter(
           (s) =>
+            // Un emploi supprimé ne se pointe plus : il a quitté la journée.
+            !s.archivedAt &&
             s.days.includes(dow) &&
             (!s.periodStart || s.periodStart <= date) &&
             (!s.periodEnd || s.periodEnd >= date),
@@ -246,6 +248,7 @@ function AdminDashboard() {
     const q = search.trim().toLowerCase();
     return sessions
       .filter((s) => {
+        if (s.archivedAt) return false;
         if (classFilter !== "all" && s.classId !== classFilter) return false;
         if (moduleFilter !== "all" && s.moduleId !== moduleFilter) return false;
         if (teacherFilter !== "all" && s.teacherId !== teacherFilter) return false;

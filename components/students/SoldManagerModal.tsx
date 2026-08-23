@@ -352,6 +352,9 @@ export function SoldManagerModal({
               <div className="mt-3 space-y-3">
                 <ClassTimingPicker
                   selectedSubIds={student.subscriptionIds}
+                  student={student}
+                  savedSubIds={student.subscriptionIds}
+                  showCurrent
                   onToggle={async (opt) => {
                     // The tick may swap one group of a course for another, so
                     // what LEAVES is unsubscribed and what ARRIVES is written
@@ -383,9 +386,12 @@ export function SoldManagerModal({
                   showTotal={false}
                 />
                 <p className="text-[10px] text-muted">
-                  Cochez un créneau pour l&apos;ajouter à sa fiche : il entre LÀ OÙ EN EST LE
-                  GROUPE (mois et séance en cours), son solde s&apos;ouvre à 0 et se recharge
-                  ci-dessus.
+                  Le tableau du haut rappelle sa <strong>classe</strong>, son{" "}
+                  <strong>année</strong> et les <strong>emplois du temps qu&apos;il suit</strong>{" "}
+                  aujourd&apos;hui ; la liste du dessous en propose d&apos;autres. Cochez un
+                  créneau pour l&apos;ajouter à sa fiche : il entre LÀ OÙ EN EST LE GROUPE (mois et
+                  séance en cours), son solde s&apos;ouvre à 0 et se recharge ci-dessus. Cocher un
+                  autre groupe du MÊME cours l&apos;y déplace au lieu de le facturer deux fois.
                 </p>
               </div>
             )}

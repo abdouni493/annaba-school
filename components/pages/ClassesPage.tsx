@@ -189,7 +189,8 @@ export function ClassesPage() {
   const getStudentCount = (classId: string) => getClassStudents(classId).length;
 
   // Filter sessions (emploi) associated with class
-  const getClassSessions = (classId: string) => sessions.filter((s) => s.classId === classId);
+  const getClassSessions = (classId: string) =>
+    sessions.filter((s) => s.classId === classId && !s.archivedAt);
 
   // Classes shown in the grid, filtered by the selected level
   const visibleClasses = classes.filter((c) => {

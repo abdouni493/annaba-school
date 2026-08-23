@@ -492,6 +492,39 @@ create table if not exists public.teacher_expenses (
   created_at  text
 );
 
+-- --- Scolarités d'enfants portées sur le salaire de leur père -----------------
+-- Écran : feuille de présence d'un groupe (bouton « Fils d'enseignant »).
+--
+-- Un fils d'enseignant n'a pas à attendre la paie de son père pour être en
+-- règle. La réception solde son mois depuis la feuille du groupe et choisit
+-- comment :
+--   * la FAMILLE paie au guichet  -> un versement ordinaire (`payments`,
+--     paid_from = 'cash'), une entrée en caisse, et RIEN n'est retenu au père ;
+--   * à PORTER sur le SALAIRE du père -> le solde de l'enfant est crédité tout
+--     de suite (paid_from = 'teacher_debt', aucun mouvement de caisse) et le
+--     montant est inscrit ICI, en attente. Le prochain règlement du père le
+--     retient sur son net et le passe à `paid` : jamais deux fois.
+--
+-- La différence est capitale à la lecture : dans les deux cas l'enfant est en
+-- règle et la part que ses séances rapportent à l'enseignant se débloque, mais
+-- seul le second ampute le salaire.
+create table if not exists public.teacher_child_debts (
+  id              text primary key,
+  teacher_id      text not null references public.teachers (id) on delete cascade,
+  student_id      text not null references public.students (id) on delete cascade,
+  subscription_id text,                          -- l'emploi du temps crédité
+  month_code      text,                          -- le mois de cet emploi (M1, M2 …)
+  label           text not null default '',      -- ce que la fiche de paie affiche
+  amount          numeric not null default 0,
+  date            text not null default '',
+  paid            boolean not null default false,
+  payment_id      text references public.teacher_payments (id) on delete set null,
+  created_at      text
+);
+
+create index if not exists teacher_child_debts_open_key
+  on public.teacher_child_debts (teacher_id) where paid = false;
+
 create table if not exists public.teacher_absences (
   id          text primary key,
   teacher_id  text not null references public.teachers (id) on delete cascade,
@@ -553,8 +586,18 @@ create table if not exists public.schedule_sessions (
   class_ids    jsonb,
   group_ids    jsonb,
   salle_ids    jsonb,
-  open_price   numeric
+  open_price   numeric,
+  archived_at  text                              -- emploi SUPPRIMÉ : archivé, jamais effacé
 );
+
+-- Supprimer un emploi du temps l'ARCHIVE : `archived_at` porte le jour où la
+-- réception l'a retiré, et la ligne reste en base avec son tarif. Tout ce qui
+-- s'y rattache — présences pointées, soldes et paiements des élèves, parts dues
+-- à l'enseignant — garde donc un nom sur les écrans d'historique, au lieu de se
+-- réduire à un tiret. L'emploi disparaît seulement des écrans de travail
+-- (grille, feuille de présence, catalogue d'inscription, tarifs).
+comment on column public.schedule_sessions.archived_at is
+  'Jour de suppression (YYYY-MM-DD). NULL = emploi du temps vivant. Archivé, la ligne reste lisible par tout l''historique.';
 
 -- --- Tarifs (abonnements) ------------------------------------------------------
 -- Écran : Abonnements. Actions : fixer le tarif d'un cours (tous groupes),
@@ -568,7 +611,8 @@ create table if not exists public.subscriptions (
   monthly_seances    integer,                    -- formule mensuelle : séances comprises
   monthly_price      numeric,                    -- prix du pack mensuel
   school_month_share numeric,                    -- part que l'école garde sur le mois
-  teacher_per_seance numeric                     -- part enseignant pour UNE séance
+  teacher_per_seance numeric,                    -- part enseignant pour UNE séance
+  archived_at        text                        -- archivé avec son emploi du temps
 );
 
 -- Périodes gratuites : la présence est écrite, le solde n'est pas débité.
@@ -682,7 +726,8 @@ create table if not exists public.payments (
   type               text not null default 'subscription_payment'
                        check (type in ('subscription_payment','debt_payment')),
   paid_from          text                       -- d'où vient l'argent (null = la famille)
-                       check (paid_from is null or paid_from in ('cash','teacher_salary','school_cash')),
+                       check (paid_from is null or paid_from in
+                              ('cash','teacher_salary','teacher_debt','school_cash')),
   date               text not null default '',
   description        text
 );
@@ -693,6 +738,12 @@ create table if not exists public.payments (
 --   * `teacher_salary`    — retenu sur la paie d'un enseignant père : AUCUN
 --                           mouvement de caisse, l'école est payée en versant
 --                           moins à l'enseignant.
+--   * `teacher_debt`      — la scolarité de l'enfant a été SOLDÉE D'AVANCE au
+--                           guichet et PORTÉE sur le salaire du père : aucun
+--                           mouvement de caisse non plus, l'école sera payée le
+--                           jour de la paie. La retenue en attente vit dans
+--                           `teacher_child_debts`, et le prochain règlement du
+--                           père la prend — une fois et une seule.
 --   * `school_cash`       — l'école a avancé la dette de l'élève sur sa propre
 --                           caisse pour ne pas faire attendre l'enseignant : la
 --                           caisse porte le `student_payment` porté au crédit de
@@ -918,6 +969,7 @@ declare
   staff_write text[] := array[
     'schools','class_categories','modules','class_groups','salles','classes',
     'teachers','teacher_payments','teacher_acomptes','teacher_expenses','teacher_absences',
+    'teacher_child_debts',
     'reception_staff','worker_shifts','schedule_sessions','subscriptions','free_periods',
     'module_absence_rules','students','payments','absence_penalties',
     'announcements','expense_categories','expenses',

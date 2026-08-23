@@ -48,8 +48,11 @@ import {
   cycleLead,
   cycleSlots,
   formatDateFr,
+  monthCodeLabel,
   slotCountFor,
   studentCaseLabel,
+  studentDebtSummary,
+  teacherChildDebtsOf,
 } from "@/lib/helpers";
 import {
   buildTeacherPayslip,
@@ -79,6 +82,7 @@ import {
   Percent,
   Receipt,
   Users,
+  Wallet,
 } from "lucide-react";
 import type {
   AttendanceStatus,
@@ -88,6 +92,19 @@ import type {
   TeacherPaymentDetail,
   TeacherPaymentMonth,
 } from "@/lib/types";
+
+/** Une dette d'élève que l'école s'apprête à avancer, ligne par ligne. */
+interface CoverLine {
+  key: string;
+  subscriptionId?: string;
+  monthCode?: string;
+  label: string;
+  /** ce que la ligne doit réellement — le plafond de ce que l'école peut avancer */
+  due: number;
+  /** ce que la réception a décidé d'avancer sur cette ligne */
+  amount: number;
+  picked: boolean;
+}
 
 type PayMethod = "fixed" | "percent" | "group";
 
@@ -129,6 +146,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
   const { addToast } = useToast();
   /** L'élève dont la dette est en train d'être avancée (le bouton se verrouille). */
   const [payingDebt, setPayingDebt] = useState<string | null>(null);
+  /** L'élève dont l'école choisit, mois par mois, ce qu'elle va avancer. */
+  const [cover, setCover] = useState<{ studentId: string; name: string } | null>(null);
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>(() =>
     defaultPayableMonthKeys(teacherEmplois(db, teacher.id)),
@@ -158,6 +177,15 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
       .filter((st) => st.studentCase === "teacher_child" && st.teacherFatherId === teacher.id)
       .map((st) => st.id),
   );
+  /**
+   * Les scolarités DÉJÀ créditées à ses enfants au guichet et portées sur ce
+   * salaire. Elles sont cochées d'office : elles ont été promises à la caisse le
+   * jour où la réception a mis l'enfant en règle, et ce règlement est là pour
+   * les honorer.
+   */
+  const [childDebtIds, setChildDebtIds] = useState<string[]>(() =>
+    teacherChildDebtsOf(db, teacher.id).map((d) => d.id),
+  );
   /** L'enfant dont la famille est en train de régler au guichet. */
   const [payingChild, setPayingChild] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -166,26 +194,48 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
    * L'ÉCOLE AVANCE LA DETTE D'UN ÉLÈVE, pour ne pas faire attendre l'enseignant.
    *
    * Tant que l'élève doit quelque chose, la part que ses séances rapportent est
-   * retenue : elle ne se règle pas aujourd'hui. Ce bouton solde la dette sur la
-   * caisse de l'école — tout ce qui la retient, y compris les restes d'anciens
-   * paiements et les frais d'inscription — et la part redevient payable dans la
-   * seconde. La caisse porte les deux mouvements : le paiement porté au crédit de
-   * l'élève, et la sortie qui l'a financé.
+   * retenue : elle ne se règle pas aujourd'hui. L'école peut la débloquer en
+   * avançant elle-même l'argent — mais elle n'est pas obligée de tout avancer :
+   * la fenêtre qui s'ouvre ici liste les MOIS IMPAYÉS un par un, laisse cocher
+   * ceux que l'école prend en charge et CORRIGER À LA MAIN le montant de chacun.
+   *
+   * Deux mouvements par ligne réglée entrent dans la caisse : le paiement porté
+   * au crédit de l'élève, et la sortie qui l'a financé. Attention : la part de
+   * l'enseignant ne se débloque que si la dette de l'élève tombe à ZÉRO — un
+   * règlement partiel soulage la famille mais laisse la part retenue, et la
+   * fenêtre le dit avant de valider.
    */
-  const payDebtFromSchool = async (studentId: string, name: string, amount: number) => {
-    if (amount <= 0) return;
-    if (
-      !confirm(
-        `L'école va régler ${amount} DA de dette pour ${name}, sur sa propre caisse. ` +
-          "La part que ses séances rapportent à l'enseignant sera immédiatement débloquée, " +
-          "et les deux mouvements apparaîtront dans l'historique de la caisse. Continuer ?",
-      )
-    ) {
+  const openCover = (studentId: string, name: string) => setCover({ studentId, name });
+
+  const applyCover = async (
+    studentId: string,
+    name: string,
+    lines: CoverLine[],
+    otherAmount: number,
+  ) => {
+    const picked = lines.filter((l) => l.picked && l.amount > 0 && l.subscriptionId);
+    const total = picked.reduce((s, l) => s + l.amount, 0) + otherAmount;
+    if (total <= 0) {
+      addToast({
+        type: "danger",
+        title: "Rien à régler",
+        message: "Cochez au moins un mois, avec un montant supérieur à 0 DA.",
+        studentName: name,
+      });
       return;
     }
     setPayingDebt(studentId);
     try {
-      const res = await coverStudentDebt({ studentId });
+      const res = await coverStudentDebt({
+        studentId,
+        lines: picked.map((l) => ({
+          subscriptionId: l.subscriptionId!,
+          monthCode: l.monthCode!,
+          amount: l.amount,
+          label: l.label,
+        })),
+        otherAmount,
+      });
       if (!res.ok) {
         addToast({
           type: "danger",
@@ -194,10 +244,13 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
         });
         return;
       }
+      setCover(null);
       addToast({
         type: "success",
         title: "Dette avancée par l'école",
-        message: `${res.amount ?? amount} DA réglés sur la caisse — la part de l'enseignant est débloquée.`,
+        message: `${formatDA(res.amount ?? total)} réglés sur la caisse de l'école — ${
+          picked.length
+        } mois couvert(s).`,
         studentName: name,
       });
     } finally {
@@ -333,6 +386,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 
   const chosenExpenses = unpaidExpenses.filter((e) => expenseIds.includes(e.id));
   const chosenAcomptes = unpaidAcomptes.filter((a) => acompteIds.includes(a.id));
+  const openChildDebts = teacherChildDebtsOf(db, teacher.id);
+  const chosenChildDebts = openChildDebts.filter((d) => childDebtIds.includes(d.id));
   // Un enfant dont la famille a déjà payé n'a plus rien à retenir : le cocher ne
   // retiendrait rien, et le retenir quand même ferait payer deux fois.
   const chosenChildren = childRows.filter(
@@ -341,7 +396,8 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
   const expensesTotal = chosenExpenses.reduce((s, e) => s + e.amount, 0);
   const acomptesTotal = chosenAcomptes.reduce((s, a) => s + a.amount, 0);
   const childrenTotal = chosenChildren.reduce((s, c) => s + c.amount, 0);
-  const deductionsTotal = expensesTotal + acomptesTotal + childrenTotal;
+  const childDebtsTotal = chosenChildDebts.reduce((s, d) => s + d.amount, 0);
+  const deductionsTotal = expensesTotal + acomptesTotal + childrenTotal + childDebtsTotal;
   const net = gross - deductionsTotal;
 
   /** La forme figée que le règlement enregistre pour les enfants. */
@@ -622,6 +678,18 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
       amount: a.amount,
       date: a.date.slice(0, 10),
     }));
+    // Une scolarité déjà créditée au guichet se lit sur la fiche de paie comme
+    // une dépense que l'école a avancée pour lui : c'est exactement ce qu'elle est.
+    const childDebtLines: TeacherPaymentDeduction[] = chosenChildDebts.map((d) => ({
+      id: d.id,
+      kind: "expense",
+      label: `Scolarité — ${d.label}`,
+      description: [d.monthCode && monthCodeLabel(d.monthCode), "réglée d'avance au guichet"]
+        .filter(Boolean)
+        .join(" · "),
+      amount: d.amount,
+      date: d.date,
+    }));
     const paidAt = new Date().toISOString();
 
     setSaving(true);
@@ -640,6 +708,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
         expenseIds: chosenExpenses.map((e) => e.id),
         acompteIds: chosenAcomptes.map((a) => a.id),
         childCharges,
+        childDebtIds: chosenChildDebts.map((d) => d.id),
       });
 
       if (!res.ok) {
@@ -660,7 +729,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
             method,
             percentage: method === "percent" ? pct : undefined,
             emplois: payslipEmplois,
-            expenses: expenseLines,
+            expenses: [...expenseLines, ...childDebtLines],
             acomptes: acompteLines,
             childCharges,
             gross,
@@ -865,6 +934,16 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                             Séance libre
                           </Badge>
                         )}
+                        {/* Un cours arrêté doit encore ce qu'il a fait gagner. */}
+                        {e.archived && (
+                          <Badge
+                            tone="neutral"
+                            className="ml-1.5 text-[9px]"
+                            title="Emploi du temps supprimé — il ne tient plus séance, mais ce qu'il vous doit reste réglable ici"
+                          >
+                            Emploi supprimé
+                          </Badge>
+                        )}
                       </strong>
                       <span className="block text-[10px] text-muted">
                         {e.className} · Salle {e.salleName} · {e.daysLabel} ·{" "}
@@ -912,7 +991,7 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                         pct={pct}
                         studentShare={studentShare}
                         onToggle={() => toggleMonth(m.key)}
-                        onPayDebt={payDebtFromSchool}
+                        onPayDebt={openCover}
                         payingDebt={payingDebt}
                       />
                     ))}
@@ -920,6 +999,17 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                 </div>
               ))}
             </div>
+
+            {/* ---- l'école choisit ce qu'elle avance, mois par mois ------ */}
+            {cover && (
+              <SchoolCoverModal
+                studentId={cover.studentId}
+                name={cover.name}
+                busy={payingDebt === cover.studentId}
+                onConfirm={(lines, other) => applyCover(cover.studentId, cover.name, lines, other)}
+                onClose={() => setCover(null)}
+              />
+            )}
 
             {/* ---- les cas particuliers -------------------------------- */}
             <SpecialCases
@@ -1023,14 +1113,14 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                           <td className="px-2 py-1.5 text-right">
                             <Button
                               size="sm"
-                              onClick={() => payDebtFromSchool(r.studentId, r.name, r.totalDebt)}
+                              onClick={() => openCover(r.studentId, r.name)}
                               disabled={payingDebt === r.studentId || r.totalDebt <= 0}
                               className="gap-1 whitespace-nowrap"
                             >
                               <HandCoins className="h-3.5 w-3.5" />
                               {payingDebt === r.studentId
                                 ? "Règlement…"
-                                : `Payer ${formatDA(r.totalDebt)} de la caisse`}
+                                : `Payer de la caisse (${formatDA(r.totalDebt)})`}
                             </Button>
                           </td>
                         </tr>
@@ -1062,6 +1152,36 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
               selected={expenseIds}
               onToggle={(id) =>
                 setExpenseIds((prev) =>
+                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                )
+              }
+            />
+
+            {/* LES SCOLARITÉS DÉJÀ RÉGLÉES AU GUICHET, portées sur ce salaire.
+                Elles ne figurent pas dans « ses enfants » ci-dessus : là-haut on
+                décide de retenir ce qui est ENCORE DÛ ; ici on honore ce que la
+                réception a déjà crédité à l'enfant en le promettant à ce
+                salaire. Les décocher revient à laisser l'école attendre. */}
+            <DeductionTable
+              title="Scolarités d'enfants déjà réglées au guichet et portées sur ce salaire"
+              icon={GraduationCap}
+              empty="Aucune scolarité portée sur ce salaire en attente."
+              total={childDebtsTotal}
+              rows={openChildDebts.map((d) => ({
+                id: d.id,
+                date: d.date,
+                label: d.label,
+                description: [
+                  d.monthCode ? monthCodeLabel(d.monthCode) : "",
+                  "l'enfant a été mis en règle ce jour-là, sans passer par la caisse",
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
+                amount: d.amount,
+              }))}
+              selected={childDebtIds}
+              onToggle={(id) =>
+                setChildDebtIds((prev) =>
                   prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
                 )
               }
@@ -1115,6 +1235,11 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
                       value={`− ${formatDA(childrenTotal)}`}
                       tone="text-danger"
                     />
+                    <SummaryLine
+                      label={`Scolarités déjà réglées au guichet (${chosenChildDebts.length})`}
+                      value={`− ${formatDA(childDebtsTotal)}`}
+                      tone="text-danger"
+                    />
                     <tr className="border-t-2 border-success/40 bg-success/10">
                       <td className="px-3 py-2.5 text-sm font-black uppercase text-ink">
                         Net à verser
@@ -1164,6 +1289,248 @@ function PaySheet({ teacher, onClose }: { teacher: Teacher; onClose: () => void 
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * « PAYER DE LA CAISSE » — l'école choisit CE QU'ELLE AVANCE, mois par mois.
+ *
+ * Le bouton ne solde plus aveuglément toute la dette d'un élève. Il ouvre cette
+ * fenêtre, qui liste ses MOIS IMPAYÉS un par un — emploi du temps, mois, montant
+ * dû — et laisse la réception :
+ *
+ *  - cocher les seuls mois que l'école prend en charge,
+ *  - CORRIGER À LA MAIN le montant de chacun (l'école peut n'avancer qu'une
+ *    partie d'un mois : le reste demeure dû par la famille),
+ *  - régler à part les restes d'anciens paiements et les frais d'inscription,
+ *    qui ne relèvent d'aucun emploi en particulier.
+ *
+ * Un avertissement se déclenche tant que la sélection ne couvre pas TOUTE la
+ * dette, parce que c'est la règle qui compte pour l'enseignant : sa part ne se
+ * débloque qu'à zéro. Un règlement partiel soulage la famille, il ne débloque
+ * rien — et il vaut mieux le savoir avant de valider qu'après.
+ */
+function SchoolCoverModal({
+  studentId,
+  name,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  studentId: string;
+  name: string;
+  busy: boolean;
+  onConfirm: (lines: CoverLine[], otherAmount: number) => void;
+  onClose: () => void;
+}) {
+  const db = useData();
+  const summary = studentDebtSummary(db, studentId);
+  const otherDue = summary.rests + summary.registrationDue;
+
+  const [lines, setLines] = useState<CoverLine[]>(() =>
+    summary.soldRows.map((r) => ({
+      key: `${r.subscriptionId}|${r.code}`,
+      subscriptionId: r.subscriptionId,
+      monthCode: r.code,
+      label: r.label,
+      due: r.debt,
+      amount: r.debt,
+      picked: true,
+    })),
+  );
+  const [otherPicked, setOtherPicked] = useState(otherDue > 0);
+  const [otherAmount, setOtherAmount] = useState(otherDue);
+
+  const patch = (key: string, fields: Partial<CoverLine>) =>
+    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...fields } : l)));
+
+  const picked = lines.filter((l) => l.picked && l.amount > 0);
+  const monthsTotal = picked.reduce((s, l) => s + l.amount, 0);
+  const other = otherPicked ? Math.max(0, Math.min(otherAmount, otherDue)) : 0;
+  const total = monthsTotal + other;
+  /** Ce qui restera dû APRÈS — et donc si la part de l'enseignant se débloque. */
+  const leftOver = Math.max(0, summary.total - total);
+
+  return (
+    <Modal open onClose={onClose} title="L'école avance la dette — choisir les mois" wide>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-primary-50/60 p-3">
+          <div className="min-w-0">
+            <strong className="block text-sm text-ink">{name}</strong>
+            <span className="text-[11px] text-muted">
+              {summary.soldRows.length} mois impayé(s)
+              {otherDue > 0 ? ` · ${formatDA(otherDue)} hors emploi du temps` : ""}
+            </span>
+          </div>
+          <Badge tone="danger" className="font-mono font-bold">
+            {formatDA(summary.total)} dus au total
+          </Badge>
+        </div>
+
+        <p className="rounded-xl border border-primary/30 bg-surface p-2.5 text-[11px] leading-relaxed text-muted">
+          Décochez ce que l&apos;école ne prend pas en charge, et corrigez les montants : elle peut
+          n&apos;avancer qu&apos;une <strong>partie</strong> d&apos;un mois, le reste demeurant dû
+          par la famille. Chaque ligne réglée écrit <strong>deux mouvements</strong> dans la caisse
+          — le paiement porté au crédit de l&apos;élève, et la sortie qui l&apos;a financé.
+        </p>
+
+        {summary.soldRows.length === 0 && otherDue === 0 ? (
+          <p className="py-8 text-center text-xs italic text-success">
+            Cet élève ne doit plus rien — sa part est déjà payable. ✅
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="w-full min-w-[640px] text-[11px]">
+              <thead className="bg-canvas/60">
+                <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                  <th className="px-2 py-1.5">Payer</th>
+                  <th className="px-2 py-1.5">Emploi du temps</th>
+                  <th className="px-2 py-1.5">Mois</th>
+                  <th className="px-2 py-1.5 text-right">Dû</th>
+                  <th className="px-2 py-1.5 text-right">L&apos;école avance (DA)</th>
+                  <th className="px-2 py-1.5 text-right">Restera dû</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l) => {
+                  const paid = l.picked ? Math.min(Math.max(0, l.amount), l.due) : 0;
+                  return (
+                    <tr key={l.key} className="border-t border-line/50">
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={l.picked}
+                          onChange={() => patch(l.key, { picked: !l.picked })}
+                          className="h-4 w-4"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 font-semibold text-ink">{l.label}</td>
+                      <td className="px-2 py-1.5 font-mono">{monthCodeLabel(l.monthCode ?? "")}</td>
+                      <td className="px-2 py-1.5 text-right font-mono text-danger">
+                        {formatDA(l.due)}
+                      </td>
+                      <td className="px-2 py-1.5 text-right">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={l.due}
+                          disabled={!l.picked}
+                          value={l.amount || ""}
+                          onChange={(e) =>
+                            patch(l.key, {
+                              amount: Math.max(0, Math.min(l.due, Number(e.target.value) || 0)),
+                            })
+                          }
+                          className="ml-auto w-28 text-right"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono">
+                        {l.due - paid > 0 ? (
+                          <span className="text-warning">{formatDA(l.due - paid)}</span>
+                        ) : (
+                          <span className="text-success">soldé</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {/* Les restes et les frais d'inscription : une seule ligne, car
+                    ils ne portent ni emploi du temps ni mois. */}
+                {otherDue > 0 && (
+                  <tr className="border-t border-line/50 bg-canvas/30">
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={otherPicked}
+                        onChange={() => setOtherPicked((v) => !v)}
+                        className="h-4 w-4"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 font-semibold text-ink" colSpan={2}>
+                      Restes d&apos;anciens paiements
+                      {summary.registrationDue > 0 && " et frais d'inscription"}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono text-danger">
+                      {formatDA(otherDue)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <Input
+                        type="number"
+                        min={0}
+                        max={otherDue}
+                        disabled={!otherPicked}
+                        value={otherAmount || ""}
+                        onChange={(e) =>
+                          setOtherAmount(
+                            Math.max(0, Math.min(otherDue, Number(e.target.value) || 0)),
+                          )
+                        }
+                        className="ml-auto w-28 text-right"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono">
+                      {otherDue - other > 0 ? (
+                        <span className="text-warning">{formatDA(otherDue - other)}</span>
+                      ) : (
+                        <span className="text-success">soldé</span>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-primary/30 bg-primary-50/40">
+                  <td colSpan={4} className="px-2 py-2 text-[10px] font-bold uppercase text-muted">
+                    Total avancé par l&apos;école
+                  </td>
+                  <td className="px-2 py-2 text-right font-mono text-base font-black text-primary">
+                    {formatDA(total)}
+                  </td>
+                  <td className="px-2 py-2 text-right font-mono font-bold">
+                    {leftOver > 0 ? (
+                      <span className="text-warning">{formatDA(leftOver)}</span>
+                    ) : (
+                      <span className="text-success">0 DA</span>
+                    )}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+
+        {leftOver > 0 ? (
+          <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] font-semibold text-warning">
+            ⚠️ Il restera <strong>{formatDA(leftOver)}</strong> à la charge de la famille : tant que
+            la dette n&apos;est pas à zéro, la part que ses séances rapportent à l&apos;enseignant
+            reste <strong>retenue</strong>. Ce règlement soulage la famille, il ne débloque pas
+            encore la paie.
+          </p>
+        ) : (
+          total > 0 && (
+            <p className="rounded-xl border border-success/40 bg-success/10 p-2.5 text-[11px] font-semibold text-success">
+              ✅ Toute sa dette est couverte : la part de l&apos;enseignant redevient payable
+              immédiatement.
+            </p>
+          )
+        )}
+
+        <div className="flex justify-end gap-2 border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Annuler
+          </Button>
+          <Button
+            onClick={() => onConfirm(lines, other)}
+            disabled={busy || total <= 0}
+            className="gap-1.5"
+          >
+            <Wallet className="h-4 w-4" />
+            {busy ? "Règlement…" : `Avancer ${formatDA(total)} de la caisse`}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 function Stat({ label, value, tone = "text-ink" }: { label: string; value: string; tone?: string }) {
   return (
@@ -1243,8 +1610,8 @@ function MonthBoard({
   pct: number;
   studentShare: (m: TeacherMonth, studentId: string) => number;
   onToggle: () => void;
-  /** l'école avance la dette de cet élève, pour débloquer la part du prof */
-  onPayDebt: (studentId: string, name: string, amount: number) => void;
+  /** l'école choisit, mois par mois, ce qu'elle avance pour cet élève */
+  onPayDebt: (studentId: string, name: string) => void;
   payingDebt: string | null;
 }) {
   const db = useData();
@@ -1446,7 +1813,7 @@ function StudentPayRow({
   slotCount: number;
   selectedKeys: string[];
   share: number;
-  onPayDebt: (studentId: string, name: string, amount: number) => void;
+  onPayDebt: (studentId: string, name: string) => void;
   payingDebt: string | null;
 }) {
   const db = useData();
@@ -1545,7 +1912,7 @@ function StudentPayRow({
             </span>
             <button
               type="button"
-              onClick={() => onPayDebt(student.studentId, student.name, student.totalDebt)}
+              onClick={() => onPayDebt(student.studentId, student.name)}
               disabled={payingDebt === student.studentId}
               className="mt-1 inline-flex items-center gap-1 rounded-md border border-danger/50 bg-surface px-1.5 py-0.5 text-[9px] font-bold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
             >
@@ -1776,6 +2143,12 @@ function SpecialCases({
                           · déjà versé par la famille {formatDA(c.paidByFamily)}
                         </span>
                       )}
+                      {c.chargedToFather > 0 && (
+                        <span className="ml-1 text-warning">
+                          · {formatDA(c.chargedToFather)} réglés au guichet et portés sur ce salaire
+                          (retenus plus bas)
+                        </span>
+                      )}
                       {c.paidFromSalary > 0 && (
                         <span className="ml-1 text-primary">
                           · déjà retenu sur le salaire {formatDA(c.paidFromSalary)}
@@ -1911,6 +2284,13 @@ const CHILD_STATE: Record<ChildLineState, { label: string; tone: Tone; hint: str
     label: "Payé par la famille",
     tone: "success",
     hint: "La famille a réglé elle-même, avant la paie : plus rien à retenir sur le salaire.",
+  },
+  charged: {
+    label: "Porté sur le salaire",
+    tone: "warning",
+    hint:
+      "Le mois a été soldé d'avance au guichet et porté sur le salaire du père : " +
+      "l'enfant est en règle, et la retenue attend plus bas, dans « Scolarités portées sur ce salaire ».",
   },
   salary: {
     label: "Retenu sur le salaire",

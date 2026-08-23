@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useData, uid } from "@/lib/store/data";
+import { useMemo, useState } from "react";
+import { useData } from "@/lib/store/data";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -26,8 +26,18 @@ import {
   AlertTriangle,
   X
 } from "lucide-react";
-import type { CashTransaction, CashTxType } from "@/lib/types";
-import { formatDateFr, groupSeanceTotals } from "@/lib/helpers";
+import type { CashTransaction, CashTxType, PaymentSource } from "@/lib/types";
+import {
+  formatDateFr,
+  formatDays,
+  groupName,
+  groupSeanceTotals,
+  moduleName,
+  monthCodeLabel,
+  registrationNumberOf,
+  sessionTimeLabel,
+  studentName,
+} from "@/lib/helpers";
 import { formatDA } from "@/lib/utils";
 
 export function CashPage() {
@@ -71,6 +81,30 @@ export function CashPage() {
     setDescription("");
     setTxDate(getLocalDateString(new Date()));
   };
+
+  /**
+   * Les bornes de la période affichée, calculées UNE fois : le journal de caisse
+   * les applique aux mouvements, et l'historique des paiements des élèves aux
+   * versements eux-mêmes. Les deux tableaux parlent donc toujours des mêmes
+   * jours, ce qui est la moindre des choses quand on les lit l'un sous l'autre.
+   */
+  const periodRange = (() => {
+    const now = new Date();
+    const todayStr = getLocalDateString(now);
+    if (filterPeriod === "today") return { from: todayStr, to: todayStr };
+    if (filterPeriod === "week") {
+      const start = new Date();
+      start.setDate(now.getDate() - 7);
+      return { from: getLocalDateString(start), to: todayStr };
+    }
+    if (filterPeriod === "month") {
+      return {
+        from: getLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1)),
+        to: todayStr,
+      };
+    }
+    return { from: customStart || "1970-01-01", to: customEnd || todayStr };
+  })();
 
   // Filtering transactions
   const getFilteredTransactions = () => {
@@ -538,6 +572,15 @@ export function CashPage() {
           ))}
         </div>
 
+        {/* Le détail des versements d'élèves — qui, quel emploi, quel mois. */}
+        {(activeTab === "all" || activeTab === "students") && (
+          <StudentPaymentsHistory
+            from={periodRange.from}
+            to={periodRange.to}
+            query={searchQuery}
+          />
+        )}
+
         {/* Séances libres de groupe — le détail derrière les deux mouvements */}
         {periodGroupSeances.length > 0 && (
           <div className="border-b border-line p-4">
@@ -804,3 +847,215 @@ export function CashPage() {
     </div>
   );
 }
+
+/**
+ * L'HISTORIQUE DES PAIEMENTS DES ÉLÈVES — le détail derrière la ligne de caisse.
+ *
+ * Le journal de caisse ne dit qu'une chose : « + 4 000 DA, Solde M2 — Amine
+ * Benali ». C'est assez pour compter l'argent, jamais pour répondre à la
+ * question qu'on pose vraiment six mois plus tard : QUI a payé, POUR QUEL
+ * EMPLOI DU TEMPS, SUR QUEL MOIS, et QUAND exactement.
+ *
+ * Ce tableau lit donc les versements eux-mêmes (`payments`) plutôt que leur
+ * reflet en caisse, et donne pour chacun l'élève et son numéro d'inscription,
+ * le montant, la date ET l'heure, le mois de l'emploi du temps crédité, et
+ * l'emploi du temps lui-même — avec son groupe, ses jours et ses heures.
+ *
+ * La provenance est dite en clair, car trois d'entre elles ne font PAS entrer
+ * d'argent dans le tiroir : une scolarité retenue sur le salaire d'un père, une
+ * scolarité portée en dette sur lui, et une dette avancée par l'école (dont la
+ * sortie qui la finance est, elle, dans le journal).
+ */
+function StudentPaymentsHistory({
+  from,
+  to,
+  query,
+}: {
+  from: string;
+  to: string;
+  query: string;
+}) {
+  const db = useData();
+  const { payments, students, subscriptions, sessions } = db;
+  const [source, setSource] = useState<"all" | PaymentSource>("all");
+
+  const SOURCE_INFO: Record<PaymentSource, { label: string; style: string; hint: string }> = {
+    cash: {
+      label: "Famille (caisse)",
+      style: "bg-success/15 text-success border border-success/30",
+      hint: "Versé au guichet : l'argent est entré dans la caisse.",
+    },
+    teacher_salary: {
+      label: "Retenu sur un salaire",
+      style: "bg-primary-50 text-primary border border-primary/20",
+      hint: "Scolarité d'un fils d'enseignant prise sur la paie de son père : aucun mouvement de caisse.",
+    },
+    teacher_debt: {
+      label: "Porté sur un salaire",
+      style: "bg-warning/15 text-warning border border-warning/30",
+      hint: "Scolarité soldée d'avance au guichet et portée sur le salaire du père : elle sera retenue sur son prochain règlement.",
+    },
+    school_cash: {
+      label: "Avancé par l'école",
+      style: "bg-danger/15 text-danger border border-danger/30",
+      hint: "L'école a couvert la dette sur sa propre caisse ; la sortie qui l'a financée est dans le journal.",
+    },
+  };
+
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return payments
+      .filter((p) => {
+        const day = p.date.substring(0, 10);
+        if (day < from || day > to) return false;
+        if (source !== "all" && (p.paidFrom ?? "cash") !== source) return false;
+        if (!q) return true;
+        const stu = students.find((s) => s.id === p.studentId);
+        const sub = subscriptions.find((s) => s.id === p.subscriptionId);
+        const ses = sub && sessions.find((s) => s.id === sub.sessionId);
+        return [
+          stu ? studentName(stu) : "",
+          stu ? registrationNumberOf(db, stu) : "",
+          ses ? ses.title || moduleName(db, ses.moduleId) : "",
+          p.monthCode ?? "",
+          p.description ?? "",
+          String(p.amountPaid),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payments, students, subscriptions, sessions, from, to, query, source]);
+
+  /** Ce que la période a réellement fait entrer dans le tiroir. */
+  const cashedIn = rows
+    .filter((p) => (p.paidFrom ?? "cash") === "cash")
+    .reduce((s, p) => s + p.amountPaid, 0);
+  const total = rows.reduce((s, p) => s + p.amountPaid, 0);
+
+  return (
+    <div className="border-b border-line p-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h4 className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+          <Receipt className="h-3.5 w-3.5 text-primary" /> Historique des paiements des élèves (
+          {rows.length})
+        </h4>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={source}
+            onChange={(e) => setSource(e.target.value as typeof source)}
+            className="h-8 text-[11px] rounded-xl"
+          >
+            <option value="all">Toutes provenances</option>
+            <option value="cash">Famille (caisse)</option>
+            <option value="teacher_salary">Retenu sur un salaire</option>
+            <option value="teacher_debt">Porté sur un salaire</option>
+            <option value="school_cash">Avancé par l&apos;école</option>
+          </Select>
+          <span className="rounded-xl border border-success/30 bg-success/10 px-2.5 py-1 text-[10px] font-bold text-success">
+            {formatDA(cashedIn)} encaissés
+          </span>
+          {total !== cashedIn && (
+            <span className="rounded-xl border border-line bg-canvas px-2.5 py-1 text-[10px] font-bold text-muted">
+              {formatDA(total)} portés aux élèves
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-line">
+        <table className="w-full min-w-[900px] text-left text-[11px]">
+          <thead className="bg-canvas/50">
+            <tr className="text-[9px] font-bold uppercase tracking-wider text-muted">
+              <th className="p-2.5">Date &amp; heure</th>
+              <th className="p-2.5">Élève</th>
+              <th className="p-2.5">Emploi du temps</th>
+              <th className="p-2.5">Mois payé</th>
+              <th className="p-2.5">Provenance</th>
+              <th className="p-2.5">Libellé</th>
+              <th className="p-2.5 text-right">Montant</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-8 text-center italic text-muted">
+                  Aucun paiement d&apos;élève sur cette période.
+                </td>
+              </tr>
+            ) : (
+              rows.map((p) => {
+                const stu = students.find((s) => s.id === p.studentId);
+                const sub = subscriptions.find((s) => s.id === p.subscriptionId);
+                const ses = sub && sessions.find((s) => s.id === sub.sessionId);
+                const info = SOURCE_INFO[(p.paidFrom ?? "cash") as PaymentSource];
+                return (
+                  <tr key={p.id} className="hover:bg-primary-50/10">
+                    <td className="p-2.5 font-mono text-[10px] text-muted">
+                      <span className="block text-ink">{formatDateFr(p.date.substring(0, 10))}</span>
+                      <span className="block">{p.date.substring(11, 16) || "—"}</span>
+                    </td>
+                    <td className="p-2.5">
+                      <strong className="block text-ink">
+                        {stu ? studentName(stu) : "Élève supprimé"}
+                      </strong>
+                      <span className="block font-mono text-[9px] text-muted">
+                        {stu ? `N° ${registrationNumberOf(db, stu)}` : "—"}
+                        {stu?.phone ? ` · ${stu.phone}` : ""}
+                      </span>
+                    </td>
+                    <td className="p-2.5">
+                      {ses ? (
+                        <>
+                          <strong className="block text-ink">
+                            {ses.title || moduleName(db, ses.moduleId) || "Emploi du temps"}
+                            {ses.archivedAt && (
+                              <span className="ml-1 rounded bg-canvas px-1 py-0.5 text-[8px] font-bold text-muted">
+                                supprimé
+                              </span>
+                            )}
+                          </strong>
+                          <span className="block text-[9px] text-muted">
+                            Groupe {groupName(db, ses.groupId)} · {formatDays(ses.days) || "—"} ·{" "}
+                            <span className="font-mono">{sessionTimeLabel(ses)}</span>
+                          </span>
+                        </>
+                      ) : (
+                        <span className="italic text-muted">Hors emploi du temps</span>
+                      )}
+                    </td>
+                    <td className="p-2.5 font-mono">
+                      {p.monthCode ? monthCodeLabel(p.monthCode) : "—"}
+                    </td>
+                    <td className="p-2.5">
+                      <span
+                        title={info.hint}
+                        className={`rounded-xl px-2 py-1 text-[9px] font-bold ${info.style}`}
+                      >
+                        {info.label}
+                      </span>
+                    </td>
+                    <td className="p-2.5 max-w-[260px] truncate text-muted">
+                      {p.description || "—"}
+                      {p.rest > 0 && (
+                        <span className="ml-1 font-bold text-danger">
+                          (reste {formatDA(p.rest)})
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-2.5 text-right font-mono font-extrabold text-success">
+                      {formatDA(p.amountPaid)}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+

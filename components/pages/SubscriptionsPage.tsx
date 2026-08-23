@@ -48,8 +48,8 @@ import type { FreePeriod, FreePeriodStat, Subscription, ScheduleSession } from "
 export function SubscriptionsPage() {
   const {
     school,
-    subscriptions,
-    sessions,
+    subscriptions: allSubscriptions,
+    sessions: allSessions,
     classes,
     modules,
     teachers,
@@ -62,6 +62,22 @@ export function SubscriptionsPage() {
     deleteSubscriptionPrice,
     updateSchool,
   } = useData();
+
+  /**
+   * L'écran des tarifs ne parle que des emplois du temps VIVANTS. Un emploi
+   * supprimé est archivé avec son tarif : la ligne survit pour que les soldes et
+   * les paiements des élèves gardent un nom dans les historiques, mais elle n'a
+   * plus rien à faire dans un catalogue de prix qu'on vient éditer.
+   */
+  const sessions = useMemo(() => allSessions.filter((s) => !s.archivedAt), [allSessions]);
+  const deadSessions = useMemo(
+    () => new Set(allSessions.filter((s) => s.archivedAt).map((s) => s.id)),
+    [allSessions],
+  );
+  const subscriptions = useMemo(
+    () => allSubscriptions.filter((x) => !x.archivedAt && !deadSessions.has(x.sessionId)),
+    [allSubscriptions, deadSessions],
+  );
 
   // Modals
   const [isCreateOpen, setIsCreateOpen] = useState(false);

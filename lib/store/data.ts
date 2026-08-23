@@ -55,6 +55,7 @@ import type {
   TeacherAbsence,
   TeacherAcompte,
   TeacherChildCharge,
+  TeacherChildDebt,
   TeacherExpense,
   TeacherPayment,
   TeacherPaymentDeduction,
@@ -91,6 +92,8 @@ export interface Database {
   acomptes: TeacherAcompte[];
   /** costs the school carries for a teacher, deducted from his next settlement */
   teacherExpenses: TeacherExpense[];
+  /** scolarités d'enfants créditées d'avance et portées sur le salaire du père */
+  teacherChildDebts: TeacherChildDebt[];
   absences: TeacherAbsence[];
   subjects: Subject[];
   announcements: Announcement[];
@@ -359,8 +362,68 @@ interface DataActions {
     subscriptionId?: string;
     /** ne couvrir que ce mois de cet emploi */
     monthCode?: string;
+    /**
+     * LE CHOIX EXPLICITE DE LA CAISSE : les mois à couvrir, et pour COMBIEN.
+     *
+     * Sans cette liste, l'école avance tout ce qui retient la part de
+     * l'enseignant, au dinar près. Avec elle, la réception décide : elle coche
+     * les mois impayés qu'elle veut régler et corrige le montant de chacun à la
+     * main — l'école peut donc n'avancer qu'une partie d'un mois, et le reste
+     * demeure dû par la famille. Une ligne à 0 est simplement ignorée.
+     */
+    lines?: { subscriptionId: string; monthCode: string; amount: number; label?: string }[];
+    /** ce que l'école règle sur les restes d'anciens paiements et les frais
+     *  d'inscription (n'a de sens qu'avec `lines`) */
+    otherAmount?: number;
     description?: string;
   }) => Promise<{ ok: boolean; amount?: number; rows?: number; messageKey?: string }>;
+  /**
+   * LA SCOLARITÉ D'UN FILS D'ENSEIGNANT, RÉGLÉE DEPUIS LA FEUILLE DU GROUPE.
+   *
+   * Deux chemins, et c'est la réception qui tranche au guichet :
+   *
+   *  - `source: "cash"` — la famille paie elle-même, maintenant. L'argent entre
+   *    en caisse comme n'importe quel versement d'élève, et RIEN n'est retenu au
+   *    père : son salaire n'est pas amputé, l'écran de paie affiche simplement
+   *    le mois « payé par la famille ».
+   *  - `source: "teacher_debt"` — à porter sur le salaire du père. Le solde de
+   *    l'enfant est crédité tout de suite (ses mois sortent du rouge, la part
+   *    que ses séances rapportent se débloque) et le montant est inscrit en
+   *    attente sur l'enseignant : son prochain règlement le retient sur son net,
+   *    une fois et une seule.
+   *
+   * Dans les deux cas, aucun règlement d'enseignant n'a besoin d'être ouvert.
+   */
+  payTeacherChild: (args: {
+    studentId: string;
+    subscriptionId: string;
+    monthCode: string;
+    amount: number;
+    /** "cash" = la famille paie, "teacher_debt" = à retenir sur le père */
+    source: "cash" | "teacher_debt";
+    description?: string;
+  }) => Promise<{
+    ok: boolean;
+    paymentId?: string;
+    debtId?: string;
+    balance?: number;
+    messageKey?: string;
+  }>;
+  /**
+   * SUPPRIME UN EMPLOI DU TEMPS SANS RIEN EFFACER DE SON HISTOIRE.
+   *
+   * L'emploi disparaît de la grille, de la feuille de présence et du catalogue
+   * d'inscription — mais sa ligne, son tarif et tout ce qui s'y rattache
+   * restent : les présences pointées, les soldes et les paiements des élèves,
+   * les parts dues à l'enseignant. L'historique continue donc de les afficher
+   * avec le nom du module, du groupe et de la salle, au lieu de tirets.
+   *
+   * Les élèves inscrits en sont sortis à la date du jour, exactement comme une
+   * désinscription : leur fiche garde le module, daté de la sortie.
+   */
+  archiveSession: (
+    sessionId: string,
+  ) => Promise<{ ok: boolean; students?: number; subscriptions?: number }>;
   cancelAttendance: (attendanceId: string) => Promise<ScanResult>;
   /** Corrects one presence (status / date-time / amount charged); the balance
    *  moves by exactly the same delta. */
@@ -388,7 +451,16 @@ interface DataActions {
       teacherPerSeance?: number;
     },
   ) => Promise<{ ok: boolean; groups?: number; created?: number; updated?: number }>;
-  /** Deletes the tariff of a whole course (every group). */
+  /**
+   * Retire le tarif d'un cours entier (tous ses groupes).
+   *
+   * Comme la suppression d'un emploi du temps, elle ARCHIVE au lieu d'effacer :
+   * un tarif effacé emporterait avec lui les inscriptions qui s'y accrochent —
+   * donc les soldes — et rendrait illisibles les paiements déjà encaissés
+   * dessus. Le tarif quitte le catalogue, ses élèves en sont désinscrits à la
+   * date du jour, et tout l'historique reste nommé. Le redéfinir plus tard le
+   * remet simplement en service.
+   */
   deleteSubscriptionPrice: (sessionId: string) => Promise<{ ok: boolean; deleted?: number }>;
   /** Cost of every "période gratuite" (presences, students, total offered). */
   fetchFreePeriodStats: () => Promise<FreePeriodStat[]>;
@@ -447,6 +519,9 @@ interface DataActions {
     acompteIds?: string[];
     /** children whose inscriptions this settlement pays for */
     childCharges?: TeacherChildCharge[];
+    /** scolarités déjà créditées et portées sur lui (`TeacherChildDebt`) que ce
+     *  règlement solde — elles ne reviendront pas sur le suivant */
+    childDebtIds?: string[];
   }) => Promise<{ ok: boolean; paymentId?: string; sessions?: number; messageKey?: string }>;
   /** Buys N séances on one inscription: creates or tops up the
    *  `{studentId, subscriptionId}` enrollment and writes the matching Payment
@@ -809,8 +884,11 @@ export const useData = create<DataStore>((set, get) => ({
           (!e.expiryDate || e.expiryDate >= today),
       );
 
+    // Un emploi du temps supprimé ne tient plus séance : une carte scannée ne
+    // peut plus y être pointée, même si tout son passé reste lisible.
     const scheduledToday = db.sessions.filter(
       (se) =>
+        !se.archivedAt &&
         se.days.includes(dow) &&
         (!se.periodStart || se.periodStart <= today) &&
         (!se.periodEnd || se.periodEnd >= today),
@@ -861,6 +939,7 @@ export const useData = create<DataStore>((set, get) => ({
 
       const runningNow = db.sessions.some(
         (se) =>
+          !se.archivedAt &&
           se.days.includes(dow) &&
           nowMin >= startsAt(se) - SCAN_EARLY_MARGIN &&
           nowMin <= endsAt(se),
@@ -1533,6 +1612,9 @@ export const useData = create<DataStore>((set, get) => ({
      *  - un versement de la famille : une entrée, comme toujours ;
      *  - un règlement sur le salaire du père : RIEN, l'argent n'a jamais
      *    traversé le tiroir (l'enseignant touche simplement moins) ;
+     *  - une scolarité PORTÉE sur le salaire du père : rien non plus, et pour
+     *    la même raison — l'école sera payée le jour de la paie, en versant
+     *    moins ; la retenue en attente vit dans `teacherChildDebts` ;
      *  - une dette couverte par l'école : l'entrée portée au crédit de l'élève
      *    ET la sortie qui l'a financée. Les deux s'annulent, si bien que le
      *    solde de la caisse ne bouge que du jour où l'enseignant est payé —
@@ -1540,7 +1622,7 @@ export const useData = create<DataStore>((set, get) => ({
      */
     const studentLabel = `${student.firstName} ${student.lastName}`.trim();
     const cashRows: CashTransaction[] =
-      source === "teacher_salary"
+      source === "teacher_salary" || source === "teacher_debt"
         ? []
         : [
             {
@@ -1603,23 +1685,65 @@ export const useData = create<DataStore>((set, get) => ({
    * retient la part de l'enseignant est couvert — les mois dans le rouge, les
    * restes d'anciens paiements et les frais d'inscription.
    */
-  coverStudentDebt: async ({ studentId, subscriptionId, monthCode, description }) => {
+  coverStudentDebt: async ({
+    studentId,
+    subscriptionId,
+    monthCode,
+    lines,
+    otherAmount,
+    description,
+  }) => {
     const db = get();
     const student = db.students.find((s) => s.id === studentId);
     if (!student) return { ok: false, messageKey: "student.notFound" };
 
     const summary = studentDebtSummary(db, studentId);
-    const rows = summary.soldRows.filter(
-      (r) =>
-        (!subscriptionId || r.subscriptionId === subscriptionId) &&
-        (!monthCode || r.code === monthCode),
-    );
+    /**
+     * Deux façons de décider ce que l'école avance :
+     *
+     *  - la réception a coché les mois et corrigé les montants (`lines`) : on
+     *    règle EXACTEMENT ce qu'elle a saisi, jamais plus que ce qui est dû sur
+     *    le mois — un montant partiel laisse le reste à la charge de la famille ;
+     *  - rien n'a été précisé : l'école avance tout ce qui retient la part de
+     *    l'enseignant, comme le bouton le promet depuis toujours.
+     */
+    const picked = (lines ?? []).filter((l) => Math.round(l.amount || 0) > 0);
+    const explicit = picked.length > 0 || (otherAmount ?? 0) > 0;
+
+    const rows = explicit
+      ? picked.map((l) => {
+          const known = summary.soldRows.find(
+            (r) => r.subscriptionId === l.subscriptionId && r.code === l.monthCode,
+          );
+          return {
+            subscriptionId: l.subscriptionId,
+            sessionId: known?.sessionId ?? "",
+            label: l.label ?? known?.label ?? "Emploi du temps",
+            code: l.monthCode,
+            // Avancer plus que ce que le mois doit créerait une avance sur le
+            // solde payée par l'école : on plafonne au dû.
+            debt: known ? Math.min(Math.round(l.amount), known.debt) : Math.round(l.amount),
+          };
+        }).filter((r) => r.debt > 0)
+      : summary.soldRows.filter(
+          (r) =>
+            (!subscriptionId || r.subscriptionId === subscriptionId) &&
+            (!monthCode || r.code === monthCode),
+        );
     // Restreindre à un emploi du temps ne touche QUE ses mois : les restes et
     // les frais d'inscription ne relèvent d'aucun emploi en particulier, ils ne
     // sont donc soldés que quand toute la dette est couverte.
     const whole = !subscriptionId && !monthCode;
-    const rests = whole ? summary.rests : 0;
-    const registration = whole ? summary.registrationDue : 0;
+    const otherDue = summary.rests + summary.registrationDue;
+    const otherPaid = explicit
+      ? Math.min(Math.max(0, Math.round(otherAmount ?? 0)), otherDue)
+      : whole
+        ? otherDue
+        : 0;
+    // Les restes s'éteignent avant les frais d'inscription : c'est la plus
+    // ancienne dette, et c'est celle qui bloque la part de l'enseignant.
+    const rests = Math.min(summary.rests, otherPaid);
+    const registration = otherPaid - rests;
 
     const total = rows.reduce((t, r) => t + r.debt, 0) + rests + registration;
     if (total <= 0) return { ok: false, amount: 0, rows: 0, messageKey: "debt.nothingDue" };
@@ -1644,10 +1768,18 @@ export const useData = create<DataStore>((set, get) => ({
     if (rests > 0 || registration > 0) {
       const now = new Date().toISOString();
       const settled = rests + registration;
-      const order = db.payments
+      // Du plus ancien au plus récent, jusqu'à épuisement de ce que l'école a
+      // décidé d'avancer : un règlement partiel laisse les restes suivants dus.
+      let left = rests;
+      const cleared = new Map<string, number>();
+      for (const p of db.payments
         .filter((p) => p.studentId === studentId && p.rest > 0)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      const cleared = new Set(order.map((p) => p.id));
+        .sort((a, b) => a.date.localeCompare(b.date))) {
+        if (left <= 0) break;
+        const cut = Math.min(p.rest, left);
+        cleared.set(p.id, p.rest - cut);
+        left -= cut;
+      }
       const studentLabel = `${student.firstName} ${student.lastName}`.trim();
       const receipt: Payment = {
         id: uid("pay"),
@@ -1668,11 +1800,15 @@ export const useData = create<DataStore>((set, get) => ({
       };
       set((state) => ({
         payments: [
-          ...state.payments.map((p) => (cleared.has(p.id) ? { ...p, rest: 0 } : p)),
+          ...state.payments.map((p) =>
+            cleared.has(p.id) ? { ...p, rest: cleared.get(p.id)! } : p,
+          ),
           receipt,
         ],
         students: state.students.map((st) =>
-          st.id === studentId && registration > 0 ? { ...st, registrationDue: 0 } : st,
+          st.id === studentId && registration > 0
+            ? { ...st, registrationDue: Math.max(0, (st.registrationDue ?? 0) - registration) }
+            : st,
         ),
         cash: [
           ...state.cash,
@@ -1695,6 +1831,109 @@ export const useData = create<DataStore>((set, get) => ({
     }
 
     return { ok: true, amount: total, rows: rows.length + (rests + registration > 0 ? 1 : 0) };
+  },
+
+  /**
+   * La scolarité d'un fils d'enseignant, réglée depuis la feuille de présence
+   * du groupe. Voir la description de l'action : soit la famille paie au
+   * guichet (l'argent entre en caisse, rien n'est retenu au père), soit le
+   * montant est PORTÉ sur le salaire du père — l'enfant est soldé tout de
+   * suite, et la retenue attend la prochaine paie.
+   */
+  payTeacherChild: async ({ studentId, subscriptionId, monthCode, amount, source, description }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    if (!student) return { ok: false, messageKey: "student.notFound" };
+
+    const due = Math.max(0, Math.round(amount || 0));
+    if (due <= 0) return { ok: false, messageKey: "debt.nothingDue" };
+
+    // Porter la somme sur un père suppose qu'il y en ait un : sans enseignant
+    // père désigné, la retenue n'aurait personne à qui être présentée.
+    const teacherId = student.teacherFatherId;
+    if (source === "teacher_debt" && !teacherId) {
+      return { ok: false, messageKey: "student.noTeacherFather" };
+    }
+
+    const sub = db.subscriptions.find((x) => x.id === subscriptionId);
+    const ses = sub && db.sessions.find((x) => x.id === sub.sessionId);
+    const label =
+      (ses && (ses.title || MODULE_NAME(db, ses.moduleId))) || "Emploi du temps";
+    const note =
+      description?.trim() ||
+      (source === "cash"
+        ? `Versé par la famille au guichet (${monthCode})`
+        : `Scolarité portée sur le salaire du père (${monthCode})`);
+
+    const res = await get().addSold({
+      studentId,
+      subscriptionId,
+      amount: due,
+      monthCode,
+      source,
+      description: `${note} — ${label}`,
+    });
+    if (!res.ok) return { ok: false, messageKey: "payment.failed" };
+
+    if (source === "cash" || !teacherId) {
+      return { ok: true, paymentId: res.paymentId, balance: res.balance };
+    }
+
+    // La retenue en attente : le prochain règlement du père la lit, la déduit
+    // de son net et la marque payée — donc jamais deux fois.
+    const debt: TeacherChildDebt = {
+      id: uid("tcd"),
+      teacherId,
+      studentId,
+      subscriptionId,
+      monthCode,
+      label: `${student.firstName} ${student.lastName}`.trim() || "Enfant",
+      amount: due,
+      date: dateKey(new Date()),
+      paid: false,
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({ teacherChildDebts: [...state.teacherChildDebts, debt] }));
+
+    return { ok: true, paymentId: res.paymentId, debtId: debt.id, balance: res.balance };
+  },
+
+  /**
+   * Supprimer un emploi du temps, c'est l'ARCHIVER : voir la description de
+   * l'action. Rien n'est effacé — ni les présences, ni les soldes, ni les
+   * paiements, ni les parts dues à l'enseignant — et l'historique continue donc
+   * de les nommer correctement.
+   */
+  archiveSession: async (sessionId) => {
+    const db = get();
+    const session = db.sessions.find((s) => s.id === sessionId);
+    if (!session) return { ok: false };
+
+    const today = dateKey(new Date());
+    const subIds = db.subscriptions
+      .filter((sub) => sub.sessionId === sessionId)
+      .map((sub) => sub.id);
+
+    // Les élèves en sortent comme d'une désinscription ordinaire : leur fiche
+    // garde le module, ses présences, ses paiements et son solde, datés du jour.
+    let moved = 0;
+    for (const subId of subIds) {
+      for (const st of db.students.filter((x) => x.subscriptionIds.includes(subId))) {
+        await get().unsubscribeStudent(st.id, subId);
+        moved += 1;
+      }
+    }
+
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === sessionId ? { ...s, archivedAt: today } : s,
+      ),
+      subscriptions: state.subscriptions.map((sub) =>
+        sub.sessionId === sessionId ? { ...sub, archivedAt: today } : sub,
+      ),
+    }));
+
+    return { ok: true, students: moved, subscriptions: subIds.length };
   },
 
   // Cancelling a presence gives the séance back — the mirror of consuming it.
@@ -1891,6 +2130,8 @@ export const useData = create<DataStore>((set, get) => ({
           ids.includes(s.sessionId)
             ? {
                 ...s,
+                // Redéfinir le tarif d'un cours archivé le remet en service.
+                archivedAt: undefined,
                 pricePerSession: clean,
                 levelPrice,
                 periodMonths,
@@ -1914,16 +2155,25 @@ export const useData = create<DataStore>((set, get) => ({
   deleteSubscriptionPrice: async (sessionId) => {
     const db = get();
     const ids = siblingIds(db, sessionId);
-    const doomed = db.subscriptions.filter((s) => ids.includes(s.sessionId));
+    const doomed = db.subscriptions.filter((s) => ids.includes(s.sessionId) && !s.archivedAt);
     const doomedIds = new Set(doomed.map((s) => s.id));
+    if (doomedIds.size === 0) return { ok: true, deleted: 0 };
+
+    const today = dateKey(new Date());
+    // Les élèves en sortent comme d'une désinscription : leur fiche garde le
+    // module, ses présences, ses paiements et son solde, datés du jour.
+    for (const subId of doomedIds) {
+      for (const st of db.students.filter((x) => x.subscriptionIds.includes(subId))) {
+        await get().unsubscribeStudent(st.id, subId);
+      }
+    }
 
     set((state) => ({
-      subscriptions: state.subscriptions.filter((s) => !doomedIds.has(s.id)),
-      // A tariff that disappears must not leave dangling enrollments behind.
-      students: state.students.map((st) =>
-        st.subscriptionIds.some((id) => doomedIds.has(id))
-          ? { ...st, subscriptionIds: st.subscriptionIds.filter((id) => !doomedIds.has(id)) }
-          : st,
+      // Le tarif est archivé, jamais effacé : l'effacer emporterait les
+      // inscriptions — donc les soldes — et laisserait les paiements encaissés
+      // dessus sans nom sur les écrans d'historique.
+      subscriptions: state.subscriptions.map((s) =>
+        doomedIds.has(s.id) ? { ...s, archivedAt: today } : s,
       ),
     }));
 
@@ -2295,6 +2545,7 @@ export const useData = create<DataStore>((set, get) => ({
     expenseIds,
     acompteIds,
     childCharges,
+    childDebtIds,
   }) => {
     const db = get();
     const teacher = db.teachers.find((t) => t.id === teacherId);
@@ -2377,6 +2628,23 @@ export const useData = create<DataStore>((set, get) => ({
     const expenseIdSet = new Set(clearedExpenses.map((e) => e.id));
     const acompteIdSet = new Set(clearedAcomptes.map((a) => a.id));
 
+    // Les scolarités déjà créditées aux enfants et portées sur ce salaire : ce
+    // règlement les retient, et elles ne reviendront jamais sur le suivant.
+    const clearedChildDebts = db.teacherChildDebts.filter(
+      (d) => d.teacherId === teacherId && !d.paid && (childDebtIds ?? []).includes(d.id),
+    );
+    const childDebtSnapshot: TeacherPaymentDeduction[] = clearedChildDebts.map((d) => ({
+      id: d.id,
+      kind: "expense",
+      label: `Scolarité — ${d.label}`,
+      description: [d.monthCode, d.subscriptionId ? undefined : "hors emploi du temps"]
+        .filter(Boolean)
+        .join(" · "),
+      amount: d.amount,
+      date: d.date,
+    }));
+    const childDebtIdSet = new Set(clearedChildDebts.map((d) => d.id));
+
     set((state) => ({
       unpaidTeacher: state.unpaidTeacher.map((u) =>
         settledDueIds.has(u.id) ? { ...u, paid: true } : u,
@@ -2389,6 +2657,9 @@ export const useData = create<DataStore>((set, get) => ({
       ),
       acomptes: state.acomptes.map((a) =>
         acompteIdSet.has(a.id) ? { ...a, paid: true, paymentId } : a,
+      ),
+      teacherChildDebts: state.teacherChildDebts.map((d) =>
+        childDebtIdSet.has(d.id) ? { ...d, paid: true, paymentId } : d,
       ),
       teacherPayments: [
         ...state.teacherPayments,
@@ -2408,6 +2679,7 @@ export const useData = create<DataStore>((set, get) => ({
           expenses: expenseSnapshot,
           acomptes: acompteSnapshot,
           childCharges: childCharges ?? [],
+          childDebts: childDebtSnapshot,
           months: months ?? [],
           paidAt: new Date().toISOString(),
         },

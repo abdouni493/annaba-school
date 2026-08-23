@@ -372,6 +372,7 @@ export function TeachersPage() {
       (pay.expenses?.length ?? 0) > 0 ||
       (pay.acomptes?.length ?? 0) > 0 ||
       (pay.childCharges?.length ?? 0) > 0 ||
+      (pay.childDebts?.length ?? 0) > 0 ||
       pay.gross != null;
 
     if (hasPayslip) {
@@ -413,7 +414,9 @@ export function TeachersPage() {
           method: pay.method,
           percentage: pay.percentage,
           emplois: [...byEmploi.values()],
-          expenses: pay.expenses ?? [],
+          // Les scolarités déjà réglées au guichet et portées sur ce salaire se
+          // réimpriment comme les autres retenues avancées par l'école.
+          expenses: [...(pay.expenses ?? []), ...(pay.childDebts ?? [])],
           acomptes: pay.acomptes ?? [],
           childCharges: pay.childCharges ?? [],
           gross: pay.gross ?? pay.amount,
@@ -1682,6 +1685,8 @@ export function TeachersPage() {
                                 {pay.gross != null && ` · brut ${pay.gross} DA`}
                                 {(pay.expenses?.length ?? 0) + (pay.acomptes?.length ?? 0) > 0 &&
                                   ` · ${(pay.expenses?.length ?? 0)} dépense(s), ${(pay.acomptes?.length ?? 0)} acompte(s) retenus`}
+                                {(pay.childDebts?.length ?? 0) > 0 &&
+                                  ` · ${pay.childDebts!.length} scolarité(s) d'enfant retenue(s)`}
                               </span>
                               {(pay.months ?? []).length > 0 && (
                                 <div className="mt-1 flex flex-wrap gap-1">

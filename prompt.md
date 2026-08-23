@@ -155,3 +155,22 @@ And make sure to make this transactions display on the history on caisse if user
 
 
 Give me sql code that i have to run for this updates if needed and push all updates to repo
+
+fix the interface of open groupe from side bare make if for the student that a son of teacher make option button for make that student can pay directly from the dashboard without create teacher payement and make sure to make user choose if this payement with marque as debt for his father teacher and amke it display on the interface of payement for the teacher or marque it as payed directly and make it display on the interface of payeemtn of the teacher and do not minus it from his salary
+
+fix the interface of caisse make it display the histoy of transactions of payments of students make it display the informations of the student and the amount and the date andhour and the month that he payed and emploi du temps that he payed for
+
+fix the interface of presence on the side bare make button action for remove the presence or remove the absence with recover the decreased amount from his sold of that emploi du temps
+
+fix the interface of teacher payement for the option of pay for debt student from the money of school fix it make it user can set the month that not payed to pay it from the school money and make option of user can edit the amount that will school pay it from the school money manually
+
+fix the deleting of emploi du temps make it if user delete an emploi du temps then make sure to make the presenses and the payments of students and teacher of that deleted emploi du temps still display on the history make sure to make them still display without delete them from the history
+
+fix the option of inscrire sure un autre emploi du temps make sure to make it display the current classe and yeare and the current emplois du temps that user subscribed onthem and let user can select another emploi du temps
+
+fix the interface of edit student make sure to make it display on the part of inscriptiion emploi du temps of that student make sure to make it display the current class and current year and current emploi du temps and let user can edit and save
+
+fix the creation of students make it the user type the avance amount for the subscripitons then make it ask user for print the invoice for that money payemtn for avance after the createion of the student and make that paeyed avance display on the history also
+
+give me the full sql code that i have to run for this new updates if needed
+then push all updates to repo

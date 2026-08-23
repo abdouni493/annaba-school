@@ -105,12 +105,14 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "schedule_sessions", pk: "id", pkField: "id",
     fields: ["id", "classId", "moduleId", "groupId", "salleId", "teacherId", "days",
              "startTime", "endTime", "dayTimes", "daySalles", "isOpen", "title",
-             "periodStart", "periodEnd", "classIds", "groupIds", "salleIds", "openPrice"],
+             "periodStart", "periodEnd", "classIds", "groupIds", "salleIds", "openPrice",
+             "archivedAt"],
   },
   subscriptions: {
     table: "subscriptions", pk: "id", pkField: "id",
     fields: ["id", "sessionId", "pricePerSession", "levelPrice", "periodMonths",
-             "monthlySeances", "monthlyPrice", "schoolMonthShare", "teacherPerSeance"],
+             "monthlySeances", "monthlyPrice", "schoolMonthShare", "teacherPerSeance",
+             "archivedAt"],
   },
   students: {
     table: "students", pk: "id", pkField: "id",
@@ -163,6 +165,11 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "teacher_expenses", pk: "id", pkField: "id",
     fields: ["id", "teacherId", "name", "amount", "description", "date", "paid",
              "paymentId", "createdAt"],
+  },
+  teacherChildDebts: {
+    table: "teacher_child_debts", pk: "id", pkField: "id",
+    fields: ["id", "teacherId", "studentId", "subscriptionId", "monthCode", "label",
+             "amount", "date", "paid", "paymentId", "createdAt"],
   },
   absences: {
     table: "teacher_absences", pk: "id", pkField: "id",

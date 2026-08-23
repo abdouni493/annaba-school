@@ -27,7 +27,7 @@ Le script est idempotent (relançable sans risque) et crée :
 | Section | Contenu |
 | ------- | ------- |
 | 1–2 | extensions, `profiles`, et les fonctions de comptes (`admin_exists`, `bootstrap_admin`, `admin_create_user`, `admin_set_password`, `admin_set_email`, `admin_delete_user`) |
-| 3–4 | les 33 tables métier, leurs clés étrangères et leurs index |
+| 3–4 | les 34 tables métier, leurs clés étrangères et leurs index |
 | 5 | la RLS : lecture pour tout compte connecté, écriture pour le personnel, présences pour les enseignants, sa propre fiche pour chacun |
 | 6 | les buckets Storage `logos` et `subjects` |
 | 7–8 | la ligne unique de configuration de l'école, et les droits PostgREST |
@@ -56,6 +56,13 @@ Aucune donnée de démonstration n'est insérée.
 >    l'école) et le type de mouvement `cash_transactions.type = 'student_debt'` (les **dettes
 >    d'élèves avancées par l'école**). Aucune donnée existante n'est modifiée : une fiche sans
 >    liste reste entièrement offerte, exactement comme avant.
+> 7. **`supabase/update-2026-08-24-emploi-archive-scolarite-portee-et-avances.sql`** — ajoute
+>    `schedule_sessions.archived_at` et `subscriptions.archived_at` (**supprimer un emploi du temps
+>    l'archive** au lieu de l'effacer, pour que ses présences, ses paiements et ses parts
+>    d'enseignant restent nommés dans l'historique), élargit `payments.paid_from` à
+>    `teacher_debt`, et crée la table **`teacher_child_debts`** (les scolarités d'enfants réglées
+>    d'avance au guichet et portées sur le salaire du père). Sans `archived_at`, tout emploi du
+>    temps déjà en base reste vivant : rien à reprendre.
 >
 > Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
 > erreur.
@@ -500,6 +507,136 @@ ferait croire à un décaissement qui n'a pas eu lieu non plus. Les deux ensembl
 juste — et l'écran **Caisse** affiche les deux lignes, dans l'onglet « Paiements Élèves », avec le
 total avancé rappelé sous le compteur.
 
+### Régler la scolarité d'un fils d'enseignant depuis la feuille du groupe
+
+Sa ligne de la feuille de présence porte une pastille **« Fils d'ens. »**. Elle ouvre la seule
+question qui compte au guichet : **d'où vient l'argent ?** — et les deux réponses ne font pas la
+même chose au salaire de son père.
+
+| Le bouton choisi | Ce qui se passe à la caisse | Ce qui arrive au salaire du père |
+| ---------------- | --------------------------- | -------------------------------- |
+| **La famille paie maintenant** | une entrée, comme n'importe quel versement d'élève | **rien n'est retenu** — sa paie affiche le mois « payé par la famille » |
+| **À porter sur le salaire du père** | **aucun mouvement** : l'école n'a rien reçu | la somme part **en attente** et son **prochain règlement la retient**, une fois |
+
+Dans les deux cas l'enfant est **en règle immédiatement** : ses mois sortent du rouge, donc la part
+que ses séances rapportent à l'enseignant **se débloque**. La fenêtre liste ses mois en dette sur
+l'emploi du temps affiché, propose le montant qui les solde, et laisse le corriger. Un versement de
+la famille imprime son reçu ; une somme portée n'en imprime pas, puisque personne n'a payé.
+
+Côté **règlement de l'enseignant**, les deux se lisent, mais jamais au même endroit :
+
+- **« Ses enfants, scolarisés sur son salaire »** — ce qui est **encore dû** et qu'on décide de
+  retenir maintenant ;
+- **« Scolarités d'enfants déjà réglées au guichet et portées sur ce salaire »** — un bloc de
+  retenues à part, coché d'office, qui **honore** ce que la réception a déjà crédité à l'enfant.
+
+Les deux ne peuvent pas se chevaucher : un mois crédité n'est plus dû. Un mois porté au père
+apparaît d'ailleurs **« Porté sur le salaire »** dans le tableau de ses enfants, avec un renvoi vers
+la retenue du bas — pour qu'on ne la compte pas deux fois en la voyant deux fois.
+
+### Retirer une présence ou une absence, et récupérer l'argent
+
+Sur la feuille de présence, **chaque case déjà pointée se clique** — S1, S2, … peu importe le jour
+où elle a été saisie. La fenêtre annonce ce qu'elle va faire avant de le faire : quelle séance part,
+de quel jour, et **combien revient sur le solde de cet emploi du temps**.
+
+Retirer un pointage, c'est l'exact inverse de l'écrire :
+
+- la ligne s'efface et la séance **cesse d'être consommée** ;
+- le prix qu'elle avait pris est **rendu au dinar près** ;
+- la part qu'elle devait à l'enseignant **s'en va avec elle**, tant qu'elle n'a pas été réglée.
+
+Une séance **annulée**, une séance **offerte** ou une **première absence** n'ayant rien coûté, la
+fenêtre le dit plutôt que d'annoncer un remboursement de 0 DA. Le pointage du **jour affiché** garde
+en plus son bouton de retrait sous les boutons présent / absent / annulée, avec le montant rendu
+écrit dessus — la réception n'a pas à deviner si le clic rendra de l'argent.
+
+### Supprimer un emploi du temps sans perdre son histoire
+
+Supprimer un emploi du temps ne l'efface plus : cela l'**archive**. La différence n'est pas
+cosmétique — les clés étrangères cascadaient :
+
+```
+schedule_sessions  ──►  subscriptions  ──►  enrollments   (LES SOLDES)
+```
+
+…tandis que les présences et les paiements, eux, survivaient **orphelins**, sans module, sans groupe
+ni salle à afficher. Un historique se lisait alors « — · — · 4 000 DA ».
+
+Désormais, l'emploi du temps quitte les écrans qui servent à **organiser demain** — la grille, la
+feuille de présence, le catalogue d'inscription, les tarifs — et reste entier partout où l'on
+**relit hier** :
+
+- les **présences** pointées, avec le nom du module et du groupe ;
+- les **paiements** et les **soldes** des élèves ;
+- ce qu'il doit encore à l'**enseignant**, toujours réglable depuis sa paie, où l'emploi porte la
+  mention *« Emploi supprimé »*.
+
+Ses élèves en sont **désinscrits à la date du jour**, exactement comme une désinscription ordinaire :
+leur fiche garde le module, daté de la sortie. Retirer le **tarif** d'un cours (écran Abonnements)
+suit la même règle, et pour la même raison : l'effacer emporterait les soldes de tous ses élèves.
+Redéfinir le tarif plus tard le remet simplement en service.
+
+### L'école choisit ce qu'elle avance, mois par mois
+
+Le bouton **« Payer de la caisse »** ne solde plus aveuglément toute la dette. Il ouvre la liste des
+**mois impayés** de l'élève — emploi du temps, mois, montant dû — et laisse la réception cocher ceux
+que l'école prend en charge et **corriger chaque montant à la main**. Les restes d'anciens paiements
+et les frais d'inscription, qui ne relèvent d'aucun emploi, se règlent sur une ligne à part.
+
+Un avertissement s'affiche tant que la sélection ne couvre pas **toute** la dette, parce que c'est
+la règle qui compte pour l'enseignant : sa part ne se débloque **qu'à zéro**. Un règlement partiel
+soulage la famille, il ne débloque rien — et il vaut mieux le savoir avant de valider qu'après.
+
+### L'historique des paiements des élèves, dans la caisse
+
+Le journal de caisse ne dit qu'une chose : *« + 4 000 DA, Solde M2 — Amine Benali »*. Assez pour
+compter l'argent, jamais pour répondre à la question qu'on pose six mois plus tard.
+
+L'écran **Caisse** affiche donc, au-dessus du journal, l'**historique des versements eux-mêmes** :
+l'élève et son **numéro d'inscription**, le **montant**, la **date et l'heure**, le **mois** crédité,
+et l'**emploi du temps** avec son groupe, ses jours et ses heures. La **provenance** est dite en
+clair, car trois d'entre elles ne font entrer aucun argent dans le tiroir :
+
+| Provenance | Le tiroir bouge ? |
+| ---------- | ----------------- |
+| **Famille (caisse)** | oui — c'est le seul cas |
+| **Retenu sur un salaire** | non : l'école est payée en versant moins au père |
+| **Porté sur un salaire** | non : elle le sera à la prochaine paie du père |
+| **Avancé par l'école** | non : l'entrée et la sortie qui la finance s'annulent |
+
+Le compteur du haut distingue donc **ce qui a été encaissé** de **ce qui a été porté au crédit des
+élèves**, et la liste se filtre par provenance.
+
+### Voir où en est un élève avant de le déplacer
+
+Les deux écrans qui inscrivent — **« Inscrire sur un autre emploi du temps »** (fiche *Payer &
+recharger*) et **« Modifier l'élève »** — rappellent maintenant, **au-dessus du catalogue**, ce que
+l'élève suit déjà : sa **classe**, son **niveau et son année**, chaque **emploi du temps** avec son
+groupe, ses jours, ses heures, sa salle, son enseignant, le prix de la séance et son **solde**.
+
+Sans ce rappel, cocher un créneau dans la liste du dessous relève du pari — c'est ainsi qu'on
+inscrit un élève de 4AP sur un créneau de 3AP sans s'en apercevoir. Le tableau lit la **sélection en
+cours**, pas seulement ce qui est enregistré : dans l'écran de modification, une ligne ajoutée y
+apparaît aussitôt, marquée *« à enregistrer »*, et chaque ligne se retire d'un clic. Cocher un autre
+groupe du **même cours** y **déplace** l'élève au lieu de le facturer deux fois.
+
+### L'avance versée à l'inscription
+
+À la création d'un élève, la réception saisit, emploi du temps par emploi du temps, l'**avance** que
+la famille verse aujourd'hui : cet argent devient le **solde d'ouverture** de cet emploi, crédité
+sur le mois où l'élève **entre** (un enfant inscrit en M2 paie pour M2, jamais pour un mois qu'il a
+manqué).
+
+L'enregistrement propose alors **deux documents, dans cet ordre** :
+
+1. le **reçu de l'avance**, dès qu'un dinar a été versé — c'est une entrée d'argent, elle mérite sa
+   propre pièce, avec le mois crédité et le solde qui en résulte emploi par emploi ;
+2. le **bon d'inscription**, qui récapitule l'identité, les emplois du temps et ce qui a été versé.
+
+Refuser le premier n'empêche jamais d'imprimer le second. L'avance part en même temps dans la
+**caisse** et dans l'**historique des paiements** de l'élève, emploi du temps et mois compris.
+
 ### Alertes
 
 Séances épuisées, inscription à 2 séances ou moins, abonnement mensuel ou formation bientôt expiré
@@ -520,6 +657,8 @@ scan, sur la carte élève, dans le détail de la fiche, et dans les espaces ét
 | Mois d'emploi du temps (paie)    | `lib/teacherMonths.ts`, `components/teachers/`                          |
 | Espaces étudiant / parent        | `components/pages/StudentPages.tsx`, `components/pages/ParentPages.tsx` |
 | Séances libres de groupe         | `components/independent/GroupSeanceSection.tsx`, `lib/reports/groupSeance.ts` |
+| Feuille de présence (partagée)   | `components/attendance/PresenceSheet.tsx`                              |
+| Caisse & historique des paiements| `components/pages/CashPage.tsx`                                        |
 
 L'application n'affiche **aucun favicon** : l'onglet du navigateur reste sans icône. Le logo
 téléversé dans **Paramètres** ne sert que dans l'application et sur les documents imprimés.

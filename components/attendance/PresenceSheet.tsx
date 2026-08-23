@@ -37,11 +37,14 @@ import { formatDA } from "@/lib/utils";
 import { printHtmlDocument } from "@/lib/print";
 import { presenceSheetHtml, soldReceiptHtml } from "@/lib/reports/documents";
 import {
+  Banknote,
   Check,
   CheckCheck,
   ChevronLeft,
   ChevronRight,
   Clock,
+  GraduationCap,
+  HandCoins,
   History,
   Pencil,
   Printer,
@@ -62,6 +65,7 @@ import type {
   ScheduleSession,
   Student,
 } from "@/lib/types";
+import type { Teacher } from "@/lib/types";
 import {
   DAY_LABELS_FR,
   attendanceOn,
@@ -69,6 +73,7 @@ import {
   cycleOf,
   cycleSizeOf,
   cycleSlots,
+  currentCycleCode,
   dayKeyOf,
   enrolledInMonth,
   enrollmentCycles,
@@ -90,6 +95,7 @@ import {
   studentCaseTone,
   studentListPrice,
   studentMatches,
+  studentMonthPrice,
   studentName,
   studentSoldDebtRows,
   teacherName,
@@ -140,8 +146,16 @@ export function PresenceSheet({
   const [bulkStatus, setBulkStatus] = useState<"present" | "cancelled" | null>(null);
   /** l'historique des paiements d'un élève sur cet emploi — modifiable */
   const [history, setHistory] = useState<Student | null>(null);
+  /** le pointage qu'on s'apprête à RETIRER, en rendant ce qu'il avait débité */
+  const [removing, setRemoving] = useState<{ student: Student; record: AttendanceRecord } | null>(
+    null,
+  );
+  /** l'enfant d'enseignant dont on règle la scolarité au guichet */
+  const [childPay, setChildPay] = useState<Student | null>(null);
 
-  const sub = db.subscriptions.find((s) => s.sessionId === session.id);
+  // Un tarif ARCHIVÉ (retiré du catalogue) ne pointe plus : la feuille demande
+  // qu'on le redéfinisse, comme pour un emploi qui n'en a jamais eu.
+  const sub = db.subscriptions.find((s) => s.sessionId === session.id && !s.archivedAt);
   const unitPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
   const schoolOnlyPrice = schoolPerSeanceOf(sub);
   const monthIndex = Math.max(0, monthOrder(monthCode));
@@ -203,6 +217,49 @@ export function PresenceSheet({
           ? "Pointage annulé"
           : `${STATUS_STYLE[status].label} enregistré`,
       message: `${bits.join(" · ") || "Aucun mouvement"} — solde : ${formatDA(res.balance ?? 0)}`,
+      studentName: studentName(student),
+    });
+  };
+
+  /**
+   * RETIRER UN POINTAGE, quel que soit le jour où il a été saisi.
+   *
+   * C'est l'inverse exact de l'écriture : la ligne s'efface, la séance cesse
+   * d'être consommée, et le prix qu'elle avait pris sur le solde de CET emploi
+   * du temps y est RENDU au dinar près (une séance annulée ou non facturée
+   * n'ayant rien coûté, il n'y a rien à rendre). La part que la séance devait à
+   * l'enseignant s'en va avec elle, tant qu'elle n'a pas été réglée.
+   */
+  const removeRecord = async (student: Student, record: AttendanceRecord) => {
+    const day = dayKeyOf(record.timestamp);
+    setBusyId(student.id);
+    const res = await setPresence({
+      studentId: student.id,
+      sessionId: session.id,
+      date: day,
+      status: null,
+    });
+    setBusyId(null);
+    setRemoving(null);
+    if (!res.ok) {
+      addToast({
+        type: "danger",
+        title: "Retrait impossible",
+        message: "Ce pointage n'a pas pu être retiré.",
+        studentName: studentName(student),
+      });
+      return;
+    }
+    addToast({
+      type: "success",
+      title: `${STATUS_STYLE[record.status].label} retiré${
+        record.status === "absent" ? "e" : ""
+      }`,
+      message:
+        (res.refunded
+          ? `${formatDA(res.refunded)} rendus sur le solde de cet emploi du temps`
+          : "Cette séance n'avait rien débité") +
+        ` — séance du ${formatDateFr(day)} · solde ${formatDA(res.balance ?? 0)}`,
       studentName: studentName(student),
     });
   };
@@ -531,6 +588,8 @@ export function PresenceSheet({
                   onDrill={(kind) => setDrill({ student: st, kind })}
                   onLeave={() => setLeaving(st)}
                   onHistory={() => setHistory(st)}
+                  onRemove={(record) => setRemoving({ student: st, record })}
+                  onChildPay={() => setChildPay(st)}
                 />
               ))
             )}
@@ -765,6 +824,30 @@ export function PresenceSheet({
           subscriptionId={sub.id}
           label={title}
           onClose={() => setHistory(null)}
+        />
+      )}
+
+      {/* ---- retirer un pointage, et rendre ce qu'il avait pris ------------- */}
+      {removing && (
+        <RemovePresenceModal
+          student={removing.student}
+          record={removing.record}
+          subscriptionId={sub.id}
+          label={title}
+          busy={busyId === removing.student.id}
+          onConfirm={() => removeRecord(removing.student, removing.record)}
+          onClose={() => setRemoving(null)}
+        />
+      )}
+
+      {/* ---- la scolarité d'un fils d'enseignant, réglée au guichet --------- */}
+      {childPay && (
+        <TeacherChildPayModal
+          student={childPay}
+          subscriptionId={sub.id}
+          label={title}
+          onClose={() => setChildPay(null)}
+          onReceipt={setReceipt}
         />
       )}
 
@@ -1275,6 +1358,8 @@ function StudentRow({
   onDrill,
   onLeave,
   onHistory,
+  onRemove,
+  onChildPay,
 }: {
   student: Student;
   session: ScheduleSession;
@@ -1289,6 +1374,10 @@ function StudentRow({
   onDrill: (kind: "previous" | "other") => void;
   onLeave: () => void;
   onHistory: () => void;
+  /** retirer CE pointage-là — même s'il date d'un autre jour du mois */
+  onRemove: (record: AttendanceRecord) => void;
+  /** régler la scolarité d'un fils d'enseignant, au guichet */
+  onChildPay: () => void;
 }) {
   const db = useData();
   const sub = db.subscriptions.find((s) => s.id === subscriptionId)!;
@@ -1337,26 +1426,45 @@ function StudentRow({
         // instead of reading like a pointage still to do.
         const before = i < lead;
         const rec: AttendanceRecord | undefined = before ? undefined : slots[i - lead];
+        // Une case DÉJÀ POINTÉE se clique : c'est là qu'on retire une présence
+        // ou une absence saisie par erreur, fût-elle d'un autre jour du mois,
+        // et qu'on récupère ce qu'elle avait pris sur le solde.
+        const cls = `inline-flex h-6 w-6 items-center justify-center rounded-lg border text-[11px] font-black ${
+          before
+            ? "border-dashed border-line bg-canvas/40 text-muted/40"
+            : rec
+              ? `${STATUS_STYLE[rec.status].cls} cursor-pointer hover:ring-2 hover:ring-danger/40`
+              : "border-line bg-canvas text-muted/50"
+        }`;
+        const label = before ? "" : rec ? STATUS_STYLE[rec.status].short : "–";
         return (
           <td key={i} className="px-1 py-2 text-center">
-            <span
-              title={
-                before
-                  ? `Séance tenue avant son inscription (inscrit à la séance ${lead + 1})`
-                  : rec
-                    ? `${STATUS_STYLE[rec.status].label} — ${formatDateFr(rec.timestamp.slice(0, 10))}`
+            {rec ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onRemove(rec)}
+                title={`${STATUS_STYLE[rec.status].label} — ${formatDateFr(
+                  dayKeyOf(rec.timestamp),
+                )} · cliquer pour retirer ce pointage et rendre ${formatDA(
+                  rec.status === "cancelled" || rec.noCharge ? 0 : rec.amountDeducted || 0,
+                )} au solde`}
+                className={`${cls} disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                {label}
+              </button>
+            ) : (
+              <span
+                title={
+                  before
+                    ? `Séance tenue avant son inscription (inscrit à la séance ${lead + 1})`
                     : "Pas encore pointé"
-              }
-              className={`inline-flex h-6 w-6 items-center justify-center rounded-lg border text-[11px] font-black ${
-                before
-                  ? "border-dashed border-line bg-canvas/40 text-muted/40"
-                  : rec
-                    ? STATUS_STYLE[rec.status].cls
-                    : "border-line bg-canvas text-muted/50"
-              }`}
-            >
-              {before ? "" : rec ? STATUS_STYLE[rec.status].short : "–"}
-            </span>
+                }
+                className={cls}
+              >
+                {label}
+              </span>
+            )}
           </td>
         );
       })}
@@ -1399,6 +1507,16 @@ function StudentRow({
           >
             <History className="h-3.5 w-3.5" />
           </button>
+          {/* Fils d'enseignant : il n'a pas à attendre la paie de son père. */}
+          {student.studentCase === "teacher_child" && (
+            <button
+              onClick={onChildPay}
+              title="Fils d'enseignant — régler sa scolarité ici : par sa famille, ou portée sur le salaire de son père"
+              className="flex h-6 items-center gap-1 rounded-lg border border-primary/40 bg-primary-50/60 px-1.5 text-[9px] font-bold text-primary transition-colors hover:bg-primary hover:text-white"
+            >
+              <GraduationCap className="h-3 w-3" /> Fils d&apos;ens.
+            </button>
+          )}
         </div>
         <span className="mt-0.5 block text-[9px] text-muted">
           {cycle.done}/{Math.max(0, cycle.size - cycle.lead)} séance(s) · consommé{" "}
@@ -1480,12 +1598,35 @@ function StudentRow({
             active={false}
             disabled={busy || !today}
             tone="neutral"
-            title="Retour — annuler ce pointage et rendre le solde"
+            title={
+              today
+                ? `Retirer ${
+                    today.status === "absent" ? "l'absence" : "la présence"
+                  } du jour et rendre ${formatDA(
+                    today.status === "cancelled" || today.noCharge ? 0 : today.amountDeducted || 0,
+                  )} au solde`
+                : "Rien à retirer ce jour-là"
+            }
             onClick={() => onWrite(student, null)}
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </MarkButton>
         </div>
+        {/* Ce que « Retour » va faire, écrit en clair : la réception n'a pas à
+            deviner si le clic rendra de l'argent ou non. */}
+        {today && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onRemove(today)}
+            className="mt-1 block w-full text-center text-[9px] font-bold text-danger hover:underline disabled:opacity-40"
+          >
+            Retirer {today.status === "absent" ? "l'absence" : STATUS_STYLE[today.status].label.toLowerCase()}
+            {today.status !== "cancelled" && !today.noCharge && today.amountDeducted > 0
+              ? ` · +${formatDA(today.amountDeducted)}`
+              : ""}
+          </button>
+        )}
       </td>
 
       {/* off the group — his présences, ses paiements et son solde restent */}
@@ -1535,6 +1676,355 @@ function MarkButton({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * RETIRER UN POINTAGE — présence, retard ou absence — et RENDRE ce qu'il avait
+ * pris sur le solde de cet emploi du temps.
+ *
+ * L'écran dit exactement ce qui va se passer avant de le faire, parce que c'est
+ * de l'argent : quelle séance part, de quel jour, et combien revient sur le
+ * solde. Une séance annulée ou une première absence n'ayant rien coûté, la
+ * fenêtre le dit aussi plutôt que d'annoncer un remboursement de 0 DA.
+ */
+function RemovePresenceModal({
+  student,
+  record,
+  subscriptionId,
+  label,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  student: Student;
+  record: AttendanceRecord;
+  subscriptionId: string;
+  label: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const db = useData();
+  const day = dayKeyOf(record.timestamp);
+  const style = STATUS_STYLE[record.status];
+  const refund =
+    record.status === "cancelled" || record.noCharge ? 0 : Math.max(0, record.amountDeducted || 0);
+  const balance = soldFor(db, student.id, subscriptionId);
+
+  return (
+    <Modal open onClose={onClose} title={`Retirer ce pointage — ${style.label.toLowerCase()}`}>
+      <div className="space-y-3">
+        <div className="rounded-xl bg-primary-50/60 p-3">
+          <strong className="block text-sm text-ink">{studentName(student)}</strong>
+          <span className="text-[11px] text-muted">
+            N° {registrationNumberOf(db, student)} · {label}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-3">
+          <Badge tone="neutral" className="gap-1">
+            <Clock className="h-3 w-3" /> {formatDateFr(day)}
+          </Badge>
+          <span
+            className={`inline-flex h-6 items-center justify-center rounded-lg border px-2 text-[11px] font-black ${style.cls}`}
+          >
+            {style.label}
+          </span>
+        </div>
+
+        <p className="text-xs leading-relaxed text-ink">
+          Cette séance sera <strong>effacée de sa ligne</strong> : elle cesse d&apos;être
+          consommée, et la part qu&apos;elle devait à l&apos;enseignant s&apos;en va avec elle tant
+          qu&apos;elle n&apos;a pas été réglée.
+        </p>
+
+        {refund > 0 ? (
+          <p className="rounded-xl border border-success/40 bg-success/10 p-2.5 text-[11px] font-semibold text-success">
+            {formatDA(refund)} seront <strong>rendus</strong> au solde de cet emploi du temps — il
+            passera de {formatDA(balance)} à {formatDA(balance + refund)}.
+          </p>
+        ) : (
+          <p className="rounded-xl border border-line bg-canvas/50 p-2.5 text-[11px] text-muted">
+            Cette séance n&apos;avait rien débité (séance annulée, offerte, ou première absence sur
+            cet emploi) : il n&apos;y a donc rien à rendre.
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Annuler
+          </Button>
+          <Button variant="danger" onClick={onConfirm} disabled={busy} className="gap-1.5">
+            <RotateCcw className="h-4 w-4" />
+            {busy ? "Retrait…" : refund > 0 ? `Retirer et rendre ${formatDA(refund)}` : "Retirer"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * LA SCOLARITÉ D'UN FILS D'ENSEIGNANT, RÉGLÉE DEPUIS LA FEUILLE DU GROUPE.
+ *
+ * Rien n'oblige un fils d'enseignant à attendre la paie de son père, et rien
+ * n'oblige la réception à ouvrir un écran de règlement pour le mettre en règle.
+ * Elle choisit ici, en deux clics, D'OÙ vient l'argent :
+ *
+ *  - « la famille paie maintenant » — un versement d'élève ordinaire : il entre
+ *    en caisse, et le salaire du père n'est PAS amputé. L'écran de paie de
+ *    l'enseignant l'affiche « payé par la famille » ;
+ *  - « à porter sur le salaire du père » — l'enfant est soldé tout de suite,
+ *    donc la part que ses séances rapportent se débloque, et le montant part en
+ *    attente sur la fiche du père. Son prochain règlement le retient sur son
+ *    net, une fois et une seule.
+ *
+ * Dans les deux cas le mois cesse d'être en dette : c'est la seule chose qui
+ * bloquait la paie de l'enseignant.
+ */
+function TeacherChildPayModal({
+  student,
+  subscriptionId,
+  label,
+  onClose,
+  onReceipt,
+}: {
+  student: Student;
+  subscriptionId: string;
+  label: string;
+  onClose: () => void;
+  onReceipt: (html: string) => void;
+}) {
+  const db = useData();
+  const { payTeacherChild } = db;
+  const { language } = useSettings();
+  const { addToast } = useToast();
+
+  const sub = db.subscriptions.find((x) => x.id === subscriptionId);
+  const father: Teacher | undefined = db.teachers.find((t) => t.id === student.teacherFatherId);
+
+  /** Ses mois EN DETTE sur cet emploi du temps — ce qu'il y a à régler. */
+  const owing = enrollmentCycles(db, student.id, subscriptionId).filter((c) => c.balance < 0);
+  const current = currentCycleCode(db, student.id, subscriptionId);
+  const monthPrice = sub ? studentMonthPrice(student, sub) : 0;
+
+  const [monthCode, setMonthCode] = useState(owing[0]?.code ?? current);
+  const [amount, setAmount] = useState(owing[0] ? -owing[0].balance : monthPrice);
+  const [busy, setBusy] = useState(false);
+
+  const dueOf = (code: string) =>
+    Math.max(0, -cycleOf(db, student.id, subscriptionId, code).balance);
+  const due = dueOf(monthCode);
+
+  const pick = (code: string) => {
+    setMonthCode(code);
+    setAmount(dueOf(code) || monthPrice);
+  };
+
+  const submit = async (source: "cash" | "teacher_debt") => {
+    const value = Math.max(0, Math.round(amount || 0));
+    if (value <= 0) {
+      addToast({ type: "danger", title: "Montant invalide", message: "Saisissez un montant." });
+      return;
+    }
+    if (source === "teacher_debt" && !father) {
+      addToast({
+        type: "danger",
+        title: "Aucun enseignant père",
+        message: "Désignez l'enseignant père sur sa fiche avant de porter la somme sur un salaire.",
+        studentName: studentName(student),
+      });
+      return;
+    }
+    setBusy(true);
+    const res = await payTeacherChild({
+      studentId: student.id,
+      subscriptionId,
+      monthCode,
+      amount: value,
+      source,
+    });
+    setBusy(false);
+    if (!res.ok) {
+      addToast({
+        type: "danger",
+        title: "Règlement impossible",
+        message: "La scolarité n'a pas pu être enregistrée.",
+        studentName: studentName(student),
+      });
+      return;
+    }
+    addToast({
+      type: "success",
+      title: source === "cash" ? "Encaissé auprès de la famille" : "Porté sur le salaire du père",
+      message:
+        source === "cash"
+          ? `${formatDA(value)} sur ${monthCode} — l'argent entre en caisse, rien n'est retenu sur le salaire de son père.`
+          : `${formatDA(value)} sur ${monthCode} — retenus sur le prochain règlement de ${
+              father ? `${father.firstName} ${father.lastName}` : "son père"
+            }, et pas une fois de plus.`,
+      studentName: studentName(student),
+    });
+    // Le reçu ne s'imprime que quand de l'argent a vraiment changé de main.
+    if (source === "cash") {
+      onReceipt(
+        soldReceiptHtml(db, {
+          student,
+          language,
+          title: "Reçu de paiement",
+          lines: [{ label, monthCode, amount: value, balanceAfter: res.balance ?? 0 }],
+          note: "Versé par la famille, avant la paie de son père.",
+        }),
+      );
+    }
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Fils d'enseignant — régler sa scolarité" wide>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-primary-50/60 p-3">
+          <div className="min-w-0">
+            <strong className="block text-sm text-ink">{studentName(student)}</strong>
+            <span className="text-[11px] text-muted">
+              N° {registrationNumberOf(db, student)} · {label}
+              {father ? ` · père : ${father.firstName} ${father.lastName}` : ""}
+            </span>
+          </div>
+          <Badge
+            tone={soldFor(db, student.id, subscriptionId) < 0 ? "danger" : "success"}
+            className="font-mono"
+          >
+            solde {formatDA(soldFor(db, student.id, subscriptionId))}
+          </Badge>
+        </div>
+
+        {!father && (
+          <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] font-semibold text-warning">
+            Aucun enseignant père n&apos;est désigné sur sa fiche : seul l&apos;encaissement auprès
+            de la famille est possible tant qu&apos;il n&apos;y en a pas.
+          </p>
+        )}
+
+        {/* Ses mois en dette sur CET emploi du temps */}
+        <div className="space-y-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
+            Mois à régler
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {(owing.length > 0 ? owing.map((c) => c.code) : [current]).map((code) => {
+              const picked = code === monthCode;
+              const owed = dueOf(code);
+              return (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => pick(code)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors ${
+                    picked
+                      ? "border-primary bg-primary text-white"
+                      : owed > 0
+                        ? "border-danger/40 bg-danger/10 text-danger hover:bg-danger/20"
+                        : "border-line bg-surface text-muted hover:bg-primary-50"
+                  }`}
+                >
+                  {monthCodeLabel(code)}
+                  <span className="ml-1.5 font-mono">{owed > 0 ? formatDA(owed) : "réglé"}</span>
+                </button>
+              );
+            })}
+          </div>
+          {owing.length === 0 && (
+            <p className="text-[10px] italic text-muted">
+              Aucun mois en dette sur cet emploi du temps — un versement d&apos;avance reste
+              possible sur {monthCodeLabel(current)}.
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Montant (DA)
+            </label>
+            <Input
+              type="number"
+              min={0}
+              autoFocus
+              value={amount || ""}
+              onChange={(e) => setAmount(Math.max(0, Number(e.target.value) || 0))}
+              placeholder="Ex: 2000"
+            />
+          </div>
+          <div className="flex items-end">
+            {due > 0 && (
+              <button
+                type="button"
+                onClick={() => setAmount(due)}
+                className="pb-2.5 text-[11px] font-bold text-primary hover:underline"
+              >
+                Régler la totalité de {monthCode} ({formatDA(due)})
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* LES DEUX CHEMINS, côte à côte, avec ce que chacun fait au salaire */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="flex flex-col justify-between gap-2 rounded-xl border border-success/40 bg-success/5 p-3">
+            <div>
+              <strong className="flex items-center gap-1.5 text-xs text-success">
+                <HandCoins className="h-4 w-4" /> La famille paie maintenant
+              </strong>
+              <p className="mt-1 text-[10px] leading-relaxed text-muted">
+                Un versement d&apos;élève ordinaire : l&apos;argent <strong>entre en caisse</strong>{" "}
+                et le salaire de son père n&apos;est <strong>pas amputé</strong>. Sa paie affichera
+                le mois « payé par la famille », pour que personne ne le retienne une seconde fois.
+              </p>
+            </div>
+            <Button
+              variant="success"
+              size="sm"
+              disabled={busy}
+              onClick={() => submit("cash")}
+              className="gap-1.5"
+            >
+              <Wallet className="h-3.5 w-3.5" /> Encaisser {formatDA(Math.max(0, amount || 0))}
+            </Button>
+          </div>
+
+          <div className="flex flex-col justify-between gap-2 rounded-xl border border-warning/40 bg-warning/5 p-3">
+            <div>
+              <strong className="flex items-center gap-1.5 text-xs text-warning">
+                <Banknote className="h-4 w-4" /> À porter sur le salaire du père
+              </strong>
+              <p className="mt-1 text-[10px] leading-relaxed text-muted">
+                L&apos;enfant est soldé <strong>tout de suite</strong> — la part que ses séances
+                rapportent à l&apos;enseignant se débloque — et le montant part{" "}
+                <strong>en attente sur la fiche de son père</strong> : aucun mouvement de caisse
+                aujourd&apos;hui, et son prochain règlement le retient sur son net, une seule fois.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              disabled={busy || !father}
+              onClick={() => submit("teacher_debt")}
+              className="gap-1.5"
+            >
+              <GraduationCap className="h-3.5 w-3.5" /> Porter {formatDA(Math.max(0, amount || 0))}{" "}
+              en dette
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex justify-end border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Fermer
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
