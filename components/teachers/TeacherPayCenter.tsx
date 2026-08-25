@@ -617,8 +617,6 @@ function MonthBoard({
   const [deductionIds, setDeductionIds] = useState<string[]>(() =>
     board.deductions.filter((d) => d.selectable).map((d) => d.id),
   );
-  /** Le filtre « dettes avancées par l'école » — le bouton qui clignote. */
-  const [coveredOnly, setCoveredOnly] = useState(false);
   /** L'élève dont l'école s'apprête à avancer la dette. */
   const [covering, setCovering] = useState<BoardStudent | null>(null);
   /** Le règlement déjà enregistré que l'on est en train de corriger. */
@@ -627,11 +625,6 @@ function MonthBoard({
   const [note, setNote] = useState("");
 
   const totals = boardTotals(board, { studentIds, arrearKeys, deductionIds });
-  const coveredCount = board.students.filter((r) => r.schoolCovered).length;
-  const shownStudents = coveredOnly
-    ? board.students.filter((r) => r.schoolCovered)
-    : board.students;
-
   const settlement = board.settlement;
 
   // ---- l'école avance la dette d'un élève, pour débloquer la part ---------
@@ -640,6 +633,10 @@ function MonthBoard({
     try {
       const res = await coverStudentDebt({
         studentId: row.studentId,
+        // Seul CET emploi du temps retient la part : ses autres groupes et ses
+        // frais d'inscription ne regardent pas cet enseignant, et les avancer
+        // ferait sortir de la caisse un argent qui ne débloque rien.
+        subscriptionId: emploi.subscriptionId,
         description: `Dette avancée par l'école — ${emploi.title} ${monthCode}`,
       });
       if (!res.ok) {
@@ -659,7 +656,7 @@ function MonthBoard({
       addToast({
         type: "success",
         title: "Dette avancée par l'école",
-        message: `${formatDA(res.amount ?? row.totalDebt)} réglés sur la caisse — la part de l'enseignant est débloquée.`,
+        message: `${formatDA(res.amount ?? row.emploiDebt)} réglés sur la caisse — la part de l'enseignant est débloquée.`,
         studentName: row.name,
       });
     } finally {
@@ -979,10 +976,12 @@ function MonthBoard({
         <div className="flex items-start gap-2 rounded-2xl border border-warning/40 bg-warning/10 p-3 text-[11px] leading-relaxed text-warning">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            <strong>{formatDA(board.withheldTotal)} sont retenus</strong> : ces élèves doivent encore
-            de l&apos;argent, la part que leurs séances rapportent ne se règle donc pas aujourd&apos;hui —
-            elle reviendra dès qu&apos;ils se seront acquittés. L&apos;école peut aussi ne pas faire
-            attendre l&apos;enseignant : « Payer de la caisse » avance la dette et débloque la part
+            <strong>{formatDA(board.withheldTotal)} sont retenus</strong> : ces élèves n&apos;ont pas
+            payé les séances de <strong>{monthCode}</strong> sur cet emploi du temps, la part que ces
+            séances rapportent ne se règle donc pas aujourd&apos;hui — elle reviendra dès
+            qu&apos;ils se seront acquittés. Une dette sur un AUTRE groupe, ou des frais
+            d&apos;inscription, ne retiennent rien ici. L&apos;école peut aussi ne pas faire attendre
+            l&apos;enseignant : « Payer de la caisse » avance ce mois-là et débloque la part
             immédiatement.
           </span>
         </div>
@@ -1000,33 +999,14 @@ function MonthBoard({
               Part enseignant : {formatDA(board.teacherMonthShare)} le mois ÷ {board.size} séances ={" "}
               <strong className="text-primary">{formatDA(board.perSeance)}</strong> la séance. La
               colonne « Part enseignant » multiplie ce tarif par les séances payables de chaque
-              élève, au centime.
+              élève, au centime — une séance ne devient payable que lorsque l&apos;élève l&apos;a
+              payée sur ce mois.
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            {/* LE FILTRE DEMANDÉ : ne montrer que les élèves dont l'école a
-                avancé la dette. Il clignote tant qu'il y en a, parce que ce
-                sont exactement les lignes qu'un contrôle doit regarder. */}
-            <motion.button
-              type="button"
-              onClick={() => setCoveredOnly((v) => !v)}
-              disabled={coveredCount === 0}
-              animate={
-                coveredCount > 0 && !coveredOnly
-                  ? { boxShadow: ["0 0 0 0 rgba(239,68,68,0)", "0 0 0 6px rgba(239,68,68,0.18)", "0 0 0 0 rgba(239,68,68,0)"] }
-                  : {}
-              }
-              transition={{ duration: 1.6, repeat: Infinity }}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-bold transition-colors disabled:opacity-40 ${
-                coveredOnly
-                  ? "border-danger bg-danger text-white"
-                  : "border-danger/40 bg-danger/10 text-danger hover:bg-danger/20"
-              }`}
-              title="N'afficher que les élèves dont l'école a avancé la dette de sa caisse"
-            >
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Dettes avancées par l&apos;école ({coveredCount})
-            </motion.button>
+            {/* Les dettes avancées par l'école ne se pilotent plus d'ici : elles
+                appartiennent à l'élève, pas à la paie de son enseignant, et
+                l'écran « Étudiants » les affiche en alerte. */}
             <Button
               size="sm"
               variant="outline"
@@ -1067,16 +1047,14 @@ function MonthBoard({
               </tr>
             </thead>
             <tbody>
-              {shownStudents.length === 0 ? (
+              {board.students.length === 0 ? (
                 <tr>
                   <td colSpan={11 + board.size} className="px-3 py-8 text-center text-xs italic text-muted">
-                    {coveredOnly
-                      ? "Aucune dette avancée par l'école sur ce mois."
-                      : `Aucun élève sur ${monthCode} — ce mois n'a encore rien produit.`}
+                    Aucun élève sur {monthCode} — ce mois n&apos;a encore rien produit.
                   </td>
                 </tr>
               ) : (
-                shownStudents.map((r) => (
+                board.students.map((r) => (
                   <StudentLine
                     key={r.studentId}
                     row={r}
@@ -1405,6 +1383,8 @@ function MonthBoard({
       {covering && (
         <CoverModal
           row={covering}
+          emploiTitle={emploi.title}
+          subscriptionId={emploi.subscriptionId}
           busy={busy}
           onConfirm={() => applyCover(covering)}
           onClose={() => setCovering(null)}
@@ -1531,18 +1511,31 @@ function StudentLine({
           </span>
         )}
       </td>
+      {/* LE BOUTON N'APPARAÎT QUE QUAND IL SERT : la part de cet élève est
+          retenue parce qu'il n'a pas payé ses séances de ce mois. Un élève à
+          jour ici n'a rien à faire avancer — même s'il doit encore sur un autre
+          groupe, cette dette-là ne retient pas cet enseignant. */}
       <td className="px-2 py-2 text-center">
-        {row.totalDebt > 0 ? (
+        {row.withheld ? (
           <button
             onClick={onCover}
             disabled={busy}
             className="inline-flex h-7 items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-2 text-[9px] font-bold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-40"
-            title={`Avancer ${formatDA(row.totalDebt)} de la caisse de l'école pour débloquer la part de l'enseignant`}
+            title={`Avancer ${formatDA(row.emploiDebt)} de la caisse de l'école pour débloquer la part de l'enseignant`}
           >
             <Banknote className="h-3 w-3" /> Payer de la caisse
           </button>
         ) : (
-          <span className="text-[10px] text-success">✅</span>
+          <span
+            className="text-[10px] text-success"
+            title={
+              row.otherDebt > 0
+                ? `Ses séances de ce mois sont payées — sa part est réglable. Il doit encore ${formatDA(row.otherDebt)} sur d'autres emplois du temps, ce qui ne retient pas cet enseignant.`
+                : "Ses séances de ce mois sont payées — sa part est réglable."
+            }
+          >
+            ✅
+          </span>
         )}
       </td>
     </motion.tr>
@@ -1738,78 +1731,90 @@ function EditPaymentModal({
 }
 
 /**
- * L'ÉCOLE AVANCE LA DETTE D'UN ÉLÈVE.
+ * L'ÉCOLE AVANCE CE QUE L'ÉLÈVE DOIT SUR CET EMPLOI DU TEMPS.
  *
- * Tant qu'un élève doit quelque chose, la part que ses séances rapportent est
- * retenue. L'école peut la débloquer en avançant elle-même l'argent : deux
- * mouvements entrent alors dans la caisse — le paiement porté au crédit de
- * l'élève, et la sortie qui l'a financé. La dette doit être couverte ENTIÈREMENT,
- * restes d'anciens paiements et frais d'inscription compris : c'est exactement
- * ce que le blocage regarde, rien de moins ne le lèverait.
+ * Ce qui retient la part de l'enseignant, ce sont LES SÉANCES NON PAYÉES DE CET
+ * EMPLOI-CI. L'école les avance de sa caisse pour ne pas le faire attendre :
+ * deux mouvements y entrent alors — le paiement porté au crédit de l'élève, et
+ * la sortie qui l'a financé.
+ *
+ * Ses autres groupes et ses frais d'inscription restent dus par la famille :
+ * ils ne retiennent pas cet enseignant, donc les avancer ici ne débloquerait
+ * rien et sortirait de la caisse un argent que personne n'a demandé.
  */
 function CoverModal({
   row,
+  emploiTitle,
+  subscriptionId,
   busy,
   onConfirm,
   onClose,
 }: {
   row: BoardStudent;
+  emploiTitle: string;
+  subscriptionId?: string;
   busy: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }) {
   const db = useData();
   const summary = studentDebtSummary(db, row.studentId);
+  const here = summary.soldRows.filter((r) => r.subscriptionId === subscriptionId);
+  const total = money(here.reduce((s, r) => s + r.debt, 0));
+  const elsewhere = money(summary.total - total);
 
   return (
-    <Modal open onClose={onClose} title="Avancer la dette de cet élève sur la caisse de l'école">
+    <Modal open onClose={onClose} title="Avancer les séances impayées sur la caisse de l'école">
       <div className="space-y-3">
         <div className="rounded-xl bg-primary-50/60 p-3">
           <strong className="block text-sm text-ink">{row.name}</strong>
           <span className="text-[11px] text-muted">
             N° {row.registrationNumber || "—"}
-            {row.phone ? ` · ${row.phone}` : ""}
+            {row.phone ? ` · ${row.phone}` : ""} · {emploiTitle}
           </span>
         </div>
 
         <p className="text-xs leading-relaxed text-ink">
-          Tant que cet élève doit de l&apos;argent, la part que ses séances rapportent à
-          l&apos;enseignant est <strong>retenue</strong>. L&apos;école peut la débloquer en avançant
-          elle-même la dette : deux mouvements entrent dans la caisse — le paiement porté au crédit
-          de l&apos;élève, et la sortie qui l&apos;a financé.
+          Les séances que cet élève n&apos;a pas payées sur <strong>{emploiTitle}</strong> retiennent
+          la part qu&apos;elles rapportent à l&apos;enseignant. L&apos;école peut la débloquer en
+          avançant elle-même ces mois : deux mouvements entrent dans la caisse — le paiement porté
+          au crédit de l&apos;élève, et la sortie qui l&apos;a financé.
         </p>
 
         <div className="space-y-1.5 rounded-xl border border-line bg-canvas/40 p-3 text-[11px]">
-          {summary.soldRows.map((r) => (
-            <div key={`${r.subscriptionId}-${r.code}`} className="flex justify-between gap-2">
-              <span className="min-w-0 truncate text-muted">
-                {r.label} · {r.code}
-              </span>
-              <strong className="shrink-0 font-mono text-danger">{formatDA(r.debt)}</strong>
-            </div>
-          ))}
-          {summary.rests > 0 && (
-            <div className="flex justify-between gap-2">
-              <span className="text-muted">Restes d&apos;anciens paiements</span>
-              <strong className="font-mono text-danger">{formatDA(summary.rests)}</strong>
-            </div>
-          )}
-          {summary.registrationDue > 0 && (
-            <div className="flex justify-between gap-2">
-              <span className="text-muted">Frais d&apos;inscription</span>
-              <strong className="font-mono text-danger">{formatDA(summary.registrationDue)}</strong>
-            </div>
+          {here.length === 0 ? (
+            <span className="block text-center italic text-muted">
+              Rien à avancer sur cet emploi du temps.
+            </span>
+          ) : (
+            here.map((r) => (
+              <div key={`${r.subscriptionId}-${r.code}`} className="flex justify-between gap-2">
+                <span className="min-w-0 truncate text-muted">
+                  {r.label} · {r.code}
+                </span>
+                <strong className="shrink-0 font-mono text-danger">{formatDA(r.debt)}</strong>
+              </div>
+            ))
           )}
           <div className="flex justify-between gap-2 border-t border-line pt-1.5">
             <strong className="text-ink">Total à avancer</strong>
-            <strong className="font-mono text-danger">{formatDA(summary.total)}</strong>
+            <strong className="font-mono text-danger">{formatDA(total)}</strong>
           </div>
         </div>
 
+        {elsewhere > 0 && (
+          <p className="rounded-xl border border-line bg-canvas/40 p-2.5 text-[11px] leading-relaxed text-muted">
+            Il doit encore <strong className="text-ink">{formatDA(elsewhere)}</strong> ailleurs
+            (autres emplois du temps, restes d&apos;anciens paiements, frais d&apos;inscription).
+            Cette dette-là <strong>ne retient pas</strong> cet enseignant : elle reste à la charge de
+            la famille et se règle au guichet.
+          </p>
+        )}
+
         <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] leading-relaxed text-warning">
-          La dette est couverte <strong>entièrement</strong> : c&apos;est la seule façon de lever la
-          retenue. L&apos;élève apparaîtra ensuite en rouge sur la table des élèves, et le filtre
-          « Dettes avancées par l&apos;école » le retrouvera d&apos;un clic.
+          L&apos;élève apparaîtra ensuite en rouge sur la table des élèves, et l&apos;écran{" "}
+          <strong>Étudiants</strong> le signalera en alerte tant que l&apos;école n&apos;aura pas
+          récupéré son avance.
         </p>
 
         <div className="flex justify-end gap-2 border-t border-line pt-3">
@@ -1819,10 +1824,10 @@ function CoverModal({
           <Button
             variant="danger"
             onClick={onConfirm}
-            disabled={busy || summary.total <= 0}
+            disabled={busy || total <= 0}
             className="gap-1.5"
           >
-            <Banknote className="h-4 w-4" /> Avancer {formatDA(summary.total)}
+            <Banknote className="h-4 w-4" /> Avancer {formatDA(total)}
           </Button>
         </div>
       </div>

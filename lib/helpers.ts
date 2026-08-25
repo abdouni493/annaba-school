@@ -1323,6 +1323,127 @@ export function studentSoldDebtRows(db: Database, studentId: string): SoldDebtRo
   return out;
 }
 
+/** Ce que l'encaissement propose à la réception, sur UN mois d'UN emploi. */
+export interface MonthProposal {
+  /** prix d'une séance pour cet élève, son cas et sa remise appliqués */
+  unit: number;
+  /** les séances de ce mois qui sont les SIENNES : le pack, moins celles
+   *  tenues avant son inscription — elles ne furent jamais à lui */
+  mine: number;
+  /** ce qu'il a déjà versé sur ce mois */
+  credited: number;
+  /** séances que ce versement couvre déjà */
+  covered: number;
+  /** séances qu'il doit encore, comptées DEPUIS SA PREMIÈRE du mois */
+  billable: number;
+  /** ce que ces séances coûtent — le montant proposé */
+  total: number;
+  /** la séance où il en est de son pointage : une information affichée, jamais
+   *  la base du calcul */
+  current: number;
+}
+
+/**
+ * CE QU'IL RESTE À PAYER SUR UN MOIS — COMPTÉ DEPUIS SA PREMIÈRE SÉANCE.
+ *
+ * L'erreur qu'il faut éviter tient en une phrase : VENIR À UNE SÉANCE NE LA
+ * PAIE PAS. Un élève qui entre dans le mois à la séance 1 et qui a déjà été
+ * pointé une fois en est à sa deuxième — et il doit toujours les quatre, la
+ * première comprise. Partir de son dernier pointage pour proposer un montant
+ * laissait donc les séances déjà tenues impayées, et le mois se terminait avec
+ * un trou que personne ne voyait passer.
+ *
+ * Le calcul part de sa PREMIÈRE séance du mois : son mois entier — les séances
+ * tenues avant son inscription en moins, puisqu'elles ne furent jamais les
+ * siennes — moins ce qu'il a déjà versé dessus.
+ */
+export function monthProposal(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+  code: string,
+): MonthProposal {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  const student = db.students.find((s) => s.id === studentId);
+  const cycle = cycleOf(db, studentId, subscriptionId, code);
+
+  // Son tarif à LUI : un « école seule » ne paie que la part de l'école, et une
+  // remise s'applique avant tout calcul.
+  const enrollment = db.enrollments.find(
+    (e) => e.studentId === studentId && e.subscriptionId === subscriptionId,
+  );
+  const unit = netPriceFor(
+    studentListPrice(student, sub),
+    enrollment?.discount ?? student?.subscriptionDiscounts?.[subscriptionId],
+  );
+
+  const mine = Math.max(0, cycle.size - cycle.lead);
+  const credited = positiveMoney(cycle.credited);
+  const total = positiveMoney(mine * unit - credited);
+  const covered = unit > 0 ? Math.min(mine, Math.floor(credited / unit)) : 0;
+
+  return {
+    unit,
+    mine,
+    credited,
+    covered,
+    billable: Math.max(0, mine - covered),
+    total,
+    current: Math.min(cycle.done + 1, Math.max(mine, 1)),
+  };
+}
+
+/** Une dette qu'un élève n'a pas payée : l'école l'a avancée de sa caisse. */
+export interface SchoolAdvanceRow {
+  paymentId: string;
+  studentId: string;
+  studentName: string;
+  registrationNumber: string;
+  phone: string;
+  /** l'emploi du temps avancé, quand le versement en désigne un */
+  label: string;
+  monthCode: string;
+  amount: number;
+  date: string;
+  /** ce que l'élève doit ENCORE, l'avance faite */
+  stillOwed: number;
+}
+
+/**
+ * CE QUE L'ÉCOLE A AVANCÉ DE SA PROPRE CAISSE, ÉLÈVE PAR ÉLÈVE.
+ *
+ * Quand une famille n'a pas payé, la part que ses séances rapportent à
+ * l'enseignant est retenue. L'école peut refuser de le faire attendre et régler
+ * à la place de la famille : le versement entre au crédit de l'élève, une
+ * sortie du même montant le finance, et la part se débloque.
+ *
+ * Cet argent-là, l'école l'a sorti sans l'encaisser. C'est une alerte, et elle
+ * appartient à l'ÉLÈVE — pas à la fiche de paie de son enseignant, qui est
+ * soldée depuis longtemps. L'écran des étudiants la porte donc, du plus récent
+ * au plus ancien, tant que personne ne l'a remboursée.
+ */
+export function schoolAdvancedRows(db: Database): SchoolAdvanceRow[] {
+  return db.payments
+    .filter((p) => p.paidFrom === "school_cash" && p.amountPaid > 0)
+    .map((p) => {
+      const student = db.students.find((s) => s.id === p.studentId);
+      const sub = db.subscriptions.find((s) => s.id === p.subscriptionId);
+      return {
+        paymentId: p.id,
+        studentId: p.studentId,
+        studentName: student ? studentName(student) : "Élève supprimé",
+        registrationNumber: student ? registrationNumberOf(db, student) : "—",
+        phone: student?.phone ?? "",
+        label: sub ? subscriptionLabel(db, sub) : (p.description ?? "Dette de l'élève"),
+        monthCode: p.monthCode || "M1",
+        amount: positiveMoney(p.amountPaid),
+        date: p.date,
+        stillOwed: student ? studentDebtSummary(db, p.studentId).total : 0,
+      } satisfies SchoolAdvanceRow;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || a.studentName.localeCompare(b.studentName));
+}
+
 /**
  * TOUT ce qu'un élève doit, dans le détail que l'écran de règlement demande :
  * les mois dans le rouge emploi par emploi, les restes laissés par d'anciens

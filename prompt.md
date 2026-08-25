@@ -234,3 +234,4 @@ and make the interface of repports with new design better and better
 with all this new system for the teacher payement to see the detials correctly with all fiterings 
 
 apply this updates then give me the full sql code that i have torun for this new updates and push all updates to repo with merge code directly without pull request 
+

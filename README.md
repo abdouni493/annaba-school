@@ -489,17 +489,24 @@ Un mois déjà payé par la famille **reste affiché** — sinon personne ne sau
 mais sa case « Retenir » est verrouillée : le retenir une seconde fois ferait payer la scolarité
 deux fois.
 
-### L'école peut avancer la dette d'un élève
+### L'école peut avancer les séances impayées d'un élève
 
-Tant qu'un élève doit de l'argent, la part que ses séances rapportent à l'enseignant est **retenue**
-et ne se règle pas. Le règlement de l'enseignant liste donc, en un seul bloc, **tous ses élèves en
-dette** — mois en cours **et** mois précédents — avec ce que chacun doit et la part qu'il bloque.
+Une part est **retenue** tant que **la séance qui l'a produite n'est pas payée**, sur ce mois de cet
+emploi du temps. Ce n'est pas « l'élève doit quelque chose, quelque part » : une dette sur un autre
+groupe, un reste d'ancien paiement ou des frais d'inscription impayés ne doivent rien à CET
+enseignant, et les lui faire porter revenait à ne jamais le payer pour un élève pourtant à jour chez
+lui.
 
-Chaque ligne porte un bouton **« Payer de la caisse »** : l'école avance la dette sur sa propre
-caisse, et la part redevient payable dans la seconde. Tout ce qui retient la part est couvert — les
-mois dans le rouge, les restes d'anciens paiements **et** les frais d'inscription — parce que rien
-de moins ne la libérerait. La même alerte, avec le même bouton, reste visible sur la ligne de
-l'élève dans le tableau de son mois.
+L'argent versé sur un mois paie ses séances **dans l'ordre où elles ont été tenues**, et le
+trop-versé passe au mois suivant — exactement ce que la feuille de présence promet quand elle dit
+qu'une avance « paiera ses prochaines séances ». Payer deux séances sur quatre libère donc les deux
+premières parts, et laisse les deux autres en attente.
+
+Le bouton **« Payer de la caisse »** n'apparaît que sur les lignes **effectivement bloquées** : un
+élève à jour sur son mois n'a rien à faire avancer. L'école avance alors, sur sa propre caisse, ce
+que l'élève doit **sur cet emploi du temps** — ni ses autres groupes ni ses frais d'inscription, qui
+restent à la charge de la famille et se règlent au guichet — et la part redevient payable dans la
+seconde.
 
 La caisse enregistre **deux** mouvements, et c'est voulu :
 
@@ -515,6 +522,13 @@ N'écrire que l'entrée ferait croire à un versement qui n'a pas eu lieu ; n'é
 ferait croire à un décaissement qui n'a pas eu lieu non plus. Les deux ensemble, le solde reste
 juste — et l'écran **Caisse** affiche les deux lignes, dans l'onglet « Paiements Élèves », avec le
 total avancé rappelé sous le compteur.
+
+**L'alerte, elle, vit sur l'écran « Étudiants ».** Cet argent est sorti de la caisse sans jamais y
+entrer : c'est l'**élève** qui le doit à l'école, pas l'enseignant, qui est réglé depuis longtemps
+et n'a plus rien à réclamer. Un bandeau **« Dettes avancées par l'école »** en tête de la liste des
+étudiants les nomme un par un — numéro, élève, emploi du temps, mois, date, montant avancé et ce
+qu'il doit encore — avec le total sorti de la caisse. La ligne de l'élève reste signalée **en rouge**
+dans le tableau du mois de son enseignant, mais rien ne s'y pilote plus.
 
 ### Régler la scolarité d'un fils d'enseignant depuis la feuille du groupe
 
@@ -694,8 +708,9 @@ Une fiche sans liste garde le comportement d'avant, piloté par `unpaid_teacher_
 ## Les arriérés débloqués — chaque mois reste indépendant
 
 Le cas se produit tous les mois. Au moment de régler le **M1**, deux élèves n'avaient rien versé :
-leur part est **retenue**, et l'enseignant touche le M1 sans elle. Ils s'acquittent ensuite, et
-quand vient le tour du **M2**, ces parts de M1 sont de nouveau dues.
+leur part est **retenue**, et l'enseignant touche le M1 sans elle. Ils s'acquittent ensuite **de
+leur M1** — c'est ce mois-là, et lui seul, qui libère ces parts-là — et quand vient le tour du
+**M2**, ces parts de M1 sont de nouveau dues.
 
 Elles n'appartiennent pas au M2. L'écran de règlement leur donne donc **leur propre tableau** —
 « Arriérés débloqués », avec l'élève, l'emploi du temps, le **mois d'origine**, les dates des
@@ -743,21 +758,28 @@ Les colonnes existantes gardent leur sens et continuent d'être remplies — `cl
 classe, `group_ids` **l'union** de tous les groupes — si bien que le scan, la feuille de présence,
 les tarifs, la paie et les rapports lisent exactement ce qu'ils lisaient avant.
 
-## Encaisser un solde : « + 1 séance », plafonné au mois de l'élève
+## Encaisser un solde : « + 1 séance », compté depuis sa PREMIÈRE séance du mois
 
-La réception connaissait le prix d'une séance, le nombre de séances qui restaient à l'élève, et
+La réception connaissait le prix d'une séance, le nombre de séances que l'élève avait à payer, et
 refaisait la multiplication de tête. La fenêtre « Encaisser un solde » propose désormais deux
 boutons :
 
-- **« + 1 séance »** ajoute le prix d'une séance au montant saisi. Il ne peut être cliqué
-  qu'**autant de fois qu'il reste de séances à cet élève sur son mois** : quatre séances au
-  programme et l'élève à sa première → quatre clics (450, 900, 1 350, 1 800) ; le même élève à sa
-  troisième → deux clics. Passé ce plafond, le bouton se verrouille — on ne facture pas plus que
-  le mois.
-- **« Proposition »** pose directement ce total, d'un seul clic.
+- **« + 1 séance »** ajoute le prix d'une séance au montant saisi ;
+- **« Proposition »** pose directement le total, d'un seul clic.
 
-Un élève entré en cours de mois n'a jamais à payer les séances tenues avant lui : son plafond
-descend d'autant. Le champ reste **libre** — ces boutons écrivent dedans, ils ne le remplacent pas.
+**Le calcul part de sa première séance du mois, jamais de son dernier pointage** — parce que *venir
+à une séance ne la paie pas*. Un élève entré à la séance 1 et pointé une fois en est à sa
+**deuxième**, et il doit toujours les **quatre** : lui proposer les trois qui restent laisserait la
+première impayée, et le mois se terminerait avec un trou que personne ne verrait passer.
+
+Le plafond vaut donc **son mois entier moins ce qu'il a déjà versé dessus** : rien de versé sur un
+mois à quatre séances de 450 DA → 1 800 DA proposés, quatre clics possibles ; deux séances déjà
+payées → 900 DA proposés, deux clics. Passé ce plafond, le bouton se verrouille — on ne facture pas
+plus que le mois.
+
+Un élève entré en cours de mois n'a jamais à payer les séances tenues avant lui : elles ne furent
+jamais les siennes, et son mois ne compte que les autres. Le champ reste **libre** — ces boutons
+écrivent dedans, ils ne le remplacent pas.
 
 ## La feuille de présence compte sa journée
 
@@ -788,11 +810,13 @@ Exemple : un mois à **1 800 DA** dont l'école garde 650 laisse **1 150 DA** à
 **287,50 DA** la séance sur quatre. Un élève présent aux quatre lui rapporte exactement 1 150 DA —
 la division garde ses décimales, sinon la somme des lignes cesse d'égaler le total versé.
 
-**Un élève qui doit encore de l'argent RETIENT sa part** : sa case ne se coche pas, et le montant
-est affiché comme retenu. L'école peut ne pas faire attendre l'enseignant : **« Payer de la
-caisse »** avance la dette entière (mois dans le rouge, restes d'anciens paiements et frais
-d'inscription — c'est ce que le blocage regarde), la part se débloque immédiatement, l'élève passe
-**en rouge**, et un bouton **« Dettes avancées par l'école »** ne montre plus qu'eux.
+**Une séance non payée RETIENT sa part** : la case de l'élève ne se coche pas, et le montant est
+affiché comme retenu. Ce qui bloque, c'est **ce mois-ci, sur cet emploi du temps** — un élève à jour
+ici débloque la paie même s'il doit encore ailleurs, et un élève qui a payé deux séances sur quatre
+en débloque deux. L'école peut ne pas faire attendre l'enseignant : **« Payer de la caisse »**,
+affiché sur les seules lignes bloquées, avance ce que l'élève doit **sur cet emploi du temps**, la
+part se débloque immédiatement et l'élève passe **en rouge**. L'alerte des sommes ainsi avancées est
+portée par l'écran **« Étudiants »**, à qui elles sont réclamées.
 
 Le règlement fige ses trois tables dans `teacher_payments.board` : « voir le détail », la
 réimpression de la fiche de paie et les rapports relisent cette photographie **sans jamais la

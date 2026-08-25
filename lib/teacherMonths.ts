@@ -11,6 +11,15 @@
  * n'est donc « à régler » qu'une fois SES séances tenues — le mois en cours,
  * lui, reste ouvert (3 séances sur 4) et n'est jamais proposé par défaut.
  *
+ * ET LA PART D'UNE SÉANCE SE DÉBLOQUE AVEC CETTE SÉANCE-LÀ. L'argent qu'un
+ * élève verse sur un mois paie ses séances dans l'ordre où elles ont été
+ * tenues, le trop-versé passant au mois suivant comme le promet la feuille de
+ * présence. Tant qu'une séance n'est pas couverte, la part qu'elle rapporte est
+ * retenue ; dès qu'elle l'est, elle se règle — peu importe que l'élève doive
+ * encore sur un AUTRE groupe ou des frais d'inscription : ces dettes-là ne
+ * doivent rien à cet enseignant-ci, et les lui faire porter revenait à ne
+ * jamais le payer pour un élève pourtant à jour chez lui.
+ *
  * Ce module ne lit que le store : il ne décide rien, il rend lisible ce que les
  * présences, les soldes et les règlements ont déjà écrit.
  */
@@ -54,7 +63,7 @@ import {
   studentTeacherPerSeance,
   teacherPerSeanceOf,
 } from "@/lib/helpers";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,7 +87,14 @@ export interface TeacherDue {
   amount: number;
   paid: boolean;
   monthCode: string;
-  /** l'élève doit encore de l'argent : la part reste en attente */
+  /**
+   * LA SÉANCE QUI A PRODUIT CETTE PART N'EST PAS PAYÉE : elle reste en attente.
+   *
+   * Ce n'est pas « l'élève doit quelque chose quelque part » : c'est ce mois-ci,
+   * sur cet emploi du temps, cette séance-là. Un élève à jour sur son mois
+   * débloque la part de son enseignant même s'il doit encore sur un autre
+   * groupe ou des frais d'inscription.
+   */
   withheld: boolean;
 }
 
@@ -133,6 +149,9 @@ export interface TeacherMonthStudent {
   debt: number;
   /** arriérés des mois PRÉCÉDENTS de cet emploi du temps */
   previousDebt: number;
+  /** ce qu'il doit sur CET emploi du temps, tous ses mois confondus : le
+   *  montant exact que l'école a à avancer pour débloquer la part retenue */
+  emploiDebt: number;
   /** ce qu'il doit sur ses AUTRES emplois du temps */
   otherDebt: number;
   /** TOUT ce qu'il doit, restes et frais d'inscription compris : le montant
@@ -144,6 +163,9 @@ export interface TeacherMonthStudent {
   settled: number;
   open: number;
   withheld: number;
+  /** il doit encore quelque chose QUELQUE PART (autres emplois et frais
+   *  d'inscription compris) — ce qui ne retient plus la paie, mais reste bon à
+   *  savoir au guichet */
   hasDebt: boolean;
 }
 
@@ -332,6 +354,7 @@ function emptyMonthStudent(
     balance: 0,
     debt: 0,
     previousDebt: 0,
+    emploiDebt: 0,
     otherDebt: 0,
     totalDebt: 0,
     status: free ? "free" : "pending",
@@ -399,6 +422,74 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
     }
   }
 
+  // ---- les mois de chaque élève, avec l'argent porté sur chacun ------------
+  const cyclesOf = new Map<string, ReturnType<typeof enrollmentCycles>>();
+  const startIndexOf = new Map<string, number>();
+  for (const st of roster) {
+    cyclesOf.set(st.id, sub ? enrollmentCycles(db, st.id, sub.id) : []);
+    startIndexOf.set(st.id, Math.floor((startOf.get(st.id) ?? 0) / size));
+  }
+
+  /**
+   * LES SÉANCES QUE L'ÉLÈVE A DÉJÀ PAYÉES — c'est ce qui débloque la paie.
+   *
+   * Une part n'est plus retenue parce que l'élève « doit quelque chose, quelque
+   * part » : elle l'est séance par séance, et seulement quand LA SÉANCE QUI L'A
+   * PRODUITE n'est pas couverte sur CE mois de CET emploi du temps. Un élève à
+   * jour sur son mois débloque donc la part de son enseignant, même s'il traîne
+   * une dette sur un autre groupe ou des frais d'inscription : cette dette-là ne
+   * doit rien à cet enseignant-ci.
+   *
+   * L'argent versé sur un mois couvre ses séances DANS L'ORDRE où elles ont été
+   * tenues — payer deux séances sur quatre libère les deux premières, et laisse
+   * les deux suivantes en attente.
+   */
+  const paidRecords = new Set<string>();
+  /** `studentId|index` des mois entièrement couverts — pour les parts dont la
+   *  ligne de présence a disparu (une part reste due, la ligne non). */
+  const paidMonths = new Set<string>();
+  for (const st of roster) {
+    const cycles = cyclesOf.get(st.id) ?? [];
+    const byMonth = new Map<number, AttendanceRecord[]>();
+    let lastMonth = 0;
+    for (const rec of (recordsByStudent.get(st.id) ?? []).filter(consumesSeance)) {
+      const idx = monthOfRecord.get(rec.id) ?? 0;
+      lastMonth = Math.max(lastMonth, idx);
+      const list = byMonth.get(idx);
+      if (list) list.push(rec);
+      else byMonth.set(idx, [rec]);
+    }
+
+    // La bourse de l'élève sur CET emploi du temps : elle se remplit du mois
+    // qu'on crédite et se vide des séances qu'il tient. Ce qui reste passe au
+    // mois suivant — c'est exactement ce que la feuille de présence promet
+    // quand elle dit que le trop-versé « paiera ses prochaines séances ».
+    let purse = 0;
+    // Dès qu'une séance n'est plus couverte, celles d'après ne le sont pas non
+    // plus : l'argent paie les séances dans l'ordre où elles ont été tenues.
+    let short = false;
+    for (let idx = 0; idx <= Math.max(lastMonth, cycles.length - 1, 0); idx++) {
+      purse = money(purse + (cycles[idx]?.credited ?? 0));
+      for (const rec of byMonth.get(idx) ?? []) {
+        const cost = money(rec.amountDeducted || 0);
+        // Une tolérance d'un centime : la part d'un mois divisé en trois ne
+        // tombe pas juste, et un solde à 0,004 près est un solde réglé.
+        if (!short && cost <= purse + 0.01) {
+          purse = money(purse - cost);
+          paidRecords.add(rec.id);
+        } else short = true;
+      }
+      if (!short) paidMonths.add(`${st.id}|${idx}`);
+    }
+  }
+
+  /** La part de cette séance est-elle retenue ? */
+  const isWithheld = (studentId: string, rec: AttendanceRecord | undefined, idx: number) => {
+    // Un élève supprimé ne retient plus rien : il n'y a plus de dette à réclamer.
+    if (!db.students.some((s) => s.id === studentId)) return false;
+    return rec ? !paidRecords.has(rec.id) : !paidMonths.has(`${studentId}|${idx}`);
+  };
+
   // ---- ce que l'enseignant a gagné, présence par présence ------------------
   const recordOn = (studentId: string, day: string) =>
     recordsByStudent.get(studentId)?.find((a) => dayKeyOf(a.timestamp) === day);
@@ -427,7 +518,7 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
       amount: u.amount,
       paid: !!u.paid,
       monthCode: `M${idx + 1}`,
-      withheld: !u.paid && studentHasDebt(db, u.studentId),
+      withheld: !u.paid && isWithheld(u.studentId, rec, idx),
     };
     const list = duesByMonth.get(idx);
     if (list) list.push(due);
@@ -435,13 +526,9 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
   }
 
   // ---- combien de mois faut-il rendre ? ------------------------------------
-  const cyclesOf = new Map<string, ReturnType<typeof enrollmentCycles>>();
-  const startIndexOf = new Map<string, number>();
   let maxIndex = 0;
   for (const st of roster) {
-    const cycles = sub ? enrollmentCycles(db, st.id, sub.id) : [];
-    cyclesOf.set(st.id, cycles);
-    startIndexOf.set(st.id, Math.floor((startOf.get(st.id) ?? 0) / size));
+    const cycles = cyclesOf.get(st.id) ?? [];
     maxIndex = Math.max(maxIndex, cycles.length - 1, currentIndexOf.get(st.id) ?? 0);
   }
   for (const idx of duesByMonth.keys()) maxIndex = Math.max(maxIndex, idx);
@@ -645,9 +732,17 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     row.otherDebt = summary.soldRows
       .filter((r) => r.subscriptionId !== sub?.id)
       .reduce((s, r) => s + r.debt, 0);
-    // Ce que l'école doit avancer pour débloquer sa part : la dette ENTIÈRE,
-    // restes et frais d'inscription compris — c'est ce que `studentHasDebt`
-    // regarde, et donc ce qui retient l'enseignant.
+    // Ce que l'école a à avancer pour débloquer la part retenue : ce qu'il doit
+    // SUR CET EMPLOI DU TEMPS, tous ses mois confondus. Ni ses autres groupes
+    // ni ses frais d'inscription ne retiennent cet enseignant-ci, donc les
+    // couvrir ne débloquerait rien qu'il n'ait déjà.
+    row.emploiDebt = money(
+      summary.soldRows
+        .filter((r) => r.subscriptionId === sub?.id)
+        .reduce((s, r) => s + r.debt, 0),
+    );
+    // Ce qu'il doit en tout, restes et frais d'inscription compris : la fiche
+    // du guichet le lit, la paie de l'enseignant non.
     row.totalDebt = summary.total;
     row.hasDebt = studentHasDebt(db, st.id);
 

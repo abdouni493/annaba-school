@@ -84,7 +84,7 @@ import {
   moduleName as moduleNameOf,
   monthCodeLabel,
   monthOrder,
-  netPriceFor,
+  monthProposal,
   registrationNumberOf,
   schoolPerSeanceOf,
   salleName,
@@ -738,18 +738,18 @@ export function PresenceSheet({
                 onClick={() => setPay({ ...pay, amount: pay.suggestion })}
                 className="text-[11px] font-bold text-primary hover:underline"
               >
-                Régler la totalité ({formatDA(pay.suggestion)})
+                Régler ce qui est déjà dû ({formatDA(pay.suggestion)})
               </button>
             )}
 
             {/* ---- LE RACCOURCI « UNE SÉANCE DE PLUS » -----------------------
                 La réception ne calcule plus de tête. Un bouton ajoute le prix
                 d'UNE séance, et il ne peut être cliqué qu'autant de fois qu'il
-                reste de séances à cet élève sur ce mois : un enfant qui en est
-                à sa 1re séance sur 4 peut monter jusqu'à 4 × le prix, celui qui
-                en est à sa 3e jusqu'à 2 × — jamais au-delà du mois. Le second
-                bouton propose directement ce total, et le montant reste
-                modifiable à la main. */}
+                reste de séances À PAYER à cet élève sur ce mois — comptées
+                depuis SA première séance, pas depuis son dernier pointage : un
+                enfant venu une fois sur quatre en est à sa 2e séance, mais il
+                doit toujours les quatre. Le second bouton propose directement
+                ce total, et le montant reste modifiable à la main. */}
             <SeanceStepper
               student={pay.student}
               subscriptionId={pay.subscriptionId}
@@ -986,16 +986,24 @@ function TallyCard({
  *
  * Le problème qu'il résout est trivial et coûte pourtant vingt secondes à
  * chaque encaissement : la réception connaît le prix d'une séance, connaît le
- * nombre de séances qui restent à l'élève sur ce mois, et refait la
+ * nombre de séances que l'élève a à payer sur ce mois, et refait la
  * multiplication de tête. Ici, un bouton ajoute une séance, et un second pose
  * directement le total.
  *
- * Le plafond n'est pas le même pour tout le monde : il vaut ce qu'il RESTE à
- * l'élève sur son mois. Quatre séances au programme et l'élève à sa première :
- * quatre clics possibles (450, 900, 1 350, 1 800). Le même élève à sa
- * troisième : deux clics. Un élève entré en cours de mois n'a jamais à payer
- * les séances tenues avant lui — son plafond descend d'autant. Passé ce
- * plafond le bouton se verrouille : on ne fait pas payer plus que le mois.
+ * LA PROPOSITION PART DE SA PREMIÈRE SÉANCE DU MOIS, PAS DE LÀ OÙ IL EN EST.
+ *
+ * C'est tout l'intérêt : venir à une séance ne la paie pas. Un élève qui entre
+ * dans le mois à la séance 1 et qui a déjà été pointé une fois en est à sa
+ * deuxième — mais il doit toujours les QUATRE, la première comprise. Proposer
+ * les trois qui restent laisserait la première impayée, et le mois se
+ * terminerait avec un trou que personne ne verrait passer.
+ *
+ * Le plafond vaut donc son mois entier — les séances tenues avant son
+ * inscription en moins, puisqu'elles ne furent jamais les siennes — moins ce
+ * qu'il a DÉJÀ versé sur ce mois. Un élève à jour de deux séances sur quatre ne
+ * se voit proposer que les deux dernières ; celui qui n'a rien versé se voit
+ * proposer les quatre. Passé ce plafond le bouton se verrouille : on ne fait
+ * pas payer plus que le mois.
  *
  * Le champ reste libre : ces boutons écrivent dedans, ils ne le remplacent pas.
  */
@@ -1013,25 +1021,15 @@ function SeanceStepper({
   onAmount: (next: number) => void;
 }) {
   const db = useData();
-  const sub = db.subscriptions.find((x) => x.id === subscriptionId);
   const cycle = cycleOf(db, student.id, subscriptionId, monthCode);
-
-  // Son tarif à LUI : un « école seule » ne paie que la part de l'école, et une
-  // remise s'applique avant tout calcul.
-  const enrollment = db.enrollments.find(
-    (e) => e.studentId === student.id && e.subscriptionId === subscriptionId,
+  // Le calcul vit dans `monthProposal` : la feuille de présence l'affiche, elle
+  // ne le refait pas.
+  const { unit, mine, credited, billable, total: cap, current } = monthProposal(
+    db,
+    student.id,
+    subscriptionId,
+    monthCode,
   );
-  const unit = netPriceFor(
-    studentListPrice(student, sub),
-    enrollment?.discount ?? student.subscriptionDiscounts?.[subscriptionId],
-  );
-
-  /** Les séances de ce mois qui sont les siennes (celles d'avant son arrivée ne
-   *  le sont pas), et celles qu'il n'a pas encore faites. */
-  const mine = Math.max(0, cycle.size - cycle.lead);
-  const remaining = Math.max(0, mine - cycle.done);
-  const cap = money(remaining * unit);
-  const current = Math.min(cycle.done + 1, Math.max(mine, 1));
 
   if (unit <= 0 || mine <= 0) return null;
 
@@ -1045,7 +1043,7 @@ function SeanceStepper({
           ⚡ Calcul rapide — {formatDA(unit)} la séance
         </span>
         <Badge tone="neutral" className="text-[9px]">
-          Séance {current}/{mine} · {remaining} restante(s)
+          Séance {current}/{mine} · {billable} à payer
         </Badge>
       </div>
 
@@ -1053,27 +1051,27 @@ function SeanceStepper({
         <Button
           size="sm"
           variant="outline"
-          disabled={remaining === 0 || atCap}
+          disabled={cap <= 0 || atCap}
           onClick={() => onAmount(money(Math.min(cap, (amount || 0) + unit)))}
           className="gap-1.5"
           title={
-            remaining === 0
-              ? "Toutes les séances de ce mois sont déjà tenues"
+            cap <= 0
+              ? "Ce mois est déjà entièrement versé"
               : `Ajouter le prix d'une séance (${formatDA(unit)})`
           }
         >
           <Banknote className="h-3.5 w-3.5" /> + 1 séance ({formatDA(unit)})
         </Button>
 
-        {/* La proposition toute faite : ce que les séances qui lui restent
-            coûtent, d'un seul clic. */}
+        {/* La proposition toute faite : son mois entier, compté depuis SA
+            première séance, moins ce qu'il a déjà versé — d'un seul clic. */}
         <Button
           size="sm"
           variant="success"
           disabled={cap <= 0}
           onClick={() => onAmount(cap)}
           className="gap-1.5"
-          title={`Les ${remaining} séance(s) qui lui restent sur ${monthCode}`}
+          title={`Les ${billable} séance(s) qu'il doit sur ${monthCode}, depuis sa 1re séance du mois`}
         >
           <HandCoins className="h-3.5 w-3.5" /> Proposition : {formatDA(cap)}
         </Button>
@@ -1096,14 +1094,29 @@ function SeanceStepper({
         ) : null}
         {atCap ? (
           <span className="font-semibold text-warning">
-            Plafond atteint : le mois complet de cet élève vaut {formatDA(cap)}, on ne peut pas lui
-            en facturer davantage ici.
+            Plafond atteint : il ne reste plus que {formatDA(cap)} à payer sur ce mois, on ne peut
+            pas lui en facturer davantage ici.
           </span>
         ) : (
           <>
-            il en est à sa <strong className="text-ink">séance {current}</strong> sur {mine} ; le
-            bouton peut donc être cliqué <strong className="text-ink">{remaining} fois</strong> au
-            plus, soit {formatDA(cap)}. Le montant reste modifiable à la main.
+            son mois compte <strong className="text-ink">{mine} séance(s)</strong> à partir de sa{" "}
+            <strong className="text-ink">1re</strong>
+            {cycle.lead > 0 ? ` (il est entré à la séance ${cycle.lead + 1} du groupe)` : ""} ;
+            {credited > 0 ? (
+              <>
+                {" "}
+                il en a déjà versé {formatDA(credited)}, il en reste donc{" "}
+                <strong className="text-ink">{billable}</strong> à payer, soit {formatDA(cap)}.
+              </>
+            ) : (
+              <>
+                {" "}
+                il n&apos;a encore rien versé dessus — les{" "}
+                <strong className="text-ink">{billable}</strong> sont dues, soit {formatDA(cap)},
+                pointage ou pas : venir à une séance ne la paie pas.
+              </>
+            )}{" "}
+            Le montant reste modifiable à la main.
           </>
         )}
       </p>

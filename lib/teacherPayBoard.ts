@@ -7,9 +7,11 @@
  * exactement trois tables :
  *
  *   1. LES ÉLÈVES DU MOIS — qui est venu, qui a payé, et ce que chacun rapporte
- *      à l'enseignant. La part d'un élève en dette est RETENUE : elle ne se
- *      règle pas aujourd'hui, sauf si l'école avance sa dette de sa caisse,
- *      auquel cas la ligne passe en rouge et se signale comme telle.
+ *      à l'enseignant. Une part n'est RETENUE que si la séance qui l'a produite
+ *      n'est pas payée sur ce mois de cet emploi du temps : un élève à jour ici
+ *      débloque la paie même s'il doit encore ailleurs. L'école peut aussi
+ *      avancer la dette de sa caisse, auquel cas la ligne passe en rouge et se
+ *      signale comme telle.
  *   2. LES ARRIÉRÉS — les élèves qui ont payé EN RETARD. Leur part appartient à
  *      un mois DÉJÀ réglé : elle se rattrape ici, avec son mois d'origine, sans
  *      jamais se mélanger au mois courant.
@@ -174,9 +176,12 @@ export interface BoardStudent extends TeacherPayStudentLine {
   dueIds: string[];
   /** ce que des règlements précédents ont déjà payé sur ce mois */
   alreadyPaid: number;
-  /** tout ce que l'élève doit, restes et frais compris : ce que l'école doit
-   *  avancer pour débloquer la part */
+  /** tout ce que l'élève doit, restes et frais d'inscription compris — ce que
+   *  le guichet lui réclame, PAS ce qui retient l'enseignant */
   totalDebt: number;
+  /** ce qu'il doit sur CET emploi du temps : le montant que l'école a à avancer
+   *  pour débloquer la part retenue, et rien de plus */
+  emploiDebt: number;
   /** ses dettes sur les AUTRES emplois du temps */
   otherDebt: number;
   /** ce que le mois lui a coûté en séances */
@@ -412,6 +417,7 @@ function boardStudent(
     dueIds: open.filter((d) => !d.withheld).map((d) => d.id),
     alreadyPaid: money(dues.filter((d) => d.paid).reduce((s, d) => s + d.amount, 0)),
     totalDebt: st.totalDebt,
+    emploiDebt: st.emploiDebt,
     otherDebt: st.otherDebt,
     consumed: st.consumed,
     size: st.size,

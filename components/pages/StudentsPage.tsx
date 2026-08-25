@@ -77,6 +77,7 @@ import {
   registrationNumberOf,
   soldFor,
   soldStatus,
+  schoolAdvancedRows,
   studentCaseLabel,
   studentCaseTone,
   studentMatches,
@@ -1530,6 +1531,74 @@ export function StudentsPage() {
           </Button>
         </div>
       </div>
+
+      {/* ---- LES DETTES QUE L'ÉCOLE A AVANCÉES ---------------------------
+          Elles ne sont plus signalées sur la paie de l'enseignant : lui a été
+          réglé, et il n'a rien à réclamer. C'est l'ÉLÈVE qui doit cet argent à
+          l'école, donc c'est ici que l'alerte vit, tant que personne ne l'a
+          remboursée. */}
+      {(() => {
+        const advances = schoolAdvancedRows(db);
+        if (advances.length === 0) return null;
+        const total = advances.reduce((s, r) => s + r.amount, 0);
+        return (
+          <Card className="mb-6 border-2 border-danger/40">
+            <CardBody>
+              <div className="flex items-start gap-3">
+                <div className="rounded-xl bg-danger/15 p-2.5 text-danger pulse-glow">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-bold text-ink">
+                      Dettes avancées par l&apos;école ({advances.length})
+                    </h3>
+                    <Badge tone="danger" className="font-mono text-[11px]">
+                      {formatDA(total)} sortis de la caisse
+                    </Badge>
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted">
+                    L&apos;école a réglé à la place de ces familles pour ne pas faire attendre
+                    l&apos;enseignant. Cet argent est sorti de la caisse sans jamais y entrer : il
+                    reste à récupérer auprès de l&apos;élève.
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {advances.map((a) => (
+                      <div
+                        key={a.paymentId}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-1.5 text-xs"
+                      >
+                        <span className="min-w-0">
+                          <span className="font-mono text-[10px] text-muted">
+                            {a.registrationNumber}
+                          </span>{" "}
+                          <strong className="text-ink">{a.studentName}</strong>
+                          <span className="text-muted">
+                            {" "}
+                            — {a.label} · {a.monthCode}
+                            {a.phone ? ` · ${a.phone}` : ""}
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          <span className="text-[10px] text-muted">{formatDateFr(a.date)}</span>
+                          <Badge tone="danger" className="font-mono text-[10px]">
+                            {formatDA(a.amount)}
+                          </Badge>
+                          {a.stillOwed > 0 && (
+                            <Badge tone="warning" className="font-mono text-[10px]">
+                              doit encore {formatDA(a.stillOwed)}
+                            </Badge>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+        );
+      })()}
 
       {/* Formation expiry alerts */}
       {(() => {
