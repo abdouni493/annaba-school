@@ -476,6 +476,15 @@ export function ReportsPage() {
   const [teacherFilter, setTeacherFilter] = useState("all");
   const [moduleFilter, setModuleFilter] = useState("all");
   const [sessionFilter, setSessionFilter] = useState("all");
+  /**
+   * LE MOIS D'EMPLOI DU TEMPS (M1 … M12).
+   *
+   * Les mois de l'école ne sont pas ceux du calendrier : chaque emploi du temps
+   * compte les siens. Ce filtre ne touche donc pas la PÉRIODE — il restreint la
+   * paie des enseignants au mois d'emploi du temps réglé, la seule façon de
+   * répondre à « le M3 de ce groupe, il a été payé combien ? ».
+   */
+  const [monthFilter, setMonthFilter] = useState("all");
   const [entitySearch, setEntitySearch] = useState("");
 
   const filtersActive =
@@ -483,6 +492,7 @@ export function ReportsPage() {
     teacherFilter !== "all" ||
     moduleFilter !== "all" ||
     sessionFilter !== "all" ||
+    monthFilter !== "all" ||
     entitySearch.trim().length > 0;
 
   const resetFilters = () => {
@@ -490,6 +500,7 @@ export function ReportsPage() {
     setTeacherFilter("all");
     setModuleFilter("all");
     setSessionFilter("all");
+    setMonthFilter("all");
     setEntitySearch("");
   };
 
@@ -2361,9 +2372,23 @@ export function ReportsPage() {
      * débloquées en réglant en retard. Les trois se lisent séparément, sinon un
      * rattrapage se confond avec le mois courant.
      */
+    /** Les emplois du temps et les mois qu'un règlement a soldés. */
+    const paySessionsOf = (tp: (typeof teacherPayments)[number]) => [
+      ...(tp.months ?? []).map((m) => m.sessionId),
+      ...(tp.board ? [tp.board.sessionId] : []),
+    ];
+    const payMonthsOf = (tp: (typeof teacherPayments)[number]) => [
+      ...(tp.months ?? []).map((m) => m.monthCode),
+      ...(tp.board ? [tp.board.monthCode] : []),
+    ];
+
     const payrollRows = teacherPayments
       .filter((tp) => inRange(tp.paidAt))
       .filter((tp) => teacherFilter === "all" || tp.teacherId === teacherFilter)
+      // Un règlement de mois nomme son emploi du temps : les deux filtres
+      // transverses s'appliquent donc à la paie comme au reste de l'écran.
+      .filter((tp) => sessionFilter === "all" || paySessionsOf(tp).includes(sessionFilter))
+      .filter((tp) => monthFilter === "all" || payMonthsOf(tp).includes(monthFilter))
       .map((tp) => ({
         ...tp,
         teacherName: tName(tp.teacherId),
@@ -2376,6 +2401,36 @@ export function ReportsPage() {
         arrearsTotal: sum(tp.arrears ?? [], (a) => a.amount),
       }))
       .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+
+    /**
+     * CE QUE CHAQUE RÈGLEMENT A PAYÉ, ÉLÈVE PAR ÉLÈVE.
+     *
+     * Les règlements de mois portent la photographie de leurs trois tables :
+     * on peut donc descendre jusqu'à la ligne — « cet élève, sur ce mois, a
+     * rapporté tant à cet enseignant » — sans rien recalculer, et sans que la
+     * relecture puisse diverger de ce qui a été versé.
+     */
+    const payStudentLines = payrollRows.flatMap((r) =>
+      (r.board?.students ?? []).map((st) => ({
+        ...st,
+        teacherName: r.teacherName,
+        emploi: r.board!.emploi,
+        groupName: r.board!.groupName,
+        monthCode: r.board!.monthCode,
+        paidAt: r.paidAt,
+      })),
+    );
+    const payDeductionLines = payrollRows.flatMap((r) =>
+      (r.board?.deductions ?? []).map((d) => ({
+        ...d,
+        teacherName: r.teacherName,
+        emploi: r.board!.emploi,
+        monthCode: r.board!.monthCode,
+        paidAt: r.paidAt,
+      })),
+    );
+    const payStudentsTotal = sum(payStudentLines, (r) => r.amount);
+    const payDeductionsTotal = sum(payDeductionLines, (r) => r.amount);
 
     const payrollNet = sum(payrollRows, (r) => r.amount);
     const payrollGross = sum(payrollRows, (r) => r.gross ?? r.amount);
@@ -2520,6 +2575,75 @@ export function ReportsPage() {
             totalValue: outflow(payrollNet),
             totalTone: "danger",
             searchable: (r) => `${r.teacherName} ${r.monthsLabel} ${r.description}`,
+          },
+        },
+        {
+          title: "Table 1 — les élèves réglés, ligne par ligne",
+          icon: <Users className="h-3.5 w-3.5 text-success" />,
+          spec: {
+            columns: [
+              { label: "Réglé le", render: (r) => dateCell(r.paidAt) },
+              { label: "Enseignant", render: (r) => <span className="text-muted">{r.teacherName}</span> },
+              { label: "Emploi · mois", render: (r) => (
+                <span className="text-muted">
+                  <strong className="block text-ink">{r.emploi} · {r.groupName}</strong>
+                  {r.monthCode}
+                </span>
+              ) },
+              { label: "Élève", render: (r) => (
+                <span>
+                  <strong className="block text-ink">{r.name}</strong>
+                  <span className="font-mono text-[9px] text-muted">{r.registrationNumber || "—"}</span>
+                </span>
+              ) },
+              { label: "Séances", align: "right", render: (r) => <span className="font-mono">{r.seances}</span> },
+              { label: "Part / séance", align: "right", render: (r) => <span className="font-mono text-muted">{formatDA(r.perSeance)}</span> },
+              { label: "Statut", render: (r) => (
+                r.schoolCovered ? (
+                  <Badge tone="danger" className="text-[9px]">avancé par l&apos;école</Badge>
+                ) : r.withheld ? (
+                  <Badge tone="warning" className="text-[9px]">retenu</Badge>
+                ) : (
+                  <Badge tone="success" className="text-[9px]">payé</Badge>
+                )
+              ) },
+              { label: "Part enseignant", align: "right", render: (r) => <strong className="text-success">{formatDA(r.amount)}</strong> },
+            ],
+            rows: payStudentLines,
+            totalLabel: "Total des parts élèves",
+            totalValue: formatDA(payStudentsTotal),
+            totalTone: "success",
+            empty: "Aucun règlement de mois sur cette période — les règlements plus anciens n'ont pas ce détail.",
+            searchable: (r) => `${r.name} ${r.registrationNumber ?? ""} ${r.emploi} ${r.monthCode} ${r.teacherName}`,
+          },
+        },
+        {
+          title: "Table 3 — les retenues, ligne par ligne",
+          icon: <ArrowDownLeft className="h-3.5 w-3.5 text-warning" />,
+          spec: {
+            columns: [
+              { label: "Réglé le", render: (r) => dateCell(r.paidAt) },
+              { label: "Enseignant", render: (r) => <span className="text-muted">{r.teacherName}</span> },
+              { label: "Emploi · mois", render: (r) => <span className="text-muted">{r.emploi} · {r.monthCode}</span> },
+              { label: "Nature", render: (r) => (
+                <Badge tone={r.kind === "acompte" ? "primary" : r.kind === "expense" ? "warning" : "danger"} className="text-[9px]">
+                  {r.kind === "expense" ? "Dépense" : r.kind === "acompte" ? "Acompte" : r.kind === "child" ? "Scolarité enfant" : "Scolarité avancée"}
+                </Badge>
+              ) },
+              { label: "Libellé", render: (r) => (
+                <span>
+                  <strong className="block text-ink">{r.label}</strong>
+                  {r.description && <span className="text-[9px] text-muted">{r.description}</span>}
+                </span>
+              ) },
+              { label: "Montant", align: "right", render: (r) => <strong className="text-danger">{outflow(r.amount)}</strong> },
+            ],
+            rows: payDeductionLines,
+            totalLabel: "Total des retenues détaillées",
+            totalValue: outflow(payDeductionsTotal),
+            totalTone: "warning",
+            empty: "Aucune retenue détaillée sur cette période.",
+            searchable: (r) => `${r.label} ${r.description ?? ""} ${r.teacherName} ${r.emploi} ${r.monthCode}`,
           },
         },
       ],
@@ -2697,7 +2821,12 @@ export function ReportsPage() {
       (n, st) => n + studentDebt(db, st.id) + (st.registrationDue || 0),
       0,
     );
-    return { income, outgo, net: income - outgo, debt, movements: rows.length };
+    // Ce que les enseignants ont réellement touché sur la période : la ligne
+    // que la direction cherche en premier quand elle ouvre les rapports.
+    const payroll = teacherPayments
+      .filter((tp) => inRange(tp.paidAt))
+      .reduce((n, tp) => n + tp.amount, 0);
+    return { income, outgo, net: income - outgo, debt, payroll, movements: rows.length };
   })();
 
   return (
@@ -2774,7 +2903,7 @@ export function ReportsPage() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 border-t border-line pt-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 border-t border-line pt-3 sm:grid-cols-2 lg:grid-cols-6">
           <div>
             <label className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-muted">
               <Filter className="h-3 w-3" /> Classe
@@ -2844,6 +2973,28 @@ export function ReportsPage() {
               ))}
             </select>
           </div>
+          {/* LE MOIS D'EMPLOI DU TEMPS — pas un mois du calendrier.
+
+              Chaque emploi du temps compte les siens : M1 s'ouvre à la première
+              présence et se ferme sur la séance qui complète le pack. Ce filtre
+              restreint la paie des enseignants à ce mois-là. */}
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Mois (paie)
+            </label>
+            <select
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+              className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-ink outline-none focus:border-primary"
+            >
+              <option value="all">Tous les mois</option>
+              {Array.from({ length: 12 }, (_, i) => `M${i + 1}`).map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
               Élève (nom, N°)
@@ -2877,11 +3028,12 @@ export function ReportsPage() {
 
       {/* Les quatre chiffres que l'on garde sous les yeux */}
       {headline && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {[
             { label: "Entrées de la période", value: `+${formatDA(headline.income)}`, tone: "success" as Tone, icon: <ArrowUpRight className="h-4 w-4" /> },
             { label: "Sorties de la période", value: `-${formatDA(headline.outgo)}`, tone: "danger" as Tone, icon: <ArrowDownLeft className="h-4 w-4" /> },
             { label: "Flux net", value: `${headline.net >= 0 ? "+" : "-"}${formatDA(Math.abs(headline.net))}`, tone: (headline.net >= 0 ? "success" : "danger") as Tone, icon: <Wallet className="h-4 w-4" /> },
+            { label: "Payé aux enseignants", value: `-${formatDA(headline.payroll)}`, tone: "primary" as Tone, icon: <HandCoins className="h-4 w-4" /> },
             { label: "Dettes des élèves", value: formatDA(headline.debt), tone: "warning" as Tone, icon: <AlertCircle className="h-4 w-4" /> },
           ].map((k) => (
             <div key={k.label} className="flex items-center justify-between gap-2 rounded-2xl border border-line bg-surface p-4 card-shadow">

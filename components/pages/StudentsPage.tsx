@@ -900,7 +900,7 @@ export function StudentsPage() {
                 <td style="font-weight:bold; color:#5c567a;">Date de Naiss. :</td>
                 <td>${formatDate(stu.birthDate)}</td>
                 <td style="font-weight:bold; color:#5c567a;">Téléphone Élève :</td>
-                <td style="font-family:monospace;">${stu.phone || "-"}</td>
+                <td style="font-family:monospace;">${[stu.phone, stu.phone2].filter(Boolean).join(" / ") || "-"}</td>
               </tr>
               <tr>
                 <td style="font-weight:bold; color:#5c567a;">Parent / Tuteur :</td>
@@ -1749,6 +1749,11 @@ export function StudentsPage() {
                           {stu.firstName} {stu.lastName}
                         </h4>
                         <span className="block text-[10px] text-muted">{stu.phone || "—"}</span>
+                        {stu.phone2 && (
+                          <span className="block text-[10px] text-muted">
+                            2<sup>e</sup> : {stu.phone2}
+                          </span>
+                        )}
                         {caseLabel && (
                           <Badge tone={studentCaseTone(stu)} className="mt-0.5 text-[9px]">
                             {caseLabel}
@@ -1930,7 +1935,19 @@ export function StudentsPage() {
                   </div>
                   <div>
                     <span className="text-muted block font-semibold mb-0.5">Téléphone:</span>
-                    <span className="text-ink font-bold">{selectedStudent.phone}</span>
+                    <span className="text-ink font-bold">{selectedStudent.phone || "-"}</span>
+                  </div>
+                  {/* Le second numéro — celui qu'on compose quand le premier ne
+                      répond pas. Affiché à côté du premier, jamais à sa place. */}
+                  <div>
+                    <span className="text-muted block font-semibold mb-0.5">
+                      Deuxième téléphone:
+                    </span>
+                    <span className="text-ink font-bold">
+                      {selectedStudent.phone2 || (
+                        <span className="italic font-normal text-muted">Non renseigné</span>
+                      )}
+                    </span>
                   </div>
                   <div>
                     <span className="text-muted block font-semibold mb-0.5">Email de connexion:</span>

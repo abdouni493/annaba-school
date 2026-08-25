@@ -61,6 +61,7 @@ import type {
   TeacherExpense,
   TeacherPayment,
   TeacherPaymentArrear,
+  TeacherPayBoard,
   TeacherPaymentDeduction,
   TeacherPaymentMonth,
   UnpaidTeacherSession,
@@ -535,6 +536,14 @@ interface DataActions {
     arrearDueIds?: string[];
     /** leur détail figé, tel qu'il s'imprime sur la fiche de paie */
     arrears?: TeacherPaymentArrear[];
+    /**
+     * LA PHOTOGRAPHIE DE L'ÉCRAN DE PAIE : les trois tables du mois, figées.
+     *
+     * C'est elle que « voir le détail » réaffiche et que la fiche de paie
+     * réimprime, des mois plus tard — même si un élève a changé de groupe ou
+     * si le tarif de l'emploi du temps a bougé depuis.
+     */
+    board?: TeacherPayBoard;
   }) => Promise<{ ok: boolean; paymentId?: string; sessions?: number; messageKey?: string }>;
   /**
    * CORRIGER UN RÈGLEMENT D'ENSEIGNANT DÉJÀ ENREGISTRÉ.
@@ -2645,6 +2654,7 @@ export const useData = create<DataStore>((set, get) => ({
     childDebtIds,
     arrearDueIds,
     arrears,
+    board,
   }) => {
     const db = get();
     const teacher = db.teachers.find((t) => t.id === teacherId);
@@ -2786,6 +2796,7 @@ export const useData = create<DataStore>((set, get) => ({
           childDebts: childDebtSnapshot,
           months: months ?? [],
           arrears: arrears ?? [],
+          board,
           cashId,
           paidAt,
         },

@@ -233,6 +233,39 @@ function AdminDashboard() {
    * Les montants sont donc affichés AVEC LEUR VIRGULE, exactement comme ils
    * sont facturés à l'élève et payés à l'enseignant.
    */
+  /**
+   * CE QUE CHAQUE EMPLOI DU TEMPS A ENCAISSÉ, DEPUIS LE PREMIER JOUR.
+   *
+   * La question que la direction pose en fin de mois : « ce groupe, il a
+   * rapporté combien ? » Ce n'est pas la recette du jour — c'est la somme de
+   * TOUT ce que ses élèves ont versé dessus, mois après mois, quelle qu'en soit
+   * la provenance. Le calcul se fait en une passe sur les paiements, indexée
+   * par abonnement, puis rapportée à l'emploi du temps qui le porte.
+   */
+  const collectedBySession = useMemo(() => {
+    const bySub = new Map<string, { total: number; count: number; students: Set<string> }>();
+    for (const pmt of db.payments) {
+      if (!pmt.subscriptionId || pmt.amountPaid <= 0) continue;
+      const row = bySub.get(pmt.subscriptionId) ?? { total: 0, count: 0, students: new Set<string>() };
+      row.total = money(row.total + pmt.amountPaid);
+      row.count += 1;
+      row.students.add(pmt.studentId);
+      bySub.set(pmt.subscriptionId, row);
+    }
+    const out = new Map<string, { total: number; count: number; students: number }>();
+    for (const sub of subscriptions) {
+      const row = bySub.get(sub.id);
+      if (!row) continue;
+      const prev = out.get(sub.sessionId);
+      out.set(sub.sessionId, {
+        total: money((prev?.total ?? 0) + row.total),
+        count: (prev?.count ?? 0) + row.count,
+        students: (prev?.students ?? 0) + row.students.size,
+      });
+    }
+    return out;
+  }, [db.payments, subscriptions]);
+
   const dayTariffs = useMemo(
     () =>
       dayTimings.map((s) => {
@@ -242,9 +275,13 @@ function AdminDashboard() {
         const school = sub ? schoolPerSeanceOf(sub) : seance;
         const teacher = sub ? teacherPerSeanceOf(sub) : 0;
         const { roster, marked } = progressOf(s);
+        const collected = collectedBySession.get(s.id);
         return {
           session: s,
           sub,
+          /** TOUT ce que cet emploi du temps a encaissé, depuis toujours. */
+          collected: collected?.total ?? 0,
+          collectedPayments: collected?.count ?? 0,
           priced: !!sub && (sub.monthlySeances ?? 0) > 0,
           size,
           monthPrice: monthlyPriceOf(sub),
@@ -262,7 +299,7 @@ function AdminDashboard() {
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dayTimings, subscriptions, progress],
+    [dayTimings, subscriptions, progress, collectedBySession],
   );
 
   const dayTotals = dayTariffs.reduce(
@@ -270,8 +307,9 @@ function AdminDashboard() {
       revenue: money(acc.revenue + r.dayRevenue),
       school: money(acc.school + r.daySchool),
       teacher: money(acc.teacher + r.dayTeacher),
+      collected: money(acc.collected + r.collected),
     }),
-    { revenue: 0, school: 0, teacher: 0 },
+    { revenue: 0, school: 0, teacher: 0, collected: 0 },
   );
 
   const openSession = sessions.find((s) => s.id === openSessionId) ?? null;
@@ -732,8 +770,15 @@ function AdminDashboard() {
                                         {sessionTitle(s)}
                                       </strong>
                                       <span className="block truncate text-[10px] text-muted">
-                                        Gr. {groupName(db, s.groupId)} ·{" "}
+                                        Gr. {sessionGroupsLabel(db, s)} ·{" "}
                                         {teacherName(db, s.teacherId)}
+                                      </span>
+                                      {/* Ce que ce groupe a rapporté depuis le
+                                          premier jour : la question qui se pose
+                                          en fin de mois, lisible sans ouvrir
+                                          quoi que ce soit. */}
+                                      <span className="block truncate font-mono text-[10px] font-bold text-success">
+                                        {formatDA(collectedBySession.get(s.id)?.total ?? 0)} encaissés
                                       </span>
                                       <span className="mt-1 flex flex-wrap items-center gap-1">
                                         <Badge
@@ -800,6 +845,9 @@ function AdminDashboard() {
                   <Badge tone="warning" className="font-mono text-[10px]">
                     Part enseignants {formatDA(dayTotals.teacher)}
                   </Badge>
+                  <Badge tone="primary" className="font-mono text-[10px]">
+                    Total encaissé (tous mois) {formatDA(dayTotals.collected)}
+                  </Badge>
                 </span>
               </div>
 
@@ -816,6 +864,7 @@ function AdminDashboard() {
                       <th className="px-2 py-1.5 text-right">Part prof / séance</th>
                       <th className="px-2 py-1.5 text-center">Pointés</th>
                       <th className="px-2 py-1.5 text-right">Généré ce jour</th>
+                      <th className="px-2 py-1.5 text-right">Total encaissé</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -868,16 +917,27 @@ function AdminDashboard() {
                             dont {formatDA(r.dayTeacher)} au prof
                           </span>
                         </td>
+                        {/* CE QUE CE GROUPE A RAPPORTÉ DEPUIS LE PREMIER JOUR —
+                            tous mois confondus, tous versements confondus. */}
+                        <td className="px-2 py-1.5 text-right font-mono font-black text-primary">
+                          {formatDA(r.collected)}
+                          <span className="block text-[8px] font-normal text-muted">
+                            {r.collectedPayments} versement(s)
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-primary/30 bg-primary-50/40">
                       <td colSpan={8} className="px-2 py-2 text-right text-[10px] font-bold uppercase text-muted">
-                        Total de la journée
+                        Total de la journée · total encaissé par ces emplois du temps
                       </td>
                       <td className="px-2 py-2 text-right font-mono text-sm font-black text-success">
                         {formatDA(dayTotals.revenue)}
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono text-sm font-black text-primary">
+                        {formatDA(dayTotals.collected)}
                       </td>
                     </tr>
                   </tfoot>
@@ -885,6 +945,11 @@ function AdminDashboard() {
               </div>
 
               <p className="text-[10px] leading-relaxed text-muted">
+                <strong className="text-ink">« Total encaissé »</strong> est ce que cet emploi
+                du temps a rapporté DEPUIS LE PREMIER JOUR : la somme de tous les versements de
+                ses élèves, tous mois confondus — à ne pas confondre avec la recette du jour, qui
+                ne compte que les séances pointées aujourd&apos;hui.
+                <br />
                 Prix d&apos;une séance = <strong className="text-ink">prix du mois ÷ séances du
                 mois</strong>, décimales comprises. La part de l&apos;école et celle de
                 l&apos;enseignant se divisent de la même façon : c&apos;est exactement ce que

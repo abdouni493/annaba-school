@@ -716,6 +716,102 @@ exactement ce périmètre : un enfant qui ne coche que des emplois hors périmè
 réclamer ; pour les autres, l'écran propose de les **encaisser tout de suite** ou de **créer la
 fiche avec la dette**, qui reste visible jusqu'à son règlement.
 
+## Le deuxième téléphone d'un élève
+
+Le premier numéro est celui qu'on compose ; le second est celui qu'on compose quand le premier ne
+répond pas — la mère, l'oncle, le voisin. Il se saisit à la création comme à la modification
+(`students.phone2`, facultatif), s'affiche partout où le premier s'affiche — fiche détaillée,
+feuille de présence, listes imprimées — et **la recherche d'élève le balaie comme le premier** :
+une famille qui appelle depuis l'autre ligne se retrouve du premier coup.
+
+## Un emploi du temps sur PLUSIEURS niveaux
+
+Le cas est courant : un même créneau réunit la **4ᵉ année moyenne** et la **3ᵉ année secondaire** —
+même heure, même salle, même enseignant — mais chaque niveau amène **ses propres groupes**. Il
+fallait jusqu'ici créer deux emplois du temps qui se marchent sur les pieds : deux fois la même
+salle au même moment, deux tarifs à tenir en phase, deux feuilles de présence pour une seule séance.
+
+L'écran de création bascule désormais entre **« Un seul niveau »** et **« Plusieurs niveaux »** :
+on coche les classes, puis les groupes **de chaque classe**. Ce découpage est enregistré dans
+`schedule_sessions.class_groups` :
+
+```json
+{ "cls-4am": ["grp-a", "grp-b"], "cls-3as": ["grp-c"] }
+```
+
+Les colonnes existantes gardent leur sens et continuent d'être remplies — `class_id` la première
+classe, `group_ids` **l'union** de tous les groupes — si bien que le scan, la feuille de présence,
+les tarifs, la paie et les rapports lisent exactement ce qu'ils lisaient avant.
+
+## Encaisser un solde : « + 1 séance », plafonné au mois de l'élève
+
+La réception connaissait le prix d'une séance, le nombre de séances qui restaient à l'élève, et
+refaisait la multiplication de tête. La fenêtre « Encaisser un solde » propose désormais deux
+boutons :
+
+- **« + 1 séance »** ajoute le prix d'une séance au montant saisi. Il ne peut être cliqué
+  qu'**autant de fois qu'il reste de séances à cet élève sur son mois** : quatre séances au
+  programme et l'élève à sa première → quatre clics (450, 900, 1 350, 1 800) ; le même élève à sa
+  troisième → deux clics. Passé ce plafond, le bouton se verrouille — on ne facture pas plus que
+  le mois.
+- **« Proposition »** pose directement ce total, d'un seul clic.
+
+Un élève entré en cours de mois n'a jamais à payer les séances tenues avant lui : son plafond
+descend d'autant. Le champ reste **libre** — ces boutons écrivent dedans, ils ne le remplacent pas.
+
+## La feuille de présence compte sa journée
+
+Cinq cartes, en tête de la feuille du groupe : **élèves du groupe**, **présents**, **absents**,
+**séance annulée**, **à pointer**. Elles lisent les mêmes lignes que le tableau, donc chaque clic
+sur « présent » ou « absent » les déplace dans la seconde — il n'y a rien à rafraîchir.
+
+## La paie de l'enseignant — un mois à la fois, trois tables, un net
+
+On ne règle plus « tout ce qu'un enseignant a fait » d'un bloc. L'écran suit trois temps, dans
+l'ordre où la réception pense :
+
+1. **Ses emplois du temps**, un par carte, avec ce que chacun lui doit encore.
+2. **Ses mois, de M1 à M12**, chacun disant deux choses d'un coup d'œil : où en sont ses séances
+   (« **4/4** » = le mois est clos et peut être réglé, « **3/4** » = il court encore) et **s'il a
+   déjà été réglé**. Les douze sont toujours là, même vides : c'est un calendrier, pas un journal.
+3. **Le mois ouvert**, et ses trois tables :
+
+| Table | Ce qu'elle contient | Ce qu'elle totalise |
+| ----- | ------------------- | ------------------- |
+| **1. Élèves du mois** | une ligne par élève, ses séances S1…Sn comme sur la feuille de présence, ce qu'il a versé, ce qu'il doit, et la part qu'il rapporte : **part du mois ÷ séances × ses séances payables**, au centime | ce que le mois rapporte |
+| **2. Arriérés** | les élèves qui ont payé **en retard** un mois DÉJÀ réglé — avec leur **mois d'origine** et les dates concernées. Les élèves qui n'ont toujours pas payé n'y figurent pas | ce qui est rattrapé |
+| **3. Retenues** | dépenses avancées par l'école, acomptes, scolarité **encore due** de ses enfants, et scolarités **déjà créditées au guichet** et portées sur ce salaire — les lignes déjà réglées restent affichées, marquées comme telles | ce qui est repris |
+
+Et le net : **table 1 + table 2 − table 3**.
+
+Exemple : un mois à **1 800 DA** dont l'école garde 650 laisse **1 150 DA** à l'enseignant, soit
+**287,50 DA** la séance sur quatre. Un élève présent aux quatre lui rapporte exactement 1 150 DA —
+la division garde ses décimales, sinon la somme des lignes cesse d'égaler le total versé.
+
+**Un élève qui doit encore de l'argent RETIENT sa part** : sa case ne se coche pas, et le montant
+est affiché comme retenu. L'école peut ne pas faire attendre l'enseignant : **« Payer de la
+caisse »** avance la dette entière (mois dans le rouge, restes d'anciens paiements et frais
+d'inscription — c'est ce que le blocage regarde), la part se débloque immédiatement, l'élève passe
+**en rouge**, et un bouton **« Dettes avancées par l'école »** ne montre plus qu'eux.
+
+Le règlement fige ses trois tables dans `teacher_payments.board` : « voir le détail », la
+réimpression de la fiche de paie et les rapports relisent cette photographie **sans jamais la
+recalculer** — un tarif corrigé six mois plus tard ne peut pas contredire ce qui a été versé. Le
+mois passe alors à « Réglé », et se **corrige** (le net, la date, le libellé — la caisse suit) ou
+s'**annule** : tout ce qu'il avait soldé redevient dû et le mois redevient réglable.
+
+L'historique de la fiche enseignant filtre par **emploi du temps** et par **mois**. La **caisse**
+déplie chaque règlement (emploi, mois, élèves, arriérés, retenues, net) et les **rapports** ajoutent
+un filtre « Mois (paie) » plus deux tableaux détaillés : les élèves réglés ligne à ligne, et les
+retenues ligne à ligne.
+
+## Ce que chaque emploi du temps a encaissé
+
+Le tableau de bord porte, sur chaque créneau de la grille et dans le tableau des tarifs du jour, le
+**total encaissé depuis le premier jour** : la somme de tous les versements de ses élèves, tous mois
+confondus — à ne pas confondre avec la recette du jour, qui ne compte que les séances pointées
+aujourd'hui.
+
 ## Structure
 
 | Domaine                          | Fichiers                                                              |
@@ -728,6 +824,7 @@ fiche avec la dette**, qui reste visible jusqu'à son règlement.
 | Élèves (achat, dette, détail)    | `components/pages/StudentsPage.tsx`                                    |
 | Présence / scan                  | `components/pages/AttendancePage.tsx`, `lib/useScanProcessor.ts`       |
 | Mois d'emploi du temps (paie)    | `lib/teacherMonths.ts`, `components/teachers/`                          |
+| Règlement d'un mois (3 tables)   | `lib/teacherPayBoard.ts`, `components/teachers/TeacherPayCenter.tsx`, `components/teachers/PayBoardView.tsx`, `lib/reports/teacherMonthPayslip.ts` |
 | Espaces étudiant / parent        | `components/pages/StudentPages.tsx`, `components/pages/ParentPages.tsx` |
 | Séances libres de groupe         | `components/independent/GroupSeanceSection.tsx`, `lib/reports/groupSeance.ts` |
 | Feuille de présence (partagée)   | `components/attendance/PresenceSheet.tsx`                              |

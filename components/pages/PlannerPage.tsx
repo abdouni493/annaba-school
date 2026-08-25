@@ -34,7 +34,10 @@ import {
   monthlyPriceOf,
   schoolMonthShareOf,
   schoolPerSeanceOf,
+  isMultiLevelSession,
+  sessionClassIds,
   sessionGroupIds,
+  sessionGroupsOfClass,
   sessionSalleIds,
   sessionSalleOn,
   sessionTimeLabel,
@@ -163,8 +166,31 @@ export function PlannerPage() {
    * savoir de la nouveauté.
    */
   const [groupIds, setGroupIds] = useState<string[]>([]);
-  const groupId = groupIds[0] ?? "";
   const [groupSearch, setGroupSearch] = useState("");
+  /**
+   * UN EMPLOI DU TEMPS SUR PLUSIEURS NIVEAUX.
+   *
+   * Le même créneau réunit parfois deux classes qui n'ont rien à voir — la 4e
+   * année moyenne et la 3e année secondaire — chacune avec SES groupes. Le
+   * formulaire bascule alors : au lieu d'une classe et d'une liste de groupes,
+   * il demande les classes, puis les groupes DE CHAQUE classe.
+   *
+   * `classGroupMap` porte cette association, et c'est elle qui est enregistrée.
+   * Le reste de l'application n'a rien à savoir de la nouveauté : `classId`
+   * garde la première classe, `groupIds` l'union de tous les groupes.
+   */
+  const [multiLevel, setMultiLevel] = useState(false);
+  const [classGroupMap, setClassGroupMap] = useState<Record<string, string[]>>({});
+  /** Les classes du créneau, dans l'ordre où elles ont été cochées. */
+  const [multiClassIds, setMultiClassIds] = useState<string[]>([]);
+  /** Tous les groupes du créneau : ceux des classes en multi-niveaux, sinon la
+   *  liste simple. C'est ce que la base enregistre en `group_ids`. */
+  const effectiveGroupIds = multiLevel
+    ? [...new Set(multiClassIds.flatMap((cid) => classGroupMap[cid] ?? []))]
+    : groupIds;
+  const groupId = effectiveGroupIds[0] ?? "";
+  /** Les classes du créneau — une seule hors multi-niveaux. */
+  const effectiveClassIds = multiLevel ? multiClassIds : classId ? [classId] : [];
   const [salleId, setSalleId] = useState("");
   const [teacherId, setTeacherId] = useState("");
   const [selectedDays, setSelectedDays] = useState<Day[]>([]);
@@ -541,6 +567,231 @@ export function PlannerPage() {
     );
   };
 
+  /**
+   * LE CHOIX DES NIVEAUX ET DE LEURS GROUPES.
+   *
+   * Un emploi du temps ordinaire porte une classe et ses groupes. Celui-ci peut
+   * en porter plusieurs : on coche « 4e année moyenne » et « 3e année
+   * secondaire », et chaque niveau ouvre SA propre liste de groupes. Les deux
+   * niveaux partagent l'heure, la salle et l'enseignant — c'est bien un seul
+   * créneau — mais chacun amène les siens.
+   */
+  const toggleMultiClass = (id: string) =>
+    setMultiClassIds((prev) => {
+      if (prev.includes(id)) {
+        setClassGroupMap((map) => {
+          const next = { ...map };
+          delete next[id];
+          return next;
+        });
+        return prev.filter((c) => c !== id);
+      }
+      return [...prev, id];
+    });
+
+  /** Coche / décoche un groupe SUR UNE CLASSE précise. */
+  const toggleClassGroup = (cid: string, gid: string) =>
+    setClassGroupMap((prev) => {
+      const current = prev[cid] ?? [];
+      return {
+        ...prev,
+        [cid]: current.includes(gid)
+          ? current.filter((g) => g !== gid)
+          : [...current, gid],
+      };
+    });
+
+  /** Crée un groupe et l'affecte tout de suite au niveau qui le demande. */
+  const handleCreateGroupForClass = (cid: string) => {
+    if (!newGroupName.trim()) return;
+    const newId = uid("grp");
+    push("groups", { id: newId, name: newGroupName });
+    toggleClassGroup(cid, newId);
+    setNewGroupName("");
+    setShowAddGroup(false);
+  };
+
+  const renderLevelsField = () => {
+    const q = groupSearch.trim().toLowerCase();
+    const shownGroups = q ? groups.filter((g) => g.name.toLowerCase().includes(q)) : groups;
+    return (
+      <div className="space-y-3 rounded-xl border border-primary/25 bg-primary-50/25 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+            🎓 Niveaux &amp; groupes du créneau
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAddGroup(!showAddGroup)}
+            className="text-xs text-primary hover:underline"
+          >
+            + Nouveau groupe
+          </button>
+        </div>
+
+        <p className="text-[10px] leading-relaxed text-muted">
+          Cochez chaque niveau réuni sur ce créneau, puis les groupes que ce niveau amène. Ils
+          partagent l&apos;heure, la salle et l&apos;enseignant — c&apos;est un seul emploi du
+          temps — mais chacun garde ses propres groupes.
+        </p>
+
+        {classes.length === 0 ? (
+          <p className="text-[11px] italic text-muted">
+            Aucune classe — créez-en depuis l&apos;écran Classes.
+          </p>
+        ) : (
+          <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-line bg-surface p-2">
+            {classes.map((c) => {
+              const picked = multiClassIds.includes(c.id);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => toggleMultiClass(c.id)}
+                  className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                    picked
+                      ? "border-primary bg-primary text-white"
+                      : "border-line bg-surface text-ink hover:bg-primary-50"
+                  }`}
+                >
+                  <span>
+                    {c.name}{" "}
+                    <span className="opacity-70">
+                      ({c.type === "cours" ? c.coursLevel : c.formationLevel})
+                    </span>
+                  </span>
+                  <input type="checkbox" checked={picked} readOnly className="h-3.5 w-3.5" />
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {showAddGroup && multiClassIds.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            <Input
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Nom du groupe (ex: Groupe C)"
+              className="min-w-[160px] flex-1"
+            />
+            <Select
+              value=""
+              onChange={(e) => e.target.value && handleCreateGroupForClass(e.target.value)}
+              className="w-44"
+            >
+              <option value="">Créer pour le niveau…</option>
+              {multiClassIds.map((cid) => (
+                <option key={cid} value={cid}>
+                  {getClassName(cid)}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+
+        {groups.length > 6 && multiClassIds.length > 0 && (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+            <Input
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+              placeholder="Rechercher un groupe…"
+              className="pl-9"
+            />
+          </div>
+        )}
+
+        {multiClassIds.length === 0 ? (
+          <p className="rounded-lg border border-warning/40 bg-warning/10 p-2 text-[10px] text-warning">
+            Aucun niveau coché — cochez-en au moins un, sinon le créneau ne concerne personne.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {multiClassIds.map((cid) => {
+              const picked = classGroupMap[cid] ?? [];
+              return (
+                <div key={cid} className="rounded-xl border border-line bg-surface p-2.5">
+                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">
+                    <strong className="text-[11px] text-ink">{getClassName(cid)}</strong>
+                    <Badge tone={picked.length > 0 ? "primary" : "warning"} className="text-[9px]">
+                      {picked.length} groupe(s)
+                    </Badge>
+                  </div>
+                  {shownGroups.length === 0 ? (
+                    <p className="text-[10px] italic text-muted">
+                      Aucun groupe — créez-en un avec « + Nouveau groupe ».
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {shownGroups.map((g) => {
+                        const on = picked.includes(g.id);
+                        return (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => toggleClassGroup(cid, g.id)}
+                            className={`rounded-lg border px-2 py-1 text-[10px] font-semibold transition-colors ${
+                              on
+                                ? "border-primary bg-primary text-white"
+                                : "border-line bg-canvas text-ink hover:bg-primary-50"
+                            }`}
+                          >
+                            {g.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <p className="text-[10px] text-muted">
+          {effectiveGroupIds.length === 0
+            ? "Aucun groupe coché — l'emploi du temps peut être créé et complété plus tard."
+            : `${multiClassIds.length} niveau(x) · ${effectiveGroupIds.length} groupe(s) : ${effectiveGroupIds
+                .map(getGroupName)
+                .join(" · ")}.`}
+        </p>
+      </div>
+    );
+  };
+
+  /** Le bandeau qui bascule entre « un seul niveau » et « plusieurs niveaux ». */
+  const renderLevelModeSwitch = () => (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-canvas/40 p-1.5">
+      <button
+        type="button"
+        onClick={() => setMultiLevel(false)}
+        className={`flex-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-colors ${
+          !multiLevel ? "bg-primary text-white" : "text-muted hover:bg-primary-50"
+        }`}
+      >
+        Un seul niveau
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setMultiLevel(true);
+          // On repart de ce qui est déjà saisi : la classe choisie devient le
+          // premier niveau, avec ses groupes.
+          setMultiClassIds((prev) => (prev.length > 0 ? prev : classId ? [classId] : []));
+          setClassGroupMap((prev) =>
+            Object.keys(prev).length > 0 || !classId ? prev : { [classId]: groupIds },
+          );
+        }}
+        className={`flex-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-colors ${
+          multiLevel ? "bg-primary text-white" : "text-muted hover:bg-primary-50"
+        }`}
+      >
+        Plusieurs niveaux
+      </button>
+    </div>
+  );
+
   const handleCreateModule = () => {
     if (!newModuleName.trim()) return;
     const newId = uid("mod");
@@ -818,6 +1069,40 @@ export function PlannerPage() {
   };
 
   /**
+   * CE QUE LE FORMULAIRE ÉCRIT SUR LES NIVEAUX ET LES GROUPES.
+   *
+   * Un emploi du temps à un seul niveau écrit ce qu'il a toujours écrit :
+   * `classId`, `groupId` et `groupIds`. Un emploi MULTI-NIVEAUX écrit en plus
+   * `classIds` (tous ses niveaux) et `classGroups` (les groupes de chacun) — et
+   * garde `classId`/`groupId` sur le premier de chaque liste, pour que le scan,
+   * la feuille de présence et la base continuent de lire un emploi du temps
+   * sans rien savoir de la nouveauté.
+   */
+  const levelPayload = () => {
+    if (!multiLevel) {
+      return {
+        classId,
+        classIds: undefined,
+        classGroups: undefined,
+        groupId: groupIds[0] ?? "",
+        groupIds,
+      };
+    }
+    // Un niveau coché sans aucun groupe est conservé tel quel : la réception
+    // complètera plus tard, exactement comme un emploi sans groupe.
+    const map = Object.fromEntries(
+      multiClassIds.map((cid) => [cid, classGroupMap[cid] ?? []]),
+    );
+    return {
+      classId: multiClassIds[0] ?? "",
+      classIds: multiClassIds,
+      classGroups: map,
+      groupId: effectiveGroupIds[0] ?? "",
+      groupIds: effectiveGroupIds,
+    };
+  };
+
+  /**
    * What the form writes about the ROOMS. `salleId` keeps the first day's room —
    * everything that only needs "roughly where" reads it — and `daySalles`
    * carries the per-day override. An emploi that keeps the same room all week
@@ -849,12 +1134,9 @@ export function PlannerPage() {
     }
     const newSession: ScheduleSession = {
       id: uid("ses"),
-      classId,
       moduleId,
-      // `groupId` = le premier groupe (la colonne historique), `groupIds` = tous.
-      groupId,
-      groupIds,
       teacherId,
+      ...levelPayload(),
       ...sallePayload(),
       ...timingPayload(),
       title: title.trim() || undefined,
@@ -876,11 +1158,9 @@ export function PlannerPage() {
       return;
     }
     const updated: Partial<ScheduleSession> = {
-      classId,
       moduleId,
-      groupId,
-      groupIds,
       teacherId,
+      ...levelPayload(),
       ...sallePayload(),
       ...timingPayload(),
       title: title.trim() || undefined,
@@ -927,6 +1207,9 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
     setModuleId("");
     setGroupIds([]);
     setGroupSearch("");
+    setMultiLevel(false);
+    setMultiClassIds([]);
+    setClassGroupMap({});
     setSalleId("");
     setTeacherId("");
     setTeacherSearch("");
@@ -946,6 +1229,17 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
     setModuleId(s.moduleId);
     setGroupIds(sessionGroupIds(s));
     setGroupSearch("");
+    // Un emploi multi-niveaux rouvre en multi-niveaux, avec les groupes de
+    // chaque classe là où la réception les avait mis.
+    const levels = sessionClassIds(s);
+    const multi = levels.length > 1 || !!s.classGroups;
+    setMultiLevel(multi);
+    setMultiClassIds(multi ? levels : []);
+    setClassGroupMap(
+      multi
+        ? Object.fromEntries(levels.map((cid) => [cid, sessionGroupsOfClass(s, cid)]))
+        : {},
+    );
     setSalleId(s.salleId);
     setTeacherId(s.teacherId);
     setTeacherSearch("");
@@ -1468,7 +1762,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
   /** A séance libre also "belongs" to every class / group / salle of its
    *  multi-selection, not only to the primary one stored in the columns. */
   const sessionCovers = (s: ScheduleSession, kind: "class" | "salle", id: string) => {
-    if (kind === "class") return s.classId === id || (s.classIds ?? []).includes(id);
+    if (kind === "class") return sessionClassIds(s).includes(id);
     return s.salleId === id || (s.salleIds ?? []).includes(id);
   };
 
@@ -2178,17 +2472,27 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 Laissez vide pour utiliser le nom du module. Ce nom apparaît partout où l&apos;emploi du temps est listé.
               </p>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Classe</label>
-              <Select value={classId} onChange={(e) => setClassId(e.target.value)} className="w-full">
-                <option value="">Sélectionner une classe</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.type === "cours" ? c.coursLevel : c.formationLevel})
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {/* UN SEUL NIVEAU, OU PLUSIEURS.
+
+                Le cas courant reste « une classe, ses groupes ». Mais un même
+                créneau réunit parfois deux niveaux qui n'ont rien à voir — la
+                4e année moyenne et la 3e année secondaire — chacun amenant SES
+                groupes. Le second bouton ouvre ce mode. */}
+            {renderLevelModeSwitch()}
+
+            {!multiLevel && (
+              <div>
+                <label className="block text-xs font-semibold text-muted mb-1 font-sans">Classe</label>
+                <Select value={classId} onChange={(e) => setClassId(e.target.value)} className="w-full">
+                  <option value="">Sélectionner une classe</option>
+                  {classes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.type === "cours" ? c.coursLevel : c.formationLevel})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
 
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -2219,7 +2523,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               )}
             </div>
 
-            {renderGroupField()}
+            {multiLevel ? renderLevelsField() : renderGroupField()}
 
             {renderSalleField()}
 
@@ -2234,10 +2538,18 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
             <div className="bg-canvas/50 border border-line rounded-xl p-3 text-xs">
               <span className="text-[10px] text-muted block font-semibold mb-1 font-sans">Nom suggéré de l&apos;emploi du temps</span>
               <div className="font-bold text-ink line-clamp-2">
-                {classId ? classes.find((c) => c.id === classId)?.name : "?"} -{" "}
+                {effectiveClassIds.length
+                  ? effectiveClassIds
+                      .map((cid) => classes.find((c) => c.id === cid)?.name ?? "?")
+                      .join(" + ")
+                  : "?"}{" "}
+                -{" "}
                 {moduleId ? getModuleName(moduleId) : "?"} (Gr:{" "}
-                {groupIds.length ? groupIds.map(getGroupName).join(" · ") : "?"} / Salle:{" "}
-                {salleId ? getSalleName(salleId) : "?"}) par {teacherId ? getTeacherName(teacherId) : "?"}
+                {effectiveGroupIds.length
+                  ? effectiveGroupIds.map(getGroupName).join(" · ")
+                  : "?"}{" "}
+                / Salle: {salleId ? getSalleName(salleId) : "?"}) par{" "}
+                {teacherId ? getTeacherName(teacherId) : "?"}
               </div>
             </div>
           </div>
@@ -2372,17 +2684,27 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                 Laissez vide pour utiliser le nom du module.
               </p>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Classe</label>
-              <Select value={classId} onChange={(e) => setClassId(e.target.value)} className="w-full">
-                <option value="">Sélectionner une classe</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.type === "cours" ? c.coursLevel : c.formationLevel})
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {/* UN SEUL NIVEAU, OU PLUSIEURS.
+
+                Le cas courant reste « une classe, ses groupes ». Mais un même
+                créneau réunit parfois deux niveaux qui n'ont rien à voir — la
+                4e année moyenne et la 3e année secondaire — chacun amenant SES
+                groupes. Le second bouton ouvre ce mode. */}
+            {renderLevelModeSwitch()}
+
+            {!multiLevel && (
+              <div>
+                <label className="block text-xs font-semibold text-muted mb-1 font-sans">Classe</label>
+                <Select value={classId} onChange={(e) => setClassId(e.target.value)} className="w-full">
+                  <option value="">Sélectionner une classe</option>
+                  {classes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.type === "cours" ? c.coursLevel : c.formationLevel})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-muted mb-1 font-sans">Module</label>
@@ -2396,7 +2718,7 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               </Select>
             </div>
 
-            {renderGroupField()}
+            {multiLevel ? renderLevelsField() : renderGroupField()}
 
             {renderSalleField()}
 
@@ -2579,7 +2901,14 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
               </div>
               <div>
                 <span className="text-[10px] text-muted block uppercase font-sans">Classe & Niveau</span>
-                <span className="font-semibold text-ink">{getClassName(selectedSession.classId)}</span>
+                <span className="font-semibold text-ink">
+                  {sessionClassIds(selectedSession).map(getClassName).join(" + ") || "—"}
+                </span>
+                {isMultiLevelSession(selectedSession) && (
+                  <Badge tone="primary" className="mt-1 text-[9px]">
+                    {sessionClassIds(selectedSession).length} niveaux réunis
+                  </Badge>
+                )}
               </div>
               <div>
                 <span className="text-[10px] text-muted block uppercase font-sans">
@@ -2589,6 +2918,19 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                   {sessionGroupIds(selectedSession).map(getGroupName).join(" · ") || "—"} -{" "}
                   {getSalleName(selectedSession.salleId)}
                 </span>
+                {/* Multi-niveaux : chaque niveau amène SES groupes, et c'est ce
+                    découpage-là qu'il faut pouvoir relire. */}
+                {isMultiLevelSession(selectedSession) && (
+                  <span className="mt-1 block space-y-0.5">
+                    {sessionClassIds(selectedSession).map((cid) => (
+                      <span key={cid} className="block text-[10px] text-muted">
+                        <strong className="text-ink">{getClassName(cid)}</strong> :{" "}
+                        {sessionGroupsOfClass(selectedSession, cid).map(getGroupName).join(" · ") ||
+                          "aucun groupe"}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </div>
               <div>
                 <span className="text-[10px] text-muted block uppercase font-sans">Enseignant</span>

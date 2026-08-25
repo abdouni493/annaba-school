@@ -339,6 +339,21 @@ export function CashPage() {
   })();
 
   /**
+   * LES RÈGLEMENTS D'ENSEIGNANTS DE LA PÉRIODE, DÉPLIÉS.
+   *
+   * Un mouvement de caisse ne dit qu'un montant. Ce que la direction veut lire,
+   * c'est ce qu'il A PAYÉ : quel emploi du temps, quel mois, combien d'élèves,
+   * ce que les arriérés ont rattrapé et ce que les retenues ont repris. Chaque
+   * règlement de mois porte cette photographie, donc il suffit de la relire.
+   */
+  const periodSettlements = (() => {
+    const { from, to } = periodRange;
+    return teacherPayments
+      .filter((p) => p.paidAt.slice(0, 10) >= from && p.paidAt.slice(0, 10) <= to)
+      .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+  })();
+
+  /**
    * LE DÉTAIL DERRIÈRE CHAQUE MOUVEMENT DE CAISSE.
    *
    * Une ligne de caisse ne dit que « Règlement séances Untel (3 créneaux) ».
@@ -351,6 +366,23 @@ export function CashPage() {
       const pay = teacherPayments.find((p) => p.cashId === tx.id);
       if (pay) {
         const t = teachers.find((x) => x.id === pay.teacherId);
+        // Un règlement de MOIS porte sa photographie : on peut donc dire
+        // exactement ce qu'il a payé — quel groupe, quel mois, combien
+        // d'élèves, combien d'arriérés et combien de retenues — au lieu de
+        // « 3 créneaux ».
+        const b = pay.board;
+        if (b) {
+          return [
+            t ? `${t.firstName} ${t.lastName}` : "Enseignant",
+            `${b.emploi} · ${b.groupName} · ${b.monthCode}`,
+            `${b.students.length} élève(s) · ${b.held}/${b.size} séances`,
+            `brut ${formatDA(b.gross)}`,
+            b.arrears.length > 0 ? `${b.arrears.length} arriéré(s) rattrapé(s)` : "",
+            b.deductionsTotal > 0 ? `${formatDA(b.deductionsTotal)} de retenues` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+        }
         const months = (pay.months ?? []).map((m) => `${m.title} ${m.monthCode}`).join(" · ");
         const arrears = (pay.arrears ?? []).length;
         return [
@@ -689,6 +721,93 @@ export function CashPage() {
             to={periodRange.to}
             query={searchQuery}
           />
+        )}
+
+        {/* Règlements d'enseignants — ce que chaque versement a réellement payé */}
+        {(activeTab === "all" || activeTab === "teachers") && periodSettlements.length > 0 && (
+          <div className="border-b border-line p-4">
+            <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+              <UserCheck className="h-3.5 w-3.5 text-warning" /> Règlements d&apos;enseignants (
+              {periodSettlements.length})
+            </h4>
+            <div className="overflow-x-auto rounded-xl border border-line">
+              <table className="w-full min-w-[900px] text-left text-[11px]">
+                <thead className="bg-canvas/50">
+                  <tr className="text-[9px] font-bold uppercase tracking-wider text-muted">
+                    <th className="p-2.5">Date</th>
+                    <th className="p-2.5">Enseignant</th>
+                    <th className="p-2.5">Emploi du temps · mois</th>
+                    <th className="p-2.5 text-center">Élèves</th>
+                    <th className="p-2.5 text-right">Table 1 — élèves</th>
+                    <th className="p-2.5 text-right">Table 2 — arriérés</th>
+                    <th className="p-2.5 text-right">Table 3 — retenues</th>
+                    <th className="p-2.5 text-right">Net versé</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {periodSettlements.map((pay) => {
+                    const b = pay.board;
+                    return (
+                      <tr key={pay.id}>
+                        <td className="p-2.5 font-mono text-[10px]">
+                          {formatDateFr(pay.paidAt.slice(0, 10))}
+                        </td>
+                        <td className="p-2.5">
+                          <strong className="text-ink">{teacherNameOf(pay.teacherId)}</strong>
+                        </td>
+                        <td className="p-2.5 text-muted">
+                          {b ? (
+                            <>
+                              <strong className="block text-ink">
+                                {b.emploi} · {b.groupName}
+                              </strong>
+                              <span className="block text-[9px]">
+                                {b.monthCode} · {b.held}/{b.size} séances
+                              </span>
+                            </>
+                          ) : (
+                            (pay.months ?? []).map((m) => `${m.title} ${m.monthCode}`).join(" · ") ||
+                            `${pay.sessionsCount} créneau(x)`
+                          )}
+                        </td>
+                        <td className="p-2.5 text-center font-mono">
+                          {b ? b.students.length : pay.studentsCount}
+                        </td>
+                        <td className="p-2.5 text-right font-mono text-success">
+                          {b ? formatDA(b.studentsTotal) : formatDA(pay.gross ?? pay.amount)}
+                        </td>
+                        <td className="p-2.5 text-right font-mono text-primary">
+                          {b
+                            ? formatDA(b.arrearsTotal)
+                            : formatDA((pay.arrears ?? []).reduce((t, a) => t + a.amount, 0))}
+                        </td>
+                        <td className="p-2.5 text-right font-mono text-danger">
+                          −{" "}
+                          {b
+                            ? formatDA(b.deductionsTotal)
+                            : formatDA(
+                                (pay.expenses ?? []).reduce((t, x) => t + x.amount, 0) +
+                                  (pay.acomptes ?? []).reduce((t, x) => t + x.amount, 0) +
+                                  (pay.childDebts ?? []).reduce((t, x) => t + x.amount, 0) +
+                                  (pay.childCharges ?? []).reduce((t, x) => t + x.amount, 0),
+                              )}
+                        </td>
+                        <td className="p-2.5 text-right font-mono font-bold text-warning">
+                          {formatDA(pay.amount)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
+              Un règlement se lit en trois tables : les <strong>élèves du mois</strong>, les{" "}
+              <strong>arriérés rattrapés</strong> (des parts d&apos;un mois déjà réglé, libérées par
+              un paiement tardif) et les <strong>retenues</strong> (dépenses, acomptes, scolarité
+              des enfants). Le net versé est la somme des deux premières moins la troisième.
+            </p>
+          </div>
         )}
 
         {/* Séances libres de groupe — le détail derrière les deux mouvements */}

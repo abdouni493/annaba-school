@@ -174,7 +174,126 @@ export interface TeacherPayment {
   arrears?: TeacherPaymentArrear[];
   /** le mouvement de caisse que ce règlement a écrit — annulé avec lui */
   cashId?: string;
+  /**
+   * L'ÉCRAN DE PAIE, FIGÉ TEL QUEL.
+   *
+   * Le règlement se fait désormais MOIS PAR MOIS sur UN emploi du temps, et
+   * l'écran qui le prépare montre trois tableaux : les élèves du mois, les
+   * arriérés rattrapés, et les retenues. `board` en garde la photographie
+   * exacte, si bien que « voir le détail » d'un vieux règlement et la fiche de
+   * paie réimprimée affichent les mêmes lignes qu'au moment du versement —
+   * même si un élève a changé de groupe ou de tarif depuis.
+   *
+   * Absent = règlement enregistré avant cet écran (l'ancien détail suffit).
+   */
+  board?: TeacherPayBoard;
   paidAt: string;
+}
+
+/**
+ * LA PHOTOGRAPHIE D'UN RÈGLEMENT DE MOIS, TABLEAU PAR TABLEAU.
+ *
+ * Elle est écrite au moment du versement et ne bouge plus : c'est ce que
+ * l'écran de détail réaffiche et ce que la fiche de paie imprime.
+ */
+export interface TeacherPayBoard {
+  sessionId: string;
+  subscriptionId?: string;
+  emploi: string;
+  className: string;
+  groupName: string;
+  salleName: string;
+  daysLabel: string;
+  timeLabel: string;
+  monthCode: string;
+  /** séances que le mois contient */
+  size: number;
+  /** séances effectivement tenues */
+  held: number;
+  /** prix du mois complet pour un élève */
+  monthPrice: number;
+  /** ce que le mois complet rapporte à l'enseignant */
+  teacherMonthShare: number;
+  /** part enseignant d'UNE séance (teacherMonthShare ÷ size) */
+  perSeance: number;
+  /** tableau 1 — les élèves du mois */
+  students: TeacherPayStudentLine[];
+  /** tableau 2 — les élèves qui ont payé en retard (mois déjà réglés) */
+  arrears: TeacherPayArrearLine[];
+  /** tableau 3 — ce qui est retenu sur la paie */
+  deductions: TeacherPayDeductionLine[];
+  studentsTotal: number;
+  arrearsTotal: number;
+  deductionsTotal: number;
+  /** studentsTotal + arrearsTotal */
+  gross: number;
+  /** gross − deductionsTotal */
+  net: number;
+}
+
+/** Une ligne du tableau des élèves d'un mois, sur la paie de l'enseignant. */
+export interface TeacherPayStudentLine {
+  studentId: string;
+  name: string;
+  registrationNumber?: string;
+  phone?: string;
+  caseLabel?: string;
+  /** payé · partiel · impayé · rien encore · gratuit */
+  payState: string;
+  presents: number;
+  absents: number;
+  cancelled: number;
+  /** séances de ce mois qui rapportent quelque chose à l'enseignant */
+  seances: number;
+  /**
+   * LE MOIS SÉANCE PAR SÉANCE, comme la feuille de présence l'affiche :
+   * `"present" | "late" | "absent" | "cancelled"`, `null` pour une séance pas
+   * encore pointée, et `"before"` pour une séance tenue AVANT son inscription
+   * — celle-là n'a jamais été la sienne, elle reste vide sur sa ligne.
+   */
+  slots?: (string | null)[];
+  /** ce qu'une de ses séances rapporte à l'enseignant */
+  perSeance: number;
+  /** ce que le mois lui coûte */
+  expected: number;
+  /** ce qu'il a versé sur ce mois */
+  credited: number;
+  /** ce qu'il doit encore */
+  debt: number;
+  /** ce que ses séances rapportent à l'enseignant sur ce mois */
+  amount: number;
+  /** sa part est RETENUE : il doit encore de l'argent */
+  withheld: boolean;
+  /** l'école a avancé sa dette de sa propre caisse pour débloquer la part */
+  schoolCovered: boolean;
+}
+
+/** Une ligne du tableau des arriérés — une part d'un mois DÉJÀ réglé. */
+export interface TeacherPayArrearLine extends TeacherPayStudentLine {
+  /** le mois d'origine de la part */
+  monthCode: string;
+  emploi: string;
+  /** les jours concernés */
+  dates: string[];
+}
+
+/** Une ligne du tableau des retenues (dépenses, acomptes, enfants). */
+export interface TeacherPayDeductionLine {
+  id: string;
+  /**
+   *  - `expense`     : une dépense que l'école a avancée pour lui,
+   *  - `acompte`     : une avance sur salaire,
+   *  - `child`       : la scolarité ENCORE DUE d'un de ses enfants,
+   *  - `child_debt`  : une scolarité d'enfant déjà créditée au guichet et
+   *                    portée sur ce salaire.
+   */
+  kind: "expense" | "acompte" | "child" | "child_debt";
+  label: string;
+  description?: string;
+  date: string;
+  amount: number;
+  /** déjà réglée par ce versement (elle ne revient pas sur le suivant) */
+  paid: boolean;
 }
 
 /** Un arriéré débloqué, réglé par un versement postérieur au mois concerné. */
@@ -348,6 +467,23 @@ export interface ScheduleSession {
    * in one place.
    */
   daySalles?: Partial<Record<Day, string>>;
+  /**
+   * UN EMPLOI DU TEMPS SUR PLUSIEURS NIVEAUX À LA FOIS.
+   *
+   * Un même créneau réunit parfois deux classes qui n'ont rien à voir : la 4e
+   * année moyenne et la 3e année secondaire, chacune avec SES groupes. Ce
+   * champ dit, classe par classe, quels groupes cette classe amène :
+   *
+   *     { "cls-4am": ["grp-a", "grp-b"], "cls-3as": ["grp-c"] }
+   *
+   * `classIds` porte la liste des classes, `classId` la PREMIÈRE (la colonne
+   * historique que le scan et la base lisent), et `groupIds` l'union de tous
+   * les groupes — de sorte que rien de ce qui existait n'a besoin de savoir
+   * qu'un emploi peut désormais couvrir plusieurs niveaux.
+   *
+   * Absent = emploi du temps à un seul niveau, exactement comme avant.
+   */
+  classGroups?: Record<string, string[]>;
   /** "séance libre" timing: several classes/groups/salles over a date period */
   isOpen?: boolean;
   /** explicit, readable name — only set for séance libre timings */
@@ -535,6 +671,15 @@ export interface Student {
   lastName: string;
   birthDate: string;
   phone: string;
+  /**
+   * DEUXIÈME NUMÉRO DE LA FAMILLE — facultatif.
+   *
+   * Le premier numéro est celui qu'on compose, le second celui qu'on compose
+   * quand le premier ne répond pas : la mère, l'oncle, le voisin. Il s'affiche
+   * partout où le premier s'affiche (fiche, modification, listes) et n'est
+   * jamais exigé — une fiche sans second numéro est une fiche complète.
+   */
+  phone2?: string;
   email: string;
   rfid: string;
   isFree: boolean;

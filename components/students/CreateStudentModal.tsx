@@ -169,6 +169,8 @@ function StudentFiche({
   const [lastName, setLastName] = useState(editing?.lastName ?? "");
   const [birthDate, setBirthDate] = useState(editing?.birthDate ?? "");
   const [phone, setPhone] = useState(editing?.phone ?? "");
+  /** Le SECOND numéro : celui qu'on compose quand le premier ne répond pas. */
+  const [phone2, setPhone2] = useState(editing?.phone2 ?? "");
 
   // billing case
   const [studentCase, setStudentCase] = useState<StudentCase>(
@@ -435,6 +437,7 @@ function StudentFiche({
           lastName: lastName.trim(),
           birthDate,
           phone: phone.trim(),
+          phone2: phone2.trim() || undefined,
           email: editEmail.trim() || editing.email,
           rfid: editRfid.trim() || editing.rfid,
           isFree,
@@ -562,6 +565,7 @@ function StudentFiche({
         lastName: lastName.trim(),
         birthDate,
         phone: phone.trim(),
+        phone2: phone2.trim() || undefined,
         email,
         rfid,
         isFree,
@@ -721,7 +725,23 @@ function StudentFiche({
                 </label>
                 <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0555 12 34 56" />
               </div>
+              {/* Le second numéro : la mère, l'oncle, le voisin — celui qu'on
+                  compose quand le premier ne répond pas. Jamais exigé. */}
               <div>
+                <label className="mb-1 block text-xs font-semibold text-muted">
+                  Deuxième téléphone (optionnel)
+                </label>
+                <Input
+                  value={phone2}
+                  onChange={(e) => setPhone2(e.target.value)}
+                  placeholder="0661 98 76 54"
+                />
+                <p className="mt-1 text-[10px] text-muted">
+                  Numéro de secours — il s&apos;affiche sur la fiche de l&apos;élève à côté du
+                  premier.
+                </p>
+              </div>
+              <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-muted">
                   Date de naissance (optionnel)
                 </label>
