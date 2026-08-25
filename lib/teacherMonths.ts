@@ -46,6 +46,7 @@ import {
   isFreeSub,
   isSchoolOnlySub,
   moduleName,
+  independentTotals,
   monthlyPriceOf,
   netPriceFor,
   registrationNumberOf,
@@ -98,12 +99,28 @@ export interface TeacherDue {
   withheld: boolean;
 }
 
-/** Un passager (séance libre) réglé au créneau, sans compte élève. */
+/**
+ * UN PASSAGER — une séance libre vendue à quelqu'un qui n'est pas inscrit.
+ *
+ * Il n'a ni fiche, ni solde, ni mois : il paie la séance sur place. Ce que
+ * l'école garde est écrit noir sur blanc, et le reste appartient à
+ * l'enseignant — c'est cette part-là que le mois où la séance tombe lui règle.
+ */
 export interface TeacherPassager {
   id: string;
   name: string;
   dateKey: string;
+  /** ce que le passager a versé */
   price: number;
+  /** ce que l'école garde dessus */
+  schoolShare: number;
+  /** price − schoolShare : ce que l'enseignant touche */
+  teacherShare: number;
+  /** la part de l'école n'a jamais été saisie (séance d'avant le découpage) */
+  unsplit: boolean;
+  startTime?: string;
+  endTime?: string;
+  label?: string;
   monthCode: string;
 }
 
@@ -220,7 +237,10 @@ export interface TeacherMonth {
   payableDueIds: string[];
   withheldDueIds: string[];
   openPassagerIds: string[];
+  /** ce que les séances libres du mois ont encaissé */
   passagerRevenue: number;
+  /** ce que ces mêmes séances doivent ENCORE à l'enseignant */
+  passagerPayable: number;
   alerts: TeacherAlert[];
 }
 
@@ -820,6 +840,7 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     withheldDueIds: openDues.filter((d) => d.withheld).map((d) => d.id),
     openPassagerIds: [],
     passagerRevenue: 0,
+    passagerPayable: 0,
     alerts: [],
   };
 
@@ -875,15 +896,26 @@ function attachPassagers(
     );
     const target = months[idx >= 0 ? idx : Math.min(currentIndex, months.length - 1)];
     if (!target) continue;
+    const split = independentTotals(ind);
     target.passagers.push({
       id: ind.id,
       name: ind.passagerName ?? "Passager",
       dateKey: ind.date,
-      price: ind.price,
+      price: split.price,
+      schoolShare: split.school,
+      teacherShare: split.teacher,
+      unsplit: split.unsplit,
+      startTime: ind.startTime,
+      endTime: ind.endTime,
+      label: ind.itemLabel,
       monthCode: target.code,
     });
     target.openPassagerIds.push(ind.id);
-    target.passagerRevenue += ind.price;
+    target.passagerRevenue = money(target.passagerRevenue + split.price);
+    target.passagerPayable = money(target.passagerPayable + split.teacher);
+    // Une séance libre se règle avec le mois où elle tombe : ce qu'elle doit
+    // encore à l'enseignant grossit donc ce que ce mois-là peut lui verser.
+    target.payable = money(target.payable + split.teacher);
   }
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useData, uid } from "@/lib/store/data";
+import { useData } from "@/lib/store/data";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -18,7 +18,6 @@ import {
   MoreVertical,
   Printer,
   X,
-  Check,
   Clock,
   Filter,
   LayoutGrid,
@@ -29,11 +28,16 @@ import {
 } from "lucide-react";
 import type { IndependentSession, Student } from "@/lib/types";
 import { printHtmlDocument } from "@/lib/print";
-import { formatDateFr, registrationNumberOf, studentMatches } from "@/lib/helpers";
+import {
+  formatDateFr,
+  independentTotals,
+  registrationNumberOf,
+  studentMatches,
+} from "@/lib/helpers";
 import { seanceLibreInvoiceHtml } from "@/lib/reports/documents";
 import { GroupSeanceSection } from "@/components/independent/GroupSeanceSection";
 import { useSettings } from "@/lib/store/settings";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money } from "@/lib/utils";
 
 /** Everything the séance libre receipt needs, captured at creation time. */
 interface CasualReceiptData {
@@ -90,9 +94,9 @@ export function IndependentPage() {
     classes,
     groups,
     salles,
-    push,
     deleteFrom,
     updateItem,
+    createPassagerSeances,
   } = db;
   const { language } = useSettings();
 
@@ -118,6 +122,15 @@ export function IndependentPage() {
   const [selectedItem, setSelectedItem] = useState<SeanceOption | null>(null);
   const [casualDate, setCasualDate] = useState(new Date().toISOString().split("T")[0]);
   const [customPrice, setCustomPrice] = useState<number | null>(null);
+  /**
+   * CE QUE L'ÉCOLE GARDE sur le prix. Le reste va à l'enseignant, et se règle
+   * avec le mois de l'emploi du temps où la date tombe. `null` = pas encore
+   * saisi : on prend alors le prix entier (l'école garde tout), qui est
+   * exactement ce que faisaient les séances libres avant ce partage.
+   */
+  const [schoolShare, setSchoolShare] = useState<number | null>(null);
+  /** Les élèves de passage saisis d'un coup — un nom par ligne, vide permis. */
+  const [passagerNames, setPassagerNames] = useState<string[]>([""]);
 
   // Once a séance libre is created, immediately offer to print its receipt.
   const [receiptData, setReceiptData] = useState<CasualReceiptData | null>(null);
@@ -208,6 +221,27 @@ export function IndependentPage() {
   }, [students, studentSearchQuery]);
 
   const effectivePrice = customPrice ?? selectedItem?.price ?? 0;
+  /** La part de l'école, bornée au prix : elle ne peut pas manger plus que tout. */
+  const effectiveSchoolShare = Math.min(
+    Math.max(0, schoolShare ?? effectivePrice),
+    Math.max(0, effectivePrice),
+  );
+  const unitTeacherShare = money(Math.max(0, effectivePrice) - effectiveSchoolShare);
+  /** Combien de personnes cette création enregistre : un élève nommé, ou N passagers. */
+  const attendeeCount = selectedStudent || selectedCasual ? 1 : Math.max(1, passagerNames.length);
+  const seanceTotals = {
+    total: money(Math.max(0, effectivePrice) * attendeeCount),
+    school: money(effectiveSchoolShare * attendeeCount),
+    teacher: money(unitTeacherShare * attendeeCount),
+  };
+
+  /** Ajuste le nombre de passagers sans perdre les noms déjà tapés. */
+  const setPassagerCount = (n: number) => {
+    const next = Math.max(1, Math.min(60, n));
+    setPassagerNames((prev) =>
+      next <= prev.length ? prev.slice(0, next) : [...prev, ...Array(next - prev.length).fill("")],
+    );
+  };
 
   /** Reverse lookup used by the list/cards to describe a stored séance. */
   const optionForSession = (sessionId?: string) =>
@@ -256,6 +290,8 @@ export function IndependentPage() {
     setSelectedItem(null);
     setCasualDate(new Date().toISOString().split("T")[0]);
     setCustomPrice(null);
+    setSchoolShare(null);
+    setPassagerNames([""]);
     setSelectedCasual(null);
   };
 
@@ -268,6 +304,8 @@ export function IndependentPage() {
     setSelectedCasual(ind);
     setCasualDate(ind.date);
     setCustomPrice(ind.price);
+    setSchoolShare(ind.schoolShare ?? ind.price);
+    setPassagerNames([ind.passagerName ?? ""]);
 
     const student = ind.studentId ? students.find((s) => s.id === ind.studentId) : undefined;
     setSelectedStudent(student ?? null);
@@ -280,26 +318,27 @@ export function IndependentPage() {
     setActiveMenuId(null);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selectedItem) {
       alert("Veuillez sélectionner un cours ou un créneau de séance libre.");
       return;
     }
 
-    // Three ways to name the payer, all valid: an élève found in the search,
-    // a free-typed name for a passager, or nothing at all — in which case the
-    // séance is booked for an anonymous "passager".
-    const typed = studentSearchQuery.trim();
-    const passagerName = selectedStudent ? undefined : typed || "Passager";
+    const price = Math.max(0, effectivePrice);
+    const school = effectiveSchoolShare;
 
-    const price = effectivePrice;
-
+    // ---- MODIFIER une séance déjà enregistrée -------------------------------
+    // Une modification porte toujours sur UNE ligne : on ne « démultiplie » pas
+    // une séance existante, on la corrige.
     if (selectedCasual) {
+      const typed = studentSearchQuery.trim();
       updateItem("independent", selectedCasual.id, {
         studentId: selectedStudent ? selectedStudent.id : undefined,
-        passagerName: passagerName || undefined,
+        passagerName: selectedStudent ? undefined : typed || "Passager",
         itemLabel: selectedItem.label,
         price,
+        schoolShare: school,
+        teacherId: sessions.find((x) => x.id === selectedItem.sessionId)?.teacherId,
         date: casualDate,
         sessionId: selectedItem.sessionId,
         startTime: selectedItem.timeLabel.split(" - ")[0],
@@ -310,51 +349,49 @@ export function IndependentPage() {
       return;
     }
 
-    const nowIso = new Date().toISOString();
-    const newCasual: IndependentSession = {
-      id: uid("ind"),
-      studentId: selectedStudent ? selectedStudent.id : undefined,
-      passagerName: passagerName || undefined,
-      itemLabel: selectedItem.label,
-      price,
-      date: casualDate,
+    // ---- CRÉER : un élève nommé, ou autant de passagers qu'il en est venu ---
+    // Les deux passent par la même écriture : la séance entre en caisse, la
+    // part de l'enseignant part avec le mois où la date tombe.
+    const names = selectedStudent
+      ? [`${selectedStudent.firstName} ${selectedStudent.lastName}`]
+      : passagerNames.map((n) => n.trim());
+
+    const res = await createPassagerSeances({
       sessionId: selectedItem.sessionId,
+      date: casualDate,
+      names,
+      price,
+      schoolShare: school,
+      itemLabel: selectedItem.label,
       startTime: selectedItem.timeLabel.split(" - ")[0],
       endTime: selectedItem.timeLabel.split(" - ")[1],
-      createdAt: nowIso,
-    };
-
-    push("independent", newCasual);
-
-    // A séance libre is paid on the spot, in cash — it never draws on the
-    // student's séance packs, so nothing is decremented here.
-
-    // Cash inflow for the school
-    push("cash", {
-      id: uid("csh"),
-      type: "student_payment",
-      amount: price,
-      date: nowIso,
-      description: `Séance libre: ${selectedItem.label} (${
-        selectedStudent ? `${selectedStudent.firstName} ${selectedStudent.lastName}` : passagerName
-      })`,
+      studentId: selectedStudent?.id,
     });
+
+    if (!res.ok) {
+      alert("Cette séance libre n'a pas pu être enregistrée.");
+      return;
+    }
 
     setIsFormOpen(false);
 
+    // Le reçu nomme le premier payeur et porte le total réellement encaissé :
+    // une seule séance pour six passagers, c'est un seul ticket.
+    const firstName = selectedStudent
+      ? `${selectedStudent.firstName} ${selectedStudent.lastName}`
+      : names[0]?.trim() || "Passager";
     setReceiptData({
-      personName: selectedStudent
-        ? `${selectedStudent.firstName} ${selectedStudent.lastName}`
-        : passagerName || "Passager",
+      personName:
+        names.length > 1 ? `${firstName} + ${names.length - 1} passager(s)` : firstName,
       registrationNumber: selectedStudent ? registrationNumberOf(db, selectedStudent) : undefined,
       isRegisteredStudent: !!selectedStudent,
       itemLabel: selectedItem.label,
       teacherName: selectedItem.teacherName,
       classLabel: selectedItem.classLabel,
       timeLabel: selectedItem.timeLabel,
-      price,
+      price: res.total ?? price * names.length,
       date: casualDate,
-      createdAt: nowIso,
+      createdAt: new Date().toISOString(),
     });
 
     resetForm();
@@ -657,6 +694,8 @@ export function IndependentPage() {
                   <th className="p-3">Date & horaire</th>
                   <th className="p-3">Créée le</th>
                   <th className="p-3 text-right">Tarif</th>
+                  <th className="p-3 text-right">Part école</th>
+                  <th className="p-3 text-right">Part enseignant</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -685,7 +724,25 @@ export function IndependentPage() {
                         {ind.startTime && <span className="block text-muted">{ind.startTime} - {ind.endTime}</span>}
                       </td>
                       <td className="p-3 font-mono text-[10px] text-muted">{createdStamp(ind)}</td>
-                      <td className="p-3 text-right font-bold text-success font-mono">{formatDA(ind.price)}</td>
+                      {(() => {
+                        const split = independentTotals(ind);
+                        return (
+                          <>
+                            <td className="p-3 text-right font-bold text-success font-mono">
+                              {formatDA(split.price)}
+                            </td>
+                            <td className="p-3 text-right font-mono text-muted">
+                              {formatDA(split.school)}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-primary">
+                              {formatDA(split.teacher)}
+                              <span className="block text-[9px] font-normal text-muted">
+                                {ind.teacherPaid ? "réglée" : "à régler"}
+                              </span>
+                            </td>
+                          </>
+                        );
+                      })()}
                       <td className="p-3">
                         <div className="flex justify-end gap-1">
                           <button
@@ -716,7 +773,13 @@ export function IndependentPage() {
       )}
 
       {/* ------------------------------------------------------------------ */}
-      {/* Create / edit a séance libre                                        */}
+      {/* Créer / modifier une séance libre                                   */}
+      {/*                                                                     */}
+      {/* Le même geste qu'à la feuille de présence, en plus large : on        */}
+      {/* cherche l'emploi du temps, on dit QUI est venu — un élève inscrit,   */}
+      {/* ou un ou plusieurs passagers dont le nom est facultatif — puis on    */}
+      {/* tape le prix total et la part de l'école. Le reste va à             */}
+      {/* l'enseignant, et s'affiche pendant la saisie.                       */}
       {/* ------------------------------------------------------------------ */}
       <Modal
         open={isFormOpen}
@@ -725,11 +788,11 @@ export function IndependentPage() {
         wide
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* ---- Who ---- */}
+          {/* ---- QUI est venu ---- */}
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-muted mb-1 font-sans">
-                Rechercher un élève (nom, n° d&apos;inscription ou n° de carte)
+                Élève inscrit (facultatif) — nom, n° d&apos;inscription ou n° de carte
               </label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
@@ -744,42 +807,38 @@ export function IndependentPage() {
                 />
               </div>
               <p className="text-[10px] text-muted mt-1 leading-relaxed">
-                Trois possibilités : <strong>sélectionner un élève</strong> trouvé ci-dessous,{" "}
-                <strong>saisir un nom libre</strong> pour un passager, ou{" "}
-                <strong>laisser vide</strong> — la séance est alors enregistrée pour un passager
-                anonyme.
+                Laissez ce champ <strong>vide</strong> pour une séance de{" "}
+                <strong>passagers</strong> : vous les saisirez juste en dessous, autant qu&apos;il
+                en est venu, et leurs noms restent facultatifs.
               </p>
             </div>
 
-            {studentSearchQuery.trim() !== "" && (
+            {studentSearchQuery.trim() !== "" && !selectedStudent && (
               <div className="space-y-1.5">
                 <span className="text-[10px] text-muted font-bold block uppercase font-sans">
                   Résultats ({matchedStudents.length}) :
                 </span>
                 <div className="border border-line rounded-xl max-h-44 overflow-y-auto p-1.5 bg-canvas/30 space-y-1">
-                  {matchedStudents.map((st) => {
-                    const isSelected = selectedStudent?.id === st.id;
-                    return (
-                      <button
-                        key={st.id}
-                        type="button"
-                        onClick={() => { setSelectedStudent(st); setStudentSearchQuery(`${st.firstName} ${st.lastName}`); }}
-                        className={`w-full text-start p-2.5 rounded-xl text-xs flex justify-between items-center transition-all ${
-                          isSelected
-                            ? "bg-primary/15 border border-primary/30 text-ink font-bold"
-                            : "hover:bg-primary-50 text-ink border border-transparent"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <span className="font-semibold block truncate">{st.firstName} {st.lastName}</span>
-                          <span className="text-[9px] text-muted block mt-0.5 font-mono">
-                            N° {registrationNumberOf(db, st)} · 📞 {st.phone || "—"}
-                          </span>
-                        </div>
-                        {isSelected && <Check className="h-4 w-4 text-primary shrink-0" />}
-                      </button>
-                    );
-                  })}
+                  {matchedStudents.map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedStudent(st);
+                        setStudentSearchQuery(`${st.firstName} ${st.lastName}`);
+                      }}
+                      className="w-full text-start p-2.5 rounded-xl text-xs flex justify-between items-center transition-all hover:bg-primary-50 text-ink border border-transparent"
+                    >
+                      <div className="min-w-0">
+                        <span className="font-semibold block truncate">
+                          {st.firstName} {st.lastName}
+                        </span>
+                        <span className="text-[9px] text-muted block mt-0.5 font-mono">
+                          N° {registrationNumberOf(db, st)} · 📞 {st.phone || "—"}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
                   {matchedStudents.length === 0 && (
                     <div className="p-3 text-center text-xs text-muted bg-surface rounded-xl border border-line">
                       Aucun élève inscrit sous ce nom — la séance sera enregistrée pour le passager{" "}
@@ -790,25 +849,117 @@ export function IndependentPage() {
               </div>
             )}
 
-            <div>
-              <label className="block text-xs font-semibold text-muted mb-1 font-sans">Date de la séance</label>
-              <Input type="date" value={casualDate} onChange={(e) => setCasualDate(e.target.value)} />
-            </div>
-
             {selectedStudent && (
               <div className="bg-primary-50/50 border border-line rounded-xl p-3 text-xs">
-                <span className="text-[10px] text-muted block uppercase font-bold">Élève sélectionné</span>
-                <strong className="text-ink block mt-0.5">{selectedStudent.firstName} {selectedStudent.lastName}</strong>
-                <span className="text-muted">
-                  N° {registrationNumberOf(db, selectedStudent)} — une séance libre se règle en espèces
-                  et ne touche <strong className="text-ink">aucun</strong> de ses soldes.
-                  {selectedStudent.isFree && " (élève gratuit)"}
-                </span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-muted block uppercase font-bold">
+                      Élève sélectionné
+                    </span>
+                    <strong className="text-ink block mt-0.5">
+                      {selectedStudent.firstName} {selectedStudent.lastName}
+                    </strong>
+                    <span className="text-muted">
+                      N° {registrationNumberOf(db, selectedStudent)} — une séance libre se règle en
+                      espèces et ne touche <strong className="text-ink">aucun</strong> de ses
+                      soldes.
+                      {selectedStudent.isFree && " (élève gratuit)"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedStudent(null);
+                      setStudentSearchQuery("");
+                    }}
+                    className="shrink-0 rounded-lg border border-line p-1 text-muted hover:bg-danger/10 hover:text-danger"
+                    title="Revenir à une séance de passagers"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             )}
+
+            {/* ---- LES PASSAGERS : autant qu'il en est venu, noms facultatifs */}
+            {!selectedStudent && !selectedCasual && (
+              <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                    👥 Élèves de passage ({passagerNames.length})
+                  </span>
+                  <div className="flex items-center gap-1 rounded-lg border border-line bg-surface p-1">
+                    <button
+                      type="button"
+                      onClick={() => setPassagerCount(passagerNames.length - 1)}
+                      disabled={passagerNames.length <= 1}
+                      className="h-6 w-6 rounded text-muted hover:bg-primary-50 hover:text-ink disabled:opacity-30"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-[42px] text-center font-mono text-xs font-bold text-ink">
+                      {passagerNames.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPassagerCount(passagerNames.length + 1)}
+                      className="h-6 w-6 rounded text-muted hover:bg-primary-50 hover:text-ink"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] leading-relaxed text-muted">
+                  Un nom par ligne, <strong className="text-ink">vide est permis</strong> : la ligne
+                  s&apos;enregistre alors sous « Passager ». Réglez d&apos;abord le nombre, puis
+                  nommez ceux que vous connaissez.
+                </p>
+                <div className="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto">
+                  {passagerNames.map((n, i) => (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <span className="w-5 shrink-0 text-center font-mono text-[10px] text-muted">
+                        {i + 1}
+                      </span>
+                      <Input
+                        value={n}
+                        onChange={(e) =>
+                          setPassagerNames((prev) =>
+                            prev.map((v, j) => (j === i ? e.target.value : v)),
+                          )
+                        }
+                        placeholder={`Passager ${i + 1} — nom facultatif`}
+                      />
+                      {passagerNames.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPassagerNames((prev) => prev.filter((_, j) => j !== i))
+                          }
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line text-danger hover:bg-danger/10"
+                          title="Retirer cette ligne"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold text-muted mb-1 font-sans">
+                Date de la séance
+              </label>
+              <Input
+                type="date"
+                value={casualDate}
+                onChange={(e) => setCasualDate(e.target.value)}
+              />
+            </div>
           </div>
 
-          {/* ---- What ---- */}
+          {/* ---- QUEL emploi du temps, et POUR COMBIEN ---- */}
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-muted mb-1 font-sans">
@@ -840,7 +991,7 @@ export function IndependentPage() {
                   className="pl-9"
                 />
               </div>
-              <div className="border border-line rounded-xl max-h-64 overflow-y-auto p-1.5 bg-canvas/30 space-y-1">
+              <div className="border border-line rounded-xl max-h-56 overflow-y-auto p-1.5 bg-canvas/30 space-y-1">
                 {filteredOptions.length === 0 ? (
                   <p className="text-[10px] text-muted italic p-3 text-center">Aucun résultat.</p>
                 ) : (
@@ -849,7 +1000,14 @@ export function IndependentPage() {
                     return (
                       <button
                         key={opt.key}
-                        onClick={() => { setSelectedItem(opt); setCustomPrice(opt.price); }}
+                        onClick={() => {
+                          setSelectedItem(opt);
+                          setCustomPrice(opt.price);
+                          // Par défaut, l'école garde tout : c'est le
+                          // comportement d'avant le partage, et il se corrige
+                          // d'un chiffre juste en dessous.
+                          setSchoolShare(opt.price);
+                        }}
                         className={`w-full text-start p-2.5 rounded-lg text-xs transition-colors border ${
                           isSel
                             ? "bg-primary/10 border-primary/40 text-ink"
@@ -881,43 +1039,85 @@ export function IndependentPage() {
             </div>
 
             {selectedItem && (
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-muted mb-1 font-sans">
-                    Montant à encaisser (DA)
-                  </label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={customPrice ?? selectedItem.price}
-                    onChange={(e) => setCustomPrice(Number(e.target.value))}
-                  />
-                  <p className="text-[10px] text-muted mt-1">
-                    Tarif chargé depuis {selectedItem.kind === "timing" ? "le créneau" : "l'abonnement"} :{" "}
-                    <strong>{formatDA(selectedItem.price)}</strong>. Modifiable pour cette séance uniquement.
-                  </p>
+              <div className="space-y-3 rounded-xl border border-primary/25 bg-primary-50/40 p-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                  💰 Le prix de la séance
+                </span>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-muted mb-1">
+                      Prix total / élève *
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={effectivePrice || ""}
+                      onChange={(e) => setCustomPrice(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-muted mb-1">
+                      Part de l&apos;école / élève *
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={effectiveSchoolShare || ""}
+                      onChange={(e) => setSchoolShare(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-muted mb-1">
+                      Part de l&apos;enseignant / élève
+                    </label>
+                    <div className="flex h-9 items-center rounded-xl border border-primary/40 bg-surface px-3 font-mono text-sm font-black text-primary">
+                      {formatDA(unitTeacherShare)}
+                    </div>
+                    <span className="mt-0.5 block text-[9px] text-muted">
+                      calculée : prix − part école
+                    </span>
+                  </div>
                 </div>
-                <div className="rounded-xl border border-success/25 bg-success/10 p-3.5 text-xs">
-                  <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-success">
-                    Validation du paiement
-                  </span>
+
+                <p className="text-[10px] leading-relaxed text-muted">
+                  Tarif chargé depuis{" "}
+                  {selectedItem.kind === "timing" ? "le créneau" : "l'abonnement"} :{" "}
+                  <strong>{formatDA(selectedItem.price)}</strong>. Modifiable pour cette séance
+                  uniquement. La part de l&apos;enseignant se réglera avec le{" "}
+                  <strong>mois de cet emploi du temps</strong> où la date tombe, dans sa table
+                  « Retards de paiement &amp; séances libres ».
+                </p>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <FormTotal label="Total encaissé" value={formatDA(seanceTotals.total)} tone="text-success" />
+                  <FormTotal label="Total école" value={formatDA(seanceTotals.school)} tone="text-ink" />
+                  <FormTotal label="Total enseignant" value={formatDA(seanceTotals.teacher)} tone="text-primary" />
+                </div>
+
+                <div className="rounded-xl border border-success/25 bg-success/10 p-3 text-xs">
                   <div className="flex justify-between py-0.5">
-                    <span className="text-muted">Élève / passager</span>
-                    <strong className="text-ink">
+                    <span className="text-muted">Qui paie</span>
+                    <strong className="text-ink text-right">
                       {selectedStudent
                         ? `${selectedStudent.firstName} ${selectedStudent.lastName}`
-                        : studentSearchQuery.trim() || "Passager"}
+                        : selectedCasual
+                          ? studentSearchQuery.trim() || "Passager"
+                          : `${attendeeCount} élève(s) de passage`}
                     </strong>
-                  </div>
-                  <div className="flex justify-between py-0.5">
-                    <span className="text-muted">Prix d&apos;une séance</span>
-                    <strong className="text-ink">{formatDA(selectedItem.price)}</strong>
                   </div>
                   <div className="mt-1.5 flex items-center justify-between border-t border-success/25 pt-2">
                     <span className="font-semibold text-success">Total à encaisser</span>
-                    <strong className="text-sm font-extrabold text-success">{formatDA(effectivePrice)}</strong>
+                    <strong className="text-sm font-extrabold text-success">
+                      {formatDA(seanceTotals.total)}
+                    </strong>
                   </div>
                 </div>
+
+                {effectivePrice > 0 && unitTeacherShare === 0 && (
+                  <p className="rounded-lg border border-warning/40 bg-warning/10 p-2 text-[11px] text-warning">
+                    L&apos;école garde tout : cette séance ne rapportera rien à l&apos;enseignant.
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -926,7 +1126,9 @@ export function IndependentPage() {
         <div className="flex justify-end gap-2 pt-4 mt-6 border-t border-line">
           <Button variant="outline" onClick={() => setIsFormOpen(false)}>Annuler</Button>
           <Button onClick={handleSubmit} disabled={!selectedItem}>
-            {selectedCasual ? "Enregistrer les modifications" : "Valider le paiement"}
+            {selectedCasual
+              ? "Enregistrer les modifications"
+              : `Valider le paiement — ${formatDA(seanceTotals.total)}`}
           </Button>
         </div>
       </Modal>
@@ -1000,10 +1202,42 @@ export function IndependentPage() {
                   <h4 className="font-bold text-ink text-xs uppercase tracking-wider text-muted mb-2">
                     💰 Règlement
                   </h4>
-                  <div className="flex justify-between border-b border-line/50 pb-1.5">
-                    <span className="text-muted">Montant :</span>
-                    <strong className="text-success">{formatDA(selectedCasual.price)}</strong>
-                  </div>
+                  {(() => {
+                    // Le partage tel qu'il a été saisi : ce que l'école garde,
+                    // et ce qui reste dû à l'enseignant sur cette séance-là.
+                    const split = independentTotals(selectedCasual);
+                    return (
+                      <>
+                        <div className="flex justify-between border-b border-line/50 pb-1.5">
+                          <span className="text-muted">Montant encaissé :</span>
+                          <strong className="text-success">{formatDA(split.price)}</strong>
+                        </div>
+                        <div className="flex justify-between border-b border-line/50 pb-1.5">
+                          <span className="text-muted">Part de l&apos;école :</span>
+                          <strong className="text-ink">{formatDA(split.school)}</strong>
+                        </div>
+                        <div className="flex justify-between border-b border-line/50 pb-1.5">
+                          <span className="text-muted">Part de l&apos;enseignant :</span>
+                          <strong className="text-primary">
+                            {formatDA(split.teacher)}
+                            {split.unsplit && (
+                              <span className="ms-1 text-[9px] font-normal text-warning">
+                                (part non répartie)
+                              </span>
+                            )}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between border-b border-line/50 pb-1.5">
+                          <span className="text-muted">Statut de cette part :</span>
+                          <Badge tone={selectedCasual.teacherPaid ? "success" : "warning"} className="text-[9px]">
+                            {selectedCasual.teacherPaid
+                              ? "déjà réglée"
+                              : "à régler avec le mois de cet emploi"}
+                          </Badge>
+                        </div>
+                      </>
+                    );
+                  })()}
                   <div className="flex justify-between border-b border-line/50 pb-1.5">
                     <span className="text-muted">Mode :</span>
                     <strong className="text-ink">Espèces (encaissé)</strong>
@@ -1068,6 +1302,16 @@ export function IndependentPage() {
           </div>
         )}
       </Modal>
+    </div>
+  );
+}
+
+/** Un total du formulaire — trois nombres qu'on lit d'un coup d'œil. */
+function FormTotal({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface p-2 text-center">
+      <span className="block text-[9px] font-bold uppercase tracking-wider text-muted">{label}</span>
+      <strong className={`block font-mono text-sm ${tone}`}>{value}</strong>
     </div>
   );
 }

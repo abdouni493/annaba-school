@@ -235,3 +235,18 @@ with all this new system for the teacher payement to see the detials correctly w
 
 apply this updates then give me the full sql code that i have torun for this new updates and push all updates to repo with merge code directly without pull request 
 
+
+fix the interface of opening groupes from the interface of dashboard create new button action for create student passager on this groupe 
+let user can type the name of that student or can keep it empty and make user can create multiple students on the same creation of seance libre on this emploi du temps then let user set the price for the seance and let him set how much the school will get from the total price and calculate the reset for the teacher and make sure to make this students display on the presence list for this seance from that month and do not let them display on the next seance except that user create the seance libres on the next seances, then make sure to fix the interface of create new seance libre from the interface of seance libre on the side bare make it with same system let user can leet the name empty to make it for student passager and et user search about the emploi du temps and let user type the total price for the seance and the price that school will get it and calculate the price that teacher will get it 
+then fix the interface of payment of teacher conver the name of table of retard to retard payments and seance libres make sure to make it display on it the seances libre of that month and the price that will get it from each student passager
+and make sure to reanalyze the interface of payment student a deep analyze and fix the payment by retard and the normaly payment i get it display with double and its not display the carculations correctly so make sure to fix the calculations like this logic exactly make sure to understande it correctly and fix the interface of teacher payment :
+firstly make the month display the liste of students with statue of payed or not payed and how much the students payed and make sure to display also the not payed students with alert to create the payment of that students with debt and for retard payment or can pay the debt of that student from the money of the school 
+then make the interface display the month retard payment from the previous month and the seance libre and the expenses on the last table and make sure to make the resume display the calculations correclty will all detials and calculate how much user have to pay exactly 
+then make it when user create the payment then do not display the button of payment agains on that month let user only can make edit or delete to reecreate the payment agains and make sure to do not dipslay the button action of save the payment agains and make sure to make it the month that we make on it the payment have so students did not pay then make sure to display then on the next month on the tableof retards payment if there are payed  so eveytime follow this example : 
+m1 payed month for the teacher but have not payed students on it 
+that student payed after the creation of the payement of m1 
+when user comes to create the payment for m2 then make it dispay them on the special table for them with the amounts that they payed and how much the part for that teacher 
+then make sure to make it calculate correctly without multiplication of decalges 
+make sure to follow the calculations of how much part of teacher for each emploi du temps and for each seance libre and make sure to calcualte correclty the retards payments and evrything dynamic and smooth 
+
+apply this updates then give me the full sql code that i have torun for this new updates and push all updates to repo with merge code directly without pull request 

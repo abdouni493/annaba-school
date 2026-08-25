@@ -132,9 +132,12 @@ const LABELS = {
       "Une ligne par élève du mois : ce qu'il a suivi, ce qu'il a versé, et ce que ses séances rapportent à l'enseignant. Une part RETENUE appartient à un élève qui doit encore de l'argent : elle sera réglée dès qu'il se sera acquitté.",
     slotLegend:
       "Colonnes S1…Sn : P = présent, R = retard, A = absent, × = séance annulée, – = pas encore pointée, · = séance tenue avant son inscription.",
-    t2: "2. Arriérés rattrapés — élèves ayant payé en retard",
+    t2: "2a. Retards de paiement — élèves ayant payé en retard",
     t2note:
       "Ces parts appartiennent à des MOIS DÉJÀ RÉGLÉS : elles avaient été retenues faute de paiement. L'élève s'est acquitté depuis, elles sont donc dues aujourd'hui — sans se confondre avec le mois courant.",
+    t2b: "2b. Séances libres du mois — élèves de passage",
+    t2bnote:
+      "Un élève de passage paie sa séance sur place : ce que l'école ne garde pas revient à l'enseignant, avec le mois où la séance est tombée.",
     t3: "3. Retenues sur la paie",
     t3note:
       "Dépenses avancées par l'école, acomptes déjà versés, et scolarité des enfants de l'enseignant réglée sur son salaire.",
@@ -160,14 +163,21 @@ const LABELS = {
     childDebt: "Scolarité avancée",
     subtotal: "Sous-total",
     noStudents: "Aucun élève réglé sur ce mois.",
-    noArrears: "Aucun arriéré à rattraper.",
+    noArrears: "Aucun retard de paiement à rattraper.",
+    noPassagers: "Aucune séance libre sur ce mois.",
+    passagerTag: "Élève de passage",
+    seanceLabel: "Séance",
+    dateHour: "Date & horaire",
+    pricePaid: "Prix payé",
+    schoolShare: "Part école",
     noDeductions: "Aucune retenue sur cette paie.",
 
     withheld: "retenu",
     covered: "dette avancée par l'école",
     summary: "Résumé du règlement",
     sumStudents: "Total des élèves du mois (table 1) :",
-    sumArrears: "Total des arriérés rattrapés (table 2) :",
+    sumArrears: "Total des retards de paiement rattrapés (table 2a) :",
+    sumPassagers: "Total des séances libres (table 2b) :",
     sumGross: "TOTAL BRUT :",
     sumDeductions: "Retenues (table 3) :",
     sumNet: "NET VERSÉ À L'ENSEIGNANT :",
@@ -197,9 +207,12 @@ const LABELS = {
       "سطر لكل تلميذ : ما حضره، ما دفعه، وما تدرّه حصصه على الأستاذ. المبلغ المحجوز يخص تلميذًا لا يزال مدينًا، ويُدفع فور تسديده.",
     slotLegend:
       "الأعمدة S1…Sn : P = حاضر، R = متأخر، A = غائب، × = حصة ملغاة، – = لم تُسجَّل بعد، · = حصة سابقة لتسجيله.",
-    t2: "2. المتأخرات المسترجعة — تلاميذ دفعوا متأخرين",
+    t2: "2أ. متأخرات الدفع — تلاميذ دفعوا متأخرين",
     t2note:
       "تخص هذه المبالغ أشهرًا سُوّيت من قبل : حُجزت لعدم الدفع، وقد سدّد التلميذ منذ ذلك الحين فأصبحت مستحقة اليوم.",
+    t2b: "2ب. الحصص الحرة للشهر — تلاميذ عابرون",
+    t2bnote:
+      "التلميذ العابر يدفع حصته في الحين : ما لا تحتفظ به المدرسة يعود إلى الأستاذ، مع الشهر الذي وقعت فيه الحصة.",
     t3: "3. الخصومات من الراتب",
     t3note: "مصاريف قدّمتها المدرسة، تسبيقات، ودراسة أبناء الأستاذ المخصومة من راتبه.",
 
@@ -225,13 +238,20 @@ const LABELS = {
     subtotal: "المجموع الجزئي",
     noStudents: "لا يوجد تلميذ مسوّى في هذا الشهر.",
     noArrears: "لا توجد متأخرات.",
+    noPassagers: "لا توجد حصص حرة في هذا الشهر.",
+    passagerTag: "تلميذ عابر",
+    seanceLabel: "الحصة",
+    dateHour: "التاريخ والتوقيت",
+    pricePaid: "المبلغ المدفوع",
+    schoolShare: "نصيب المدرسة",
     noDeductions: "لا توجد خصومات.",
 
     withheld: "محجوز",
     covered: "دين قدّمته المدرسة",
     summary: "ملخص التسوية",
     sumStudents: "مجموع تلاميذ الشهر (الجدول 1) :",
-    sumArrears: "مجموع المتأخرات (الجدول 2) :",
+    sumArrears: "مجموع متأخرات الدفع (الجدول 2أ) :",
+    sumPassagers: "مجموع الحصص الحرة (الجدول 2ب) :",
     sumGross: "المجموع الخام :",
     sumDeductions: "الخصومات (الجدول 3) :",
     sumNet: "الصافي المدفوع للأستاذ :",
@@ -388,6 +408,52 @@ export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string 
     }
     <p class="note">${L.t2note}</p>`;
 
+  // ---- table 2 bis : les séances libres du mois ---------------------------
+  const passagers = board.passagers ?? [];
+  const passagersTotal = board.passagersTotal ?? 0;
+  const passagerRows = passagers
+    .map(
+      (r) => `
+      <tr>
+        <td style="font-size:0.8em;">${fmtDate(r.date, lang)}${
+          r.startTime || r.endTime
+            ? `<br/><span style="font-family:monospace; font-size:0.85em; color:#5c567a;">${esc(r.startTime ?? "")} → ${esc(r.endTime ?? "")}</span>`
+            : ""
+        }</td>
+        <td><strong>${esc(r.name)}</strong><br/><span class="tag tag-mute">${L.passagerTag}</span></td>
+        <td style="font-size:0.8em; color:#5c567a;">${esc(r.label ?? "")}</td>
+        <td style="text-align:end; font-family:monospace;">${da(r.price)}</td>
+        <td style="text-align:end; font-family:monospace; color:#5c567a;">${da(r.schoolShare)}</td>
+        <td style="text-align:end; font-family:monospace; font-weight:700;">${da(r.teacherShare)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  const table2b = `
+    <div class="tbl-title"><h3>${L.t2b}</h3><em>${passagers.length} ligne(s)</em></div>
+    ${
+      passagers.length === 0
+        ? `<div class="empty">${L.noPassagers}</div>`
+        : `<table>
+      <thead>
+        <tr>
+          <th>${L.dateHour}</th><th>${L.student}</th><th>${L.seanceLabel}</th>
+          <th style="text-align:end;">${L.pricePaid}</th>
+          <th style="text-align:end;">${L.schoolShare}</th>
+          <th style="text-align:end;">${L.share}</th>
+        </tr>
+      </thead>
+      <tbody>${passagerRows}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="5" style="text-align:end; font-weight:700;">${L.subtotal}</td>
+          <td style="text-align:end; font-family:monospace; font-weight:800; color:#5b21b6;">${da(passagersTotal)}</td>
+        </tr>
+      </tfoot>
+    </table>`
+    }
+    <p class="note">${L.t2bnote}</p>`;
+
   // ---- table 3 : les retenues ---------------------------------------------
   const dedRows = board.deductions
     .map(
@@ -431,6 +497,7 @@ export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string 
       <table class="sum">
         <tr><td>${L.sumStudents}</td><td>${da(board.studentsTotal)}</td></tr>
         <tr><td>${L.sumArrears}</td><td>${da(board.arrearsTotal)}</td></tr>
+        <tr><td>${L.sumPassagers}</td><td>${da(passagersTotal)}</td></tr>
         <tr><td style="font-weight:700;">${L.sumGross}</td><td>${da(board.gross)}</td></tr>
         <tr class="minus"><td>${L.sumDeductions}</td><td>− ${da(board.deductionsTotal)}</td></tr>
         <tr><td>${L.paidOn}</td><td>${fmtDateTime(data.paidAt, lang)}</td></tr>
@@ -447,6 +514,7 @@ export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string 
     ${headHtml}
     ${table1}
     ${table2}
+    ${table2b}
     ${table3}
     ${summary}
     ${signaturesHtml(L.signTeacher, L.signCashier)}

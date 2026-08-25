@@ -232,7 +232,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   independent: {
     table: "independent_sessions", pk: "id", pkField: "id",
     fields: ["id", "studentId", "passagerName", "itemLabel", "price", "date", "sessionId",
-             "startTime", "endTime", "createdAt", "teacherPaid"],
+             "startTime", "endTime", "createdAt", "teacherPaid", "schoolShare", "teacherId"],
   },
   groupSeances: {
     table: "group_seances", pk: "id", pkField: "id",

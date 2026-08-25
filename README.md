@@ -72,6 +72,17 @@ Aucune donnée de démonstration n'est insérée.
 >    scolarités retenues, et le mouvement de caisse à annuler avec le règlement) et
 >    `unpaid_teacher_sessions.payment_id` (**quelle paie a soldé cette part**). Aucune donnée
 >    n'est réécrite : sans ces colonnes, tout garde le sens qu'il a aujourd'hui.
+> 9. **`supabase/update-2026-08-26-second-telephone-emploi-multi-niveaux-et-paie-par-mois.sql`** —
+>    ajoute `students.phone2` (le **second numéro** de la famille), `schedule_sessions.class_groups`
+>    (un créneau qui réunit **plusieurs niveaux**, chacun avec ses groupes) et
+>    `teacher_payments.board` (la **photographie figée** des tables d'un règlement de mois).
+> 10. **`supabase/update-2026-08-26-eleves-de-passage-et-paie-sans-double.sql`** — ajoute
+>    `independent_sessions.school_share` (ce que **l'école garde** sur une séance libre ; le reste
+>    est la part de l'enseignant) et `independent_sessions.teacher_id` (**qui a donné la séance**,
+>    figé à la création, pour qu'un changement de titulaire ne réattribue pas les séances passées).
+>    Les séances déjà en base gardent leur sens exact : sans part écrite, l'école gardait tout.
+>    La correction du **règlement en double**, les **élèves de passage** sur la feuille de présence
+>    et la table « Retards de paiement & séances libres » sont du code, pas du schéma.
 >
 > Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
 > erreur.
@@ -333,13 +344,56 @@ total enseignant        = élèves × part enseignant
 et ces trois actions déplacent avec elle ses deux mouvements de caisse, sa ligne dans
 l'historique de l'enseignant, son bloc dans la **caisse** et son tableau dans les **rapports**.
 
+### Les élèves de passage
+
+Quelqu'un vient à **une** séance et repart. Lui créer une fiche, l'inscrire sur l'emploi du temps,
+lui ouvrir un solde, puis l'en retirer — c'est cinq écrans pour une personne qu'on ne reverra
+peut-être jamais. Deux boutons suffisent désormais, l'un sur la **feuille de présence du groupe**
+(donc depuis le tableau de bord, en ouvrant le créneau du jour), l'autre sur l'écran **Séances
+libres**.
+
+On saisit trois choses, et il n'y en a pas quatre à savoir au comptoir :
+
+- **qui est venu** — un nom par ligne, et **une ligne vide reste valide** : elle s'enregistre sous
+  « Passager ». Six élèves d'un coup se saisissent en réglant le compteur sur 6, puis en nommant
+  ceux qu'on connaît ;
+- **combien un passager paie** pour la séance ;
+- **ce que l'école garde** dessus. Le reste est la part de l'enseignant, affichée pendant la saisie.
+
+```
+part enseignant / passager = prix payé − part école
+total encaissé             = passagers × prix payé
+total enseignant           = passagers × part enseignant
+```
+
+L'argent entre en caisse tout de suite, en **un** mouvement pour toute la fournée. Les passagers
+apparaissent sous la feuille de **cette séance-là** — avec leur prix, la part de l'école et celle de
+l'enseignant — et **sur aucune autre** : la séance suivante repart sans eux, et s'ils reviennent on
+les ressaisit, ce qui est exactement ce qui se passe au comptoir.
+
+La part de l'enseignant, elle, rejoint le **mois de l'emploi du temps** dans lequel la date tombe et
+se règle avec lui, dans la table **« Retards de paiement & séances libres »** de sa paie. Une fois
+réglée, elle ne revient jamais.
+
+Depuis l'écran **Séances libres**, le même formulaire sert aussi à un **élève inscrit** : on le
+cherche par nom, n° d'inscription ou carte, et la séance est enregistrée à son nom — elle se règle
+en espèces et ne touche **aucun** de ses soldes. Laisser ce champ vide bascule sur les passagers.
+La liste et le détail affichent, pour chaque séance, le prix, la part de l'école, la part de
+l'enseignant et si elle a déjà été réglée.
+
+Une séance enregistrée **avant** ce partage n'a pas de part d'école écrite : l'école gardait tout,
+la part de l'enseignant vaut donc zéro et aucun ancien total ne bouge. Elle peut être rouverte et se
+voir attribuer une part.
+
 ### La feuille de présence du groupe
 
-Trois raccourcis en tête de la feuille, en plus du **Nouvel élève** :
+Quatre raccourcis en tête de la feuille, en plus du **Nouvel élève** :
 
 - **Élève existant** — il est déjà dans la base : on le cherche par nom, n° d'inscription ou
   téléphone et on l'ajoute au groupe, sans ressaisir une seule information. Il entre **là où en
   est le groupe** ce jour-là.
+- **Élève passager** — il vient **une fois** : aucune fiche n'est créée, aucun solde n'ouvert. Voir
+  « Les élèves de passage » ci-dessous.
 - **Tout présent** — la liste s'ouvre entièrement cochée (les élèves déjà pointés ce jour-là ne
   sont pas réécrits), une recherche permet d'en décocher un ou deux, et un clic écrit tout.
 - **Séance annulée pour tous** — la séance n'a pas eu lieu : toute la liste s'ouvre cochée, y
@@ -705,7 +759,7 @@ gratuité (`students.school_only_subscription_ids`) :
 
 Une fiche sans liste garde le comportement d'avant, piloté par `unpaid_teacher_ids`.
 
-## Les arriérés débloqués — chaque mois reste indépendant
+## Les retards de paiement — chaque mois reste indépendant
 
 Le cas se produit tous les mois. Au moment de régler le **M1**, deux élèves n'avaient rien versé :
 leur part est **retenue**, et l'enseignant touche le M1 sans elle. Ils s'acquittent ensuite **de
@@ -713,9 +767,15 @@ leur M1** — c'est ce mois-là, et lui seul, qui libère ces parts-là — et q
 **M2**, ces parts de M1 sont de nouveau dues.
 
 Elles n'appartiennent pas au M2. L'écran de règlement leur donne donc **leur propre tableau** —
-« Arriérés débloqués », avec l'élève, l'emploi du temps, le **mois d'origine**, les dates des
-séances et le montant — cochées d'office, réglées par le même versement, et **imprimées à part** sur
-la fiche de paie. Le mois déjà réglé n'est plus jamais recoché comme s'il restait à payer.
+« **Retards de paiement & séances libres** », dont la première moitié liste l'élève, l'emploi du
+temps, le **mois d'origine**, les dates des séances et le montant — cochées d'office, réglées par le
+même versement, et **imprimées à part** sur la fiche de paie. Le mois déjà réglé n'est plus jamais
+recoché comme s'il restait à payer, et son écran ne propose même plus de bouton pour le faire.
+
+La seconde moitié du même tableau porte les **séances libres** du mois : les élèves de passage
+n'ont ni fiche, ni solde, ni mois, mais ce qu'ils ont payé se partage comme le reste, et la part de
+l'enseignant se règle avec le mois où leur séance est tombée. Les deux moitiés ont la même nature :
+ce que ce règlement doit à l'enseignant **en dehors des élèves inscrits du mois**.
 
 Le règlement fige ce qu'il a rattrapé (`teacher_payments.arrears`), si bien que l'historique le
 relit des mois plus tard. Depuis la fiche de l'enseignant, chaque règlement se **voit**, se
@@ -801,10 +861,14 @@ l'ordre où la réception pense :
 | Table | Ce qu'elle contient | Ce qu'elle totalise |
 | ----- | ------------------- | ------------------- |
 | **1. Élèves du mois** | une ligne par élève, ses séances S1…Sn comme sur la feuille de présence, ce qu'il a versé, ce qu'il doit, et la part qu'il rapporte : **part du mois ÷ séances × ses séances payables**, au centime | ce que le mois rapporte |
-| **2. Arriérés** | les élèves qui ont payé **en retard** un mois DÉJÀ réglé — avec leur **mois d'origine** et les dates concernées. Les élèves qui n'ont toujours pas payé n'y figurent pas | ce qui est rattrapé |
+| **2a. Retards de paiement** | les élèves qui ont payé **en retard** un mois DÉJÀ réglé — avec leur **mois d'origine** et les dates concernées. Les élèves qui n'ont toujours pas payé n'y figurent pas | ce qui est rattrapé |
+| **2b. Séances libres** | les **élèves de passage** venus sur ce mois : prix payé, part de l'école, et ce qui revient à l'enseignant | ce que les passagers lui rapportent |
 | **3. Retenues** | dépenses avancées par l'école, acomptes, scolarité **encore due** de ses enfants, et scolarités **déjà créditées au guichet** et portées sur ce salaire — les lignes déjà réglées restent affichées, marquées comme telles | ce qui est repris |
 
-Et le net : **table 1 + table 2 − table 3**.
+Et le net : **table 1 + table 2a + table 2b − table 3**. Le résumé détaille chaque ligne — combien
+d'élèves sont réglés sur combien, ce qui reste retenu, ce que les passagers ont encaissé et ce que
+l'école en garde, et les retenues **nature par nature** — pour qu'une paie qu'on ne comprend pas ne
+soit jamais une paie qu'on refait.
 
 Exemple : un mois à **1 800 DA** dont l'école garde 650 laisse **1 150 DA** à l'enseignant, soit
 **287,50 DA** la séance sur quatre. Un élève présent aux quatre lui rapporte exactement 1 150 DA —
@@ -813,16 +877,41 @@ la division garde ses décimales, sinon la somme des lignes cesse d'égaler le t
 **Une séance non payée RETIENT sa part** : la case de l'élève ne se coche pas, et le montant est
 affiché comme retenu. Ce qui bloque, c'est **ce mois-ci, sur cet emploi du temps** — un élève à jour
 ici débloque la paie même s'il doit encore ailleurs, et un élève qui a payé deux séances sur quatre
-en débloque deux. L'école peut ne pas faire attendre l'enseignant : **« Payer de la caisse »**,
-affiché sur les seules lignes bloquées, avance ce que l'élève doit **sur cet emploi du temps**, la
-part se débloque immédiatement et l'élève passe **en rouge**. L'alerte des sommes ainsi avancées est
-portée par l'écran **« Étudiants »**, à qui elles sont réclamées.
+en débloque deux.
+
+**Les élèves qui n'ont pas payé sont listés en tête d'écran**, avant les tables : leur nom, leurs
+séances, ce qu'ils doivent sur le mois et la part qu'ils retiennent. Deux issues s'écrivent sur
+place, sans quitter la paie :
+
+- **Encaisser** — la famille paie **maintenant**, au guichet : l'argent entre en caisse, son solde
+  est crédité sur ce mois de cet emploi, et la part se débloque dans la seconde. Le montant dû est
+  proposé, avec les raccourcis « + 1 séance » et « le mois entier ».
+- **Payer de la caisse** — l'école **avance** ce que l'élève doit sur cet emploi du temps pour ne
+  pas faire attendre l'enseignant : la part se débloque et l'élève passe **en rouge**. L'alerte des
+  sommes ainsi avancées est portée par l'écran **« Étudiants »**, à qui elles sont réclamées.
+
+Un élève laissé tel quel n'empêche rien : sa part reviendra d'elle-même dans les **retards de
+paiement** du mois suivant, le jour où il s'acquittera.
 
 Le règlement fige ses trois tables dans `teacher_payments.board` : « voir le détail », la
 réimpression de la fiche de paie et les rapports relisent cette photographie **sans jamais la
 recalculer** — un tarif corrigé six mois plus tard ne peut pas contredire ce qui a été versé. Le
 mois passe alors à « Réglé », et se **corrige** (le net, la date, le libellé — la caisse suit) ou
 s'**annule** : tout ce qu'il avait soldé redevient dû et le mois redevient réglable.
+
+**Un mois réglé ne se repaie pas.** Le bouton d'enregistrement **disparaît**, les cases des trois
+tables se figent, et il ne reste que « Modifier » et « Supprimer ». Si des parts se libèrent après
+coup — un élève paie en retard, une séance libre tombe sur ce mois — l'écran le **dit**, et renvoie
+au règlement **suivant** : c'est là, dans sa table « Retards de paiement & séances libres », qu'elles
+se rattrapent. Jamais en repayant le mois.
+
+Une part que le règlement **nomme** est marquée réglée, sans second filtre. C'est ce qui a corrigé le
+« double » que la réception voyait : la part était cochée, le net sortait de la caisse, la fiche
+s'imprimait — mais un contrôle global (« cet élève doit-il quelque chose, **quelque part** ? »)
+empêchait la ligne de passer à « payée », si bien qu'elle revenait au mois suivant et que le mois
+lui-même s'affichait encore « à régler ». Deux cas le déclenchaient tous les mois : un élève à jour
+sur son groupe mais devant encore des **frais d'inscription**, et un **retardataire** qui a soldé son
+M1 alors qu'il vit déjà son M2.
 
 L'historique de la fiche enseignant filtre par **emploi du temps** et par **mois**. La **caisse**
 déplie chaque règlement (emploi, mois, élèves, arriérés, retenues, net) et les **rapports** ajoutent

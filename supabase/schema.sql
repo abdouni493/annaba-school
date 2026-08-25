@@ -930,12 +930,18 @@ create table if not exists public.coursework (
   teacher_id        text references public.teachers (id) on delete set null
 );
 
+-- Une séance libre se vend comme un mois : `price` est ce que la personne verse,
+-- `school_share` ce que l'école garde dessus, et la différence est la part de
+-- l'enseignant — celle que la paie du mois où la séance tombe lui règle.
+-- `school_share` NULL = séance d'avant ce découpage : l'école gardait tout.
 create table if not exists public.independent_sessions (
   id            text primary key,
   student_id    text references public.students (id) on delete set null,
   passager_name text,
   item_label    text not null default '',
   price         numeric not null default 0,
+  school_share  numeric,
+  teacher_id    text references public.teachers (id) on delete set null,
   date          text not null default '',
   session_id    text,
   start_time    text,

@@ -220,15 +220,46 @@ export interface TeacherPayBoard {
   students: TeacherPayStudentLine[];
   /** tableau 2 — les élèves qui ont payé en retard (mois déjà réglés) */
   arrears: TeacherPayArrearLine[];
+  /**
+   * tableau 2 bis — LES SÉANCES LIBRES DU MOIS.
+   *
+   * Les élèves de passage n'ont pas de fiche, pas de solde et pas de mois : ils
+   * paient la séance sur place. Ce que l'école ne garde pas revient à
+   * l'enseignant et se règle avec le mois où la séance est tombée — d'où sa
+   * place ici, à côté des retards, et jamais dans le tableau des élèves
+   * inscrits.
+   *
+   * Absent = règlement enregistré avant les séances libres par passager.
+   */
+  passagers?: TeacherPayPassagerLine[];
   /** tableau 3 — ce qui est retenu sur la paie */
   deductions: TeacherPayDeductionLine[];
   studentsTotal: number;
   arrearsTotal: number;
+  /** ce que les séances libres rapportent à l'enseignant */
+  passagersTotal?: number;
   deductionsTotal: number;
-  /** studentsTotal + arrearsTotal */
+  /** studentsTotal + arrearsTotal + passagersTotal */
   gross: number;
   /** gross − deductionsTotal */
   net: number;
+}
+
+/** Une ligne du tableau des séances libres — un élève de passage, une séance. */
+export interface TeacherPayPassagerLine {
+  /** l'`IndependentSession` réglée */
+  id: string;
+  name: string;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+  label?: string;
+  /** ce que le passager a payé */
+  price: number;
+  /** ce que l'école garde dessus */
+  schoolShare: number;
+  /** price − schoolShare : ce que l'enseignant touche */
+  teacherShare: number;
 }
 
 /** Une ligne du tableau des élèves d'un mois, sur la paie de l'enseignant. */
@@ -1038,6 +1069,21 @@ export interface IndependentSession {
   /** the teacher has already been settled for this passager's séance — a
    *  créneau attended only by passagers has no unpaid_teacher_sessions row */
   teacherPaid?: boolean;
+  /**
+   * CE QUE L'ÉCOLE GARDE SUR `price`.
+   *
+   * Une séance libre se vend comme un mois d'emploi du temps : la réception
+   * tape le prix TOTAL payé par l'élève de passage, puis la part que l'école
+   * garde. Le reste — `price − schoolShare` — est la part de l'enseignant, et
+   * c'est elle que l'écran de paie du mois lui règle, passager par passager.
+   *
+   * ABSENT = séance enregistrée avant ce découpage : l'école gardait tout, donc
+   * la part enseignant vaut zéro et aucun ancien total ne bouge.
+   */
+  schoolShare?: number;
+  /** l'enseignant que cette séance paie — figé à la création, parce que
+   *  l'emploi du temps peut changer de titulaire après coup */
+  teacherId?: string;
 }
 
 /**

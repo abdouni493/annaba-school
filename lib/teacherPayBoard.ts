@@ -31,6 +31,7 @@ import type {
   TeacherPayArrearLine,
   TeacherPayBoard,
   TeacherPayDeductionLine,
+  TeacherPayPassagerLine,
   TeacherPayStudentLine,
   TeacherPayment,
 } from "@/lib/types";
@@ -48,6 +49,7 @@ import {
   type TeacherEmploi,
   type TeacherMonth,
   type TeacherMonthStudent,
+  type TeacherPassager,
 } from "@/lib/teacherMonths";
 
 /** Combien de mois la liste M1 → M12 affiche toujours. */
@@ -90,6 +92,10 @@ export interface MonthTile {
   /** ce qu'il a déjà rapporté */
   paid: number;
   students: number;
+  /** ce que les séances libres tombées dans ce mois doivent à l'enseignant */
+  passagers: number;
+  /** combien de séances libres ce mois porte */
+  passagerCount: number;
 }
 
 /**
@@ -115,14 +121,18 @@ export function monthTiles(
     const payable = month?.payable ?? 0;
     const withheld = month?.withheld ?? 0;
     const alreadyPaid = month?.settled ?? 0;
+    const passagers = month?.passagerPayable ?? 0;
+    const passagerCount = month?.passagers.length ?? 0;
 
+    // Une séance libre est payée d'avance par le passager : elle n'attend pas
+    // que le mois soit clos pour être due, contrairement aux parts des élèves.
     const state: MonthTileState = settlement
       ? "paid"
-      : payable > 0 && complete
+      : payable > 0 && (complete || passagers >= payable)
         ? "payable"
         : withheld > 0 && payable === 0
           ? "blocked"
-          : held > 0
+          : held > 0 || passagerCount > 0
             ? "running"
             : "empty";
 
@@ -140,6 +150,8 @@ export function monthTiles(
       withheld,
       paid: alreadyPaid,
       students: month?.students.length ?? 0,
+      passagers,
+      passagerCount,
     } satisfies MonthTile;
   });
 }
@@ -196,6 +208,18 @@ export interface BoardArrear extends TeacherPayArrearLine {
   monthIndex: number;
 }
 
+/**
+ * UNE SÉANCE LIBRE DU MOIS — un élève de passage, une séance, une part.
+ *
+ * Elle se règle avec le mois où elle est tombée, dans la même table que les
+ * retards de paiement : ce sont les deux choses qu'un mois doit à
+ * l'enseignant SANS venir de ses élèves inscrits.
+ */
+export interface BoardPassager extends TeacherPayPassagerLine {
+  /** la part de l'école n'a jamais été saisie (séance d'avant le découpage) */
+  unsplit: boolean;
+}
+
 export interface BoardDeduction extends TeacherPayDeductionLine {
   /** cochée par la réception (donc réellement retenue par ce règlement) */
   selectable: boolean;
@@ -220,6 +244,8 @@ export interface PayBoard {
   students: BoardStudent[];
   /** table 2 */
   arrears: BoardArrear[];
+  /** table 2 bis — les séances libres tombées dans ce mois */
+  passagers: BoardPassager[];
   /** table 3 */
   deductions: BoardDeduction[];
   /** ce que la table 1 peut rapporter maintenant */
@@ -230,6 +256,10 @@ export interface PayBoard {
   withheldTotal: number;
   /** ce que la table 2 rattrape */
   arrearsTotal: number;
+  /** ce que les séances libres du mois rapportent à l'enseignant */
+  passagersTotal: number;
+  /** ce que ces mêmes séances ont encaissé, part de l'école comprise */
+  passagersRevenue: number;
   /** ce que la table 3 retient */
   deductionsTotal: number;
   /** déjà réglé sur ce mois par un versement antérieur */
@@ -326,6 +356,11 @@ export function buildPayBoard(
   }
   arrears.sort((a, b) => a.monthIndex - b.monthIndex || a.name.localeCompare(b.name));
 
+  // ---- table 2 bis : les séances libres tombées dans ce mois --------------
+  // Un passager n'est ni inscrit ni endetté : sa séance est payée d'avance, la
+  // part de l'enseignant est donc due dès que le mois se règle.
+  const passagers: BoardPassager[] = (month?.passagers ?? []).map(passagerLine);
+
   // ---- table 3 : ce qui est retenu sur la paie ----------------------------
   const deductions = buildDeductions(db, teacher);
 
@@ -333,6 +368,8 @@ export function buildPayBoard(
   const studentsPotential = students.reduce((s, r) => s + r.amount, 0);
   const withheldTotal = students.reduce((s, r) => s + (r.withheld ? r.amount : 0), 0);
   const arrearsTotal = arrears.reduce((s, r) => s + r.amount, 0);
+  const passagersTotal = passagers.reduce((s, r) => s + r.teacherShare, 0);
+  const passagersRevenue = passagers.reduce((s, r) => s + r.price, 0);
   const deductionsTotal = deductions
     .filter((d) => d.selectable)
     .reduce((s, d) => s + d.amount, 0);
@@ -349,11 +386,14 @@ export function buildPayBoard(
     perSeance: emploi.perSeance,
     students,
     arrears,
+    passagers,
     deductions,
     studentsTotal: money(studentsTotal),
     studentsPotential: money(studentsPotential),
     withheldTotal: money(withheldTotal),
     arrearsTotal: money(arrearsTotal),
+    passagersTotal: money(passagersTotal),
+    passagersRevenue: money(passagersRevenue),
     deductionsTotal: money(deductionsTotal),
     alreadyPaid: month?.settled ?? 0,
     settlement,
@@ -381,6 +421,22 @@ function monthSlots(
   return Array.from({ length: size }, (_, i) =>
     i < lead ? "before" : (rows[i - lead]?.status ?? null),
   );
+}
+
+/** Une séance libre du mois, telle que la table 2 bis l'affiche. */
+function passagerLine(p: TeacherPassager): BoardPassager {
+  return {
+    id: p.id,
+    name: p.name,
+    date: p.dateKey,
+    startTime: p.startTime,
+    endTime: p.endTime,
+    label: p.label,
+    price: p.price,
+    schoolShare: p.schoolShare,
+    teacherShare: p.teacherShare,
+    unsplit: p.unsplit,
+  };
 }
 
 /** Une ligne d'élève de la table 1, tirée du mois que `teacherMonths` a calculé. */
@@ -512,11 +568,34 @@ function buildDeductions(db: Database, teacher: Teacher): BoardDeduction[] {
   return out.sort((a, b) => Number(a.paid) - Number(b.paid) || b.date.localeCompare(a.date));
 }
 
-/** Ce qui reste à l'enseignant : les deux premières tables, moins la troisième. */
-export function boardTotals(
-  board: PayBoard,
-  picked: { studentIds: string[]; arrearKeys: string[]; deductionIds: string[] },
-): { students: number; arrears: number; gross: number; deductions: number; net: number } {
+/** Ce que la réception a coché, table par table. */
+export interface BoardPicked {
+  studentIds: string[];
+  arrearKeys: string[];
+  /** les séances libres du mois retenues sur ce règlement */
+  passagerIds: string[];
+  deductionIds: string[];
+}
+
+export interface BoardSums {
+  /** table 1 — les élèves du mois */
+  students: number;
+  /** table 2 — les retards de paiement rattrapés */
+  arrears: number;
+  /** table 2 bis — la part des séances libres */
+  passagers: number;
+  /** ce que les séances libres ont encaissé (part de l'école comprise) */
+  passagersRevenue: number;
+  /** students + arrears + passagers */
+  gross: number;
+  /** table 3 */
+  deductions: number;
+  /** gross − deductions */
+  net: number;
+}
+
+/** Ce qui reste à l'enseignant : les tables qui rapportent, moins celle qui retient. */
+export function boardTotals(board: PayBoard, picked: BoardPicked): BoardSums {
   const students = money(
     board.students
       .filter((r) => picked.studentIds.includes(r.studentId) && !r.withheld)
@@ -527,13 +606,24 @@ export function boardTotals(
       .filter((r) => picked.arrearKeys.includes(r.key))
       .reduce((s, r) => s + r.amount, 0),
   );
+  const chosenPassagers = board.passagers.filter((r) => picked.passagerIds.includes(r.id));
+  const passagers = money(chosenPassagers.reduce((s, r) => s + r.teacherShare, 0));
+  const passagersRevenue = money(chosenPassagers.reduce((s, r) => s + r.price, 0));
   const deductions = money(
     board.deductions
       .filter((d) => d.selectable && picked.deductionIds.includes(d.id))
       .reduce((s, d) => s + d.amount, 0),
   );
-  const gross = money(students + arrears);
-  return { students, arrears, gross, deductions, net: money(gross - deductions) };
+  const gross = money(students + arrears + passagers);
+  return {
+    students,
+    arrears,
+    passagers,
+    passagersRevenue,
+    gross,
+    deductions,
+    net: money(gross - deductions),
+  };
 }
 
 /**
@@ -546,7 +636,7 @@ export function boardTotals(
 export function freezeBoard(
   db: Database,
   board: PayBoard,
-  picked: { studentIds: string[]; arrearKeys: string[]; deductionIds: string[] },
+  picked: BoardPicked,
 ): TeacherPayBoard {
   const totals = boardTotals(board, picked);
   const e = board.emploi;
@@ -597,6 +687,19 @@ export function freezeBoard(
         emploi: r.emploi,
         dates: r.dates,
       })),
+    passagers: board.passagers
+      .filter((r) => picked.passagerIds.includes(r.id))
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        date: r.date,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        label: r.label,
+        price: r.price,
+        schoolShare: r.schoolShare,
+        teacherShare: r.teacherShare,
+      })),
     deductions: board.deductions
       .filter((d) => d.selectable && picked.deductionIds.includes(d.id))
       .map((d) => ({
@@ -610,6 +713,7 @@ export function freezeBoard(
       })),
     studentsTotal: totals.students,
     arrearsTotal: totals.arrears,
+    passagersTotal: totals.passagers,
     deductionsTotal: totals.deductions,
     gross: totals.gross,
     // Le net peut être NÉGATIF (les retenues dépassent le brut) : c'est un cas

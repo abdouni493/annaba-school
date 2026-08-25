@@ -10,6 +10,7 @@ import {
   isSchoolOnlySub,
   joinPointFor,
   groupSeanceTotals,
+  independentTotals,
   netPriceFor,
   sessionTimesOn,
   soldFor,
@@ -667,6 +668,36 @@ interface DataActions {
   ) => Promise<{ ok: boolean; id?: string }>;
   /** Deletes a séance libre de groupe and both of its cash movements. */
   deleteGroupSeance: (id: string) => Promise<{ ok: boolean }>;
+  /**
+   * INSCRIRE UN OU PLUSIEURS ÉLÈVES DE PASSAGE SUR UNE SÉANCE.
+   *
+   * Un passager n'a pas de fiche, pas de solde et pas de mois : il paie la
+   * séance sur place. La réception le nomme si elle le veut — un nom vide donne
+   * simplement « Passager », parce qu'on ne retient pas toujours le nom de
+   * quelqu'un qui vient une fois — et elle en saisit autant qu'il en est venu
+   * d'un seul coup.
+   *
+   * Deux nombres suffisent : le prix TOTAL payé par un passager, et la part que
+   * l'école garde dessus. Le reste (`price − schoolShare`) est la part de
+   * l'enseignant : elle se règle avec le MOIS où la séance tombe, dans le
+   * tableau « Retards de paiement & séances libres » de sa paie.
+   *
+   * L'argent entre en caisse tout de suite, comme n'importe quel encaissement,
+   * et la séance n'apparaît QUE sur la feuille de présence de ce jour-là.
+   */
+  createPassagerSeances: (input: {
+    sessionId: string;
+    date: string;
+    /** un nom par passager ; une chaîne vide devient « Passager » */
+    names: string[];
+    price: number;
+    schoolShare: number;
+    itemLabel?: string;
+    startTime?: string;
+    endTime?: string;
+    /** l'élève inscrit qui paie cette séance libre (un passager n'en a pas) */
+    studentId?: string;
+  }) => Promise<{ ok: boolean; ids?: string[]; total?: number; teacherTotal?: number }>;
   /** Uses up one séance of an inscription (attendance). */
   consumeSeance: (
     enrollmentId: string,
@@ -2674,16 +2705,31 @@ export const useData = create<DataStore>((set, get) => ({
     const dueIdSet = new Set([...(dueIds ?? []), ...(arrearDueIds ?? [])]);
     const passagerIdSet = new Set(passagerIds ?? []);
 
+    /**
+     * CE QUE LE RÈGLEMENT SOLDE VRAIMENT.
+     *
+     * Quand l'écran de paie NOMME les parts (`dueIds` / `arrearDueIds`), elles
+     * font foi : il a déjà décidé, séance par séance, laquelle est payable —
+     * une part n'est retenue que si LA SÉANCE QUI L'A PRODUITE n'est pas payée
+     * sur CE mois de CET emploi du temps.
+     *
+     * Y superposer un « l'élève doit-il quelque chose quelque part ? » global
+     * était le bug : un enfant à jour sur ce groupe mais devant encore des
+     * frais d'inscription — ou un arriéré rattrapé par un élève qui vit déjà
+     * son mois suivant — voyait sa part cochée, payée en caisse… et jamais
+     * marquée réglée. Elle revenait donc à chaque écran suivant, en double.
+     *
+     * L'ancienne sélection « par créneau » (`keys`) garde le garde-fou global :
+     * elle, ne sait rien des mois.
+     */
     const settledDues = db.unpaidTeacher.filter(
       (u) =>
         u.teacherId === teacherId &&
         !u.paid &&
-        // The teacher is never paid for a student who still owes money — the
-        // due stays open and reappears once the student clears the debt.
-        !studentHasDebt(db, u.studentId) &&
         (byId
           ? dueIdSet.has(u.id)
-          : parsed.some((p) => p.sessionId === u.sessionId && p.date === dateKey(u.date))),
+          : !studentHasDebt(db, u.studentId) &&
+            parsed.some((p) => p.sessionId === u.sessionId && p.date === dateKey(u.date))),
     );
     const settledPassagers = db.independent.filter(
       (i) =>
@@ -3448,6 +3494,80 @@ export const useData = create<DataStore>((set, get) => ({
     });
 
     return { ok: true, id: row.id };
+  },
+
+  createPassagerSeances: async ({
+    sessionId,
+    date,
+    names,
+    price,
+    schoolShare,
+    itemLabel,
+    startTime,
+    endTime,
+    studentId,
+  }) => {
+    const db = get();
+    const session = db.sessions.find((s) => s.id === sessionId);
+    if (!session) return { ok: false };
+
+    const split = independentTotals({ price, schoolShare });
+    const times = sessionTimesOn(session, dayOfKey(date));
+    const label =
+      itemLabel?.trim() ||
+      session.title?.trim() ||
+      db.modules.find((m) => m.id === session.moduleId)?.name ||
+      "Séance libre";
+    // Un nom vide reste un passager : on n'oblige personne à inventer une
+    // identité pour quelqu'un qui vient une fois.
+    const list = (names.length > 0 ? names : [""]).map((n) => n.trim());
+    const nowIso = new Date().toISOString();
+    const when = date.length === 10 ? `${date}T12:00:00.000Z` : date;
+
+    const rows: IndependentSession[] = list.map((name, i) => ({
+      id: uid("ind"),
+      studentId: studentId || undefined,
+      passagerName: studentId ? undefined : name || "Passager",
+      itemLabel: label,
+      price: split.price,
+      schoolShare: split.school,
+      teacherId: session.teacherId,
+      date,
+      sessionId,
+      startTime: startTime || times.startTime,
+      endTime: endTime || times.endTime,
+      createdAt: new Date(Date.parse(nowIso) + i).toISOString(),
+      teacherPaid: false,
+    }));
+
+    const total = money(split.price * rows.length);
+    const cashId = uid("csh");
+
+    set((state) => ({
+      independent: [...state.independent, ...rows],
+      cash:
+        total > 0
+          ? [
+              ...state.cash,
+              {
+                id: cashId,
+                type: "student_payment",
+                amount: total,
+                date: when,
+                description: `Séance libre : ${label} — ${rows.length} passager(s) × ${formatDA(
+                  split.price,
+                )}`,
+              } satisfies CashTransaction,
+            ]
+          : state.cash,
+    }));
+
+    return {
+      ok: true,
+      ids: rows.map((r) => r.id),
+      total,
+      teacherTotal: money(split.teacher * rows.length),
+    };
   },
 
   deleteGroupSeance: async (id) => {

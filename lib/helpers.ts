@@ -8,6 +8,7 @@ import type {
   DayTime,
   Enrollment,
   GroupSeance,
+  IndependentSession,
   Payment,
   ScheduleSession,
   School,
@@ -1949,6 +1950,47 @@ export function groupSeanceTotals(seance: {
     schoolTotal: students * school,
     teacherTotal: students * teacherPer,
   };
+}
+
+/**
+ * CE QU'UNE SÉANCE LIBRE D'UN PASSAGER PARTAGE — l'école et l'enseignant.
+ *
+ * La réception tape deux nombres : le prix TOTAL que le passager verse, et la
+ * part que l'école garde. Le reste appartient à l'enseignant, et c'est cette
+ * part-là que la paie du mois lui règle, séance par séance.
+ *
+ * Une séance enregistrée AVANT ce découpage n'a pas de part d'école écrite :
+ * l'école gardait alors tout, donc la part de l'enseignant vaut zéro et aucun
+ * ancien total ne change de valeur derrière le dos de personne.
+ */
+export interface IndependentTotals {
+  price: number;
+  school: number;
+  teacher: number;
+  /** la part de l'école n'a jamais été saisie (séance d'avant le découpage) */
+  unsplit: boolean;
+}
+
+export function independentTotals(ind: {
+  price?: number;
+  schoolShare?: number;
+}): IndependentTotals {
+  const price = money(Math.max(0, ind.price ?? 0));
+  const unsplit = ind.schoolShare === undefined || ind.schoolShare === null;
+  const school = unsplit ? price : money(Math.min(Math.max(0, ind.schoolShare ?? 0), price));
+  return { price, school, teacher: money(price - school), unsplit };
+}
+
+/** Les séances libres d'un créneau, un jour donné — celles qui s'affichent sur
+ *  la feuille de présence de CETTE séance-là, et sur aucune autre. */
+export function passagersOn(
+  db: Database,
+  sessionId: string,
+  date: string,
+): IndependentSession[] {
+  return db.independent
+    .filter((i) => i.sessionId === sessionId && !i.studentId && i.date === date)
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
 }
 
 /** The séances libres de groupe of one teacher, most recent first. */
