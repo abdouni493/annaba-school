@@ -106,9 +106,9 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   sessions: {
     table: "schedule_sessions", pk: "id", pkField: "id",
     fields: ["id", "classId", "moduleId", "groupId", "salleId", "teacherId", "days",
-             "startTime", "endTime", "dayTimes", "daySalles", "isOpen", "title",
-             "periodStart", "periodEnd", "classIds", "groupIds", "salleIds", "openPrice",
-             "archivedAt"],
+             "startTime", "endTime", "dayTimes", "daySalles", "classGroups", "isOpen",
+             "title", "periodStart", "periodEnd", "classIds", "groupIds", "salleIds",
+             "openPrice", "archivedAt"],
   },
   subscriptions: {
     table: "subscriptions", pk: "id", pkField: "id",
@@ -119,6 +119,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   students: {
     table: "students", pk: "id", pkField: "id",
     fields: ["id", "registrationNumber", "firstName", "lastName", "birthDate", "phone",
+             "phone2",
              "email", "rfid", "isFree", "studentCase", "freeSubscriptionIds",
              "teacherFatherId", "caseReduction",
              "unpaidTeacherIds", "schoolOnlySubscriptionIds",
@@ -159,7 +160,8 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "teacher_payments", pk: "id", pkField: "id",
     fields: ["id", "teacherId", "amount", "method", "percentage", "studentsCount",
              "sessionsCount", "description", "details", "gross", "expenses", "acomptes",
-             "childCharges", "childDebts", "months", "arrears", "cashId", "paidAt"],
+             "childCharges", "childDebts", "months", "arrears", "board", "cashId",
+             "paidAt"],
   },
   acomptes: {
     table: "teacher_acomptes", pk: "id", pkField: "id",

@@ -1,0 +1,1860 @@
+"use client";
+
+/**
+ * LE RÈGLEMENT D'UN ENSEIGNANT — trois écrans, un mois à la fois.
+ *
+ * On ne paie plus « tout ce qu'un enseignant a fait » d'un bloc : on ouvre SON
+ * emploi du temps, on choisit LE MOIS, et on règle ce mois-là. L'écran suit
+ * donc trois temps, dans l'ordre où la réception pense :
+ *
+ *   1. SES EMPLOIS DU TEMPS — un par carte, avec ce que chacun lui doit encore.
+ *   2. SES MOIS, de M1 à M12 — chacun disant deux choses d'un coup d'œil : où
+ *      en sont ses séances (« 3/4 » = le mois court, « 4/4 » = il est clos) et
+ *      s'il a déjà été réglé. Les douze sont toujours là, même vides : c'est un
+ *      calendrier, pas un journal.
+ *   3. LE MOIS OUVERT — trois tables et un net :
+ *        · les ÉLÈVES du mois, avec la part que chacun rapporte à l'enseignant,
+ *          calculée au centime (part du mois ÷ séances × ses présences). Un
+ *          élève qui n'a pas payé RETIENT sa part — sauf si l'école avance sa
+ *          dette de sa caisse, et il passe alors en rouge, filtrable d'un clic ;
+ *        · les ARRIÉRÉS : les élèves qui ont payé EN RETARD un mois déjà réglé.
+ *          Leur part se rattrape ici, avec son mois d'origine, sans jamais se
+ *          confondre avec le mois courant ;
+ *        · les RETENUES : dépenses avancées par l'école, acomptes, scolarité de
+ *          ses enfants (celle qui est encore due, et celle que le guichet a
+ *          déjà créditée en la portant sur ce salaire).
+ *
+ * Le règlement enregistré fige ces trois tables (`TeacherPayment.board`), si
+ * bien que la fiche imprimée, l'historique et la réimpression racontent tous la
+ * même chose — même des mois plus tard.
+ */
+
+import { useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useData } from "@/lib/store/data";
+import { useSettings } from "@/lib/store/settings";
+import { useToast } from "@/lib/store/toast";
+import { Badge, type Tone } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Input } from "@/components/ui/SearchInput";
+import { printHtmlDocument } from "@/lib/print";
+import { formatDA, money } from "@/lib/utils";
+import { formatDateFr, monthCodeLabel, studentDebtSummary } from "@/lib/helpers";
+import { buildTeacherMonthPayslip } from "@/lib/reports/teacherMonthPayslip";
+import {
+  boardTotals,
+  buildPayBoard,
+  freezeBoard,
+  monthTiles,
+  payEmplois,
+  type BoardDeduction,
+  type BoardStudent,
+  type MonthTile,
+  type MonthTileState,
+  type PayBoard,
+} from "@/lib/teacherPayBoard";
+import type { TeacherEmploi } from "@/lib/teacherMonths";
+import type {
+  Teacher,
+  TeacherChildCharge,
+  TeacherPaymentArrear,
+  TeacherPaymentMonth,
+} from "@/lib/types";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Banknote,
+  CalendarClock,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  GraduationCap,
+  HandCoins,
+  Layers,
+  Lock,
+  Pencil,
+  Printer,
+  Receipt,
+  Trash2,
+  Users,
+  Wallet,
+} from "lucide-react";
+
+// ---------------------------------------------------------------------------
+
+const TILE_STYLE: Record<
+  MonthTileState,
+  { ring: string; chip: string; label: string; tone: Tone }
+> = {
+  paid: {
+    ring: "border-success/50 bg-success/10 hover:bg-success/15",
+    chip: "bg-success text-white",
+    label: "Réglé",
+    tone: "success",
+  },
+  payable: {
+    ring: "border-primary/50 bg-primary-50/70 hover:bg-primary-50",
+    chip: "bg-primary text-white",
+    label: "À régler",
+    tone: "primary",
+  },
+  blocked: {
+    ring: "border-danger/40 bg-danger/10 hover:bg-danger/15",
+    chip: "bg-danger text-white",
+    label: "Retenu",
+    tone: "danger",
+  },
+  running: {
+    ring: "border-warning/40 bg-warning/10 hover:bg-warning/15",
+    chip: "bg-warning text-white",
+    label: "En cours",
+    tone: "warning",
+  },
+  empty: {
+    ring: "border-line bg-canvas/40 hover:bg-primary-50/40",
+    chip: "bg-muted/30 text-muted",
+    label: "Vide",
+    tone: "neutral",
+  },
+};
+
+const PAY_STATE_LABEL: Record<string, { label: string; tone: Tone }> = {
+  paid: { label: "Payé", tone: "success" },
+  partial: { label: "Partiel", tone: "warning" },
+  unpaid: { label: "Impayé", tone: "danger" },
+  pending: { label: "Rien encore", tone: "neutral" },
+  free: { label: "Gratuit", tone: "primary" },
+};
+
+export function TeacherPayCenter({
+  open,
+  teacher,
+  onClose,
+}: {
+  open: boolean;
+  teacher: Teacher | null;
+  onClose: () => void;
+}) {
+  // Remonté à chaque ouverture : l'écran repart toujours de la liste des
+  // emplois du temps, sans état survivant d'un enseignant à l'autre.
+  if (!open || !teacher) return null;
+  return <PayCenter key={teacher.id} teacher={teacher} onClose={onClose} />;
+}
+
+function PayCenter({ teacher, onClose }: { teacher: Teacher; onClose: () => void }) {
+  const db = useData();
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [monthCode, setMonthCode] = useState<string | null>(null);
+
+  const emplois = useMemo(
+    () => payEmplois(db, teacher.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      teacher.id,
+      db.sessions,
+      db.attendance,
+      db.unpaidTeacher,
+      db.payments,
+      db.enrollments,
+      db.students,
+      db.subscriptions,
+      db.independent,
+      db.teacherPayments,
+    ],
+  );
+
+  const emploi = emplois.find((e) => e.sessionId === sessionId) ?? null;
+
+  const title = !emploi
+    ? "Paiement — emplois du temps de l'enseignant"
+    : !monthCode
+      ? `Paiement — ${emploi.title} · mois`
+      : `Paiement — ${emploi.title} · ${monthCode}`;
+
+  return (
+    <Modal open onClose={onClose} title={title} full>
+      <div className="space-y-4">
+        {/* ---- l'enseignant, toujours sous les yeux ---------------------- */}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-canvas p-4">
+          <div className="min-w-0">
+            <strong className="block text-sm text-ink">
+              {teacher.firstName} {teacher.lastName}
+            </strong>
+            <span className="text-[11px] text-muted">
+              {teacher.isPassager ? "Enseignant passager (sans compte)" : "Enseignant de l'école"}
+              {teacher.phone ? ` · ${teacher.phone}` : ""}
+            </span>
+          </div>
+          {/* Le fil d'Ariane : où l'on est, et comment revenir en arrière. */}
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <Crumb
+              active={!emploi}
+              onClick={() => {
+                setSessionId(null);
+                setMonthCode(null);
+              }}
+            >
+              Emplois du temps
+            </Crumb>
+            {emploi && (
+              <>
+                <ChevronRight className="h-3 w-3 text-muted" />
+                <Crumb active={!monthCode} onClick={() => setMonthCode(null)}>
+                  {emploi.title} · {emploi.groupName}
+                </Crumb>
+              </>
+            )}
+            {emploi && monthCode && (
+              <>
+                <ChevronRight className="h-3 w-3 text-muted" />
+                <Crumb active onClick={() => undefined}>
+                  {monthCodeLabel(monthCode)}
+                </Crumb>
+              </>
+            )}
+          </div>
+        </div>
+
+        <AnimatePresence mode="wait">
+          {!emploi ? (
+            <motion.div
+              key="emplois"
+              initial={{ opacity: 0, x: -12 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -12 }}
+              transition={{ duration: 0.18 }}
+            >
+              <EmploiList emplois={emplois} onPick={setSessionId} />
+            </motion.div>
+          ) : !monthCode ? (
+            <motion.div
+              key={`months-${emploi.sessionId}`}
+              initial={{ opacity: 0, x: 16 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -16 }}
+              transition={{ duration: 0.18 }}
+            >
+              <MonthList
+                teacher={teacher}
+                emploi={emploi}
+                onBack={() => setSessionId(null)}
+                onPick={setMonthCode}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key={`board-${emploi.sessionId}-${monthCode}`}
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -14 }}
+              transition={{ duration: 0.2 }}
+            >
+              <MonthBoard
+                key={`${emploi.sessionId}|${monthCode}`}
+                teacher={teacher}
+                emploi={emploi}
+                monthCode={monthCode}
+                onBack={() => setMonthCode(null)}
+                onDone={() => setMonthCode(null)}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </Modal>
+  );
+}
+
+function Crumb({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`max-w-[220px] truncate rounded-lg px-2 py-1 font-bold transition-colors ${
+        active ? "bg-primary text-white" : "text-muted hover:bg-primary-50 hover:text-ink"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 1. Ses emplois du temps
+// ---------------------------------------------------------------------------
+
+function EmploiList({
+  emplois,
+  onPick,
+}: {
+  emplois: TeacherEmploi[];
+  onPick: (id: string) => void;
+}) {
+  if (emplois.length === 0) {
+    return (
+      <p className="rounded-2xl border border-dashed border-line py-12 text-center text-xs font-bold text-muted">
+        Cet enseignant n&apos;a aucun emploi du temps — rien à régler.
+      </p>
+    );
+  }
+
+  const totalPayable = emplois.reduce((s, e) => s + e.payable, 0);
+  const totalWithheld = emplois.reduce((s, e) => s + e.withheld, 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label="Emplois du temps" value={String(emplois.length)} />
+        <Stat label="Payable maintenant" value={formatDA(totalPayable)} tone="text-success" />
+        <Stat
+          label="Retenu (élèves en dette)"
+          value={formatDA(totalWithheld)}
+          tone={totalWithheld > 0 ? "text-danger" : "text-muted"}
+        />
+        <Stat
+          label="Déjà réglé"
+          value={formatDA(emplois.reduce((s, e) => s + e.settled, 0))}
+          tone="text-muted"
+        />
+      </div>
+
+      <p className="rounded-2xl border border-primary/30 bg-primary-50/50 p-3 text-[11px] leading-relaxed text-primary">
+        Choisissez l&apos;emploi du temps à régler. Chacun compte SES propres mois — M1 s&apos;ouvre
+        à la première présence et se ferme sur la séance qui complète le pack — et se paie mois par
+        mois, indépendamment des autres.
+      </p>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {emplois.map((e) => (
+          <button
+            key={e.sessionId}
+            onClick={() => onPick(e.sessionId)}
+            className="group rounded-2xl border border-line bg-surface p-4 text-start transition-all hover:border-primary/50 hover:bg-primary-50/30 hover:shadow-md"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <strong className="flex flex-wrap items-center gap-1.5 text-sm text-ink">
+                  📚 {e.title}
+                  {e.isOpen && (
+                    <Badge tone="success" className="text-[9px]">
+                      Séance libre
+                    </Badge>
+                  )}
+                  {/* Un cours arrêté doit encore ce qu'il a fait gagner. */}
+                  {e.archived && (
+                    <Badge
+                      tone="neutral"
+                      className="text-[9px]"
+                      title="Emploi du temps supprimé — il ne tient plus séance, mais ce qu'il vous doit reste réglable ici"
+                    >
+                      Supprimé
+                    </Badge>
+                  )}
+                </strong>
+                <span className="block text-[10px] text-muted">
+                  Groupe {e.groupName} · {e.className} · Salle {e.salleName}
+                </span>
+                <span className="block text-[10px] text-muted">
+                  {e.daysLabel} · <span className="font-mono">{e.timeLabel}</span> · {e.rosterCount}{" "}
+                  élève(s)
+                </span>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-muted transition-transform group-hover:translate-x-1 group-hover:text-primary" />
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <MiniStat label="Payable" value={formatDA(e.payable)} tone="text-success" />
+              <MiniStat
+                label="Retenu"
+                value={formatDA(e.withheld)}
+                tone={e.withheld > 0 ? "text-danger" : "text-muted"}
+              />
+              <MiniStat label="Déjà réglé" value={formatDA(e.settled)} tone="text-muted" />
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <Badge tone="primary" className="gap-1 text-[10px] font-bold">
+                <CalendarClock className="h-3 w-3" />
+                Mois en cours {e.currentCode} · séance{" "}
+                {Math.min(Math.max(e.currentHeld, 0), e.size)}/{e.size}
+              </Badge>
+              {e.priced ? (
+                <Badge tone="neutral" className="text-[10px]">
+                  {formatDA(e.perSeance)} / séance · {formatDA(money(e.perSeance * e.size))} le mois
+                </Badge>
+              ) : (
+                <Badge tone="warning" className="text-[10px]">
+                  aucune part enseignant définie
+                </Badge>
+              )}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 2. Ses mois, M1 → M12
+// ---------------------------------------------------------------------------
+
+function MonthList({
+  teacher,
+  emploi,
+  onBack,
+  onPick,
+}: {
+  teacher: Teacher;
+  emploi: TeacherEmploi;
+  onBack: () => void;
+  onPick: (code: string) => void;
+}) {
+  const db = useData();
+  const tiles = useMemo(
+    () => monthTiles(db, emploi, teacher.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [emploi, teacher.id, db.teacherPayments, db.unpaidTeacher, db.payments],
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button size="sm" variant="outline" onClick={onBack} className="gap-1.5">
+          <ArrowLeft className="h-3.5 w-3.5" /> Emplois du temps
+        </Button>
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+          <Legend tone="paid" /> <Legend tone="payable" /> <Legend tone="running" />
+          <Legend tone="blocked" /> <Legend tone="empty" />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-primary/25 bg-primary-50/40 p-3">
+        <strong className="block text-sm text-ink">
+          {emploi.title} — Groupe {emploi.groupName}
+        </strong>
+        <span className="block text-[11px] text-muted">
+          {emploi.size} séances par mois ·{" "}
+          {emploi.priced ? (
+            <>
+              part enseignant <strong className="text-primary">{formatDA(emploi.perSeance)}</strong>{" "}
+              par séance, soit {formatDA(money(emploi.perSeance * emploi.size))} le mois complet
+            </>
+          ) : (
+            <span className="font-semibold text-warning">
+              aucune part enseignant définie sur cet abonnement
+            </span>
+          )}
+        </span>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
+          <strong className="text-ink">« 4/4 » veut dire que le mois est clos</strong> : ses quatre
+          séances ont été assurées, il peut être réglé. « 3/4 » veut dire qu&apos;il court encore —
+          on règle le mois qui vient de se terminer, pas celui d&apos;aujourd&apos;hui.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+        {tiles.map((t, i) => (
+          <MonthCard key={t.code} tile={t} delay={i * 0.03} onClick={() => onPick(t.code)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Legend({ tone }: { tone: MonthTileState }) {
+  const s = TILE_STYLE[tone];
+  return (
+    <span className="inline-flex items-center gap-1 text-muted">
+      <span className={`inline-block h-2.5 w-2.5 rounded-full ${s.chip}`} /> {s.label}
+    </span>
+  );
+}
+
+function MonthCard({
+  tile,
+  delay,
+  onClick,
+}: {
+  tile: MonthTile;
+  delay: number;
+  onClick: () => void;
+}) {
+  const style = TILE_STYLE[tile.state];
+  return (
+    <motion.button
+      initial={{ opacity: 0, y: 14, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ delay, type: "spring", stiffness: 320, damping: 24 }}
+      whileHover={{ scale: 1.03 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={onClick}
+      className={`rounded-2xl border-2 p-3 text-start transition-colors ${style.ring}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <strong className="text-lg font-black text-ink">{tile.code}</strong>
+        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${style.chip}`}>
+          {style.label}
+        </span>
+      </div>
+
+      {/* La séance du mois, écrite comme la réception la dit : « 3/4 ». */}
+      <div className="mt-1.5 flex items-baseline gap-1.5">
+        <span className="font-mono text-xl font-black text-ink">
+          {tile.held}/{tile.size}
+        </span>
+        <span className="text-[10px] text-muted">séances</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line/60">
+        <motion.div
+          className={tile.complete ? "h-full bg-success" : "h-full bg-primary"}
+          initial={{ width: 0 }}
+          animate={{
+            width: `${Math.min(100, tile.size > 0 ? (tile.held / tile.size) * 100 : 0)}%`,
+          }}
+          transition={{ delay: delay + 0.1, duration: 0.4 }}
+        />
+      </div>
+
+      <div className="mt-2 space-y-0.5 text-[10px]">
+        <span className="flex items-center justify-between text-muted">
+          <span>Élèves</span>
+          <strong className="text-ink">{tile.students}</strong>
+        </span>
+        {tile.settled ? (
+          <span className="flex items-center justify-between text-success">
+            <span className="flex items-center gap-1">
+              <CheckCircle2 className="h-3 w-3" /> Payé
+            </span>
+            <strong className="font-mono">{formatDA(tile.paid)}</strong>
+          </span>
+        ) : tile.payable > 0 ? (
+          <span className="flex items-center justify-between text-primary">
+            <span>À régler</span>
+            <strong className="font-mono">{formatDA(tile.payable)}</strong>
+          </span>
+        ) : tile.withheld > 0 ? (
+          <span className="flex items-center justify-between text-danger">
+            <span className="flex items-center gap-1">
+              <Lock className="h-3 w-3" /> Retenu
+            </span>
+            <strong className="font-mono">{formatDA(tile.withheld)}</strong>
+          </span>
+        ) : (
+          <span className="flex items-center justify-between text-muted">
+            <span>Rien à régler</span>
+            <strong>—</strong>
+          </span>
+        )}
+        {tile.isCurrent && (
+          <span className="flex items-center gap-1 text-warning">
+            <Clock className="h-3 w-3" /> Mois en cours
+          </span>
+        )}
+      </div>
+    </motion.button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 3. Le mois ouvert — les trois tables et le net
+// ---------------------------------------------------------------------------
+
+function MonthBoard({
+  teacher,
+  emploi,
+  monthCode,
+  onBack,
+  onDone,
+}: {
+  teacher: Teacher;
+  emploi: TeacherEmploi;
+  monthCode: string;
+  onBack: () => void;
+  onDone: () => void;
+}) {
+  const db = useData();
+  const { payTeacherSessions, coverStudentDebt, deleteTeacherPayment, updateTeacherPayment } = db;
+  const { language } = useSettings();
+  const { addToast } = useToast();
+
+  const board: PayBoard = useMemo(
+    () => buildPayBoard(db, teacher, emploi, monthCode),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      teacher,
+      emploi,
+      monthCode,
+      db.payments,
+      db.unpaidTeacher,
+      db.teacherExpenses,
+      db.acomptes,
+      db.teacherChildDebts,
+      db.teacherPayments,
+    ],
+  );
+
+  /**
+   * CE QUI EST COCHÉ.
+   *
+   * Tout ce qui est réglable l'est d'office : la réception décoche ce qu'elle
+   * ne veut pas payer aujourd'hui, elle n'a pas à cocher vingt lignes pour
+   * faire ce qu'elle fait tous les mois.
+   */
+  const [studentIds, setStudentIds] = useState<string[]>(() =>
+    board.students.filter((r) => !r.withheld && r.amount > 0).map((r) => r.studentId),
+  );
+  const [arrearKeys, setArrearKeys] = useState<string[]>(() => board.arrears.map((r) => r.key));
+  const [deductionIds, setDeductionIds] = useState<string[]>(() =>
+    board.deductions.filter((d) => d.selectable).map((d) => d.id),
+  );
+  /** Le filtre « dettes avancées par l'école » — le bouton qui clignote. */
+  const [coveredOnly, setCoveredOnly] = useState(false);
+  /** L'élève dont l'école s'apprête à avancer la dette. */
+  const [covering, setCovering] = useState<BoardStudent | null>(null);
+  /** Le règlement déjà enregistré que l'on est en train de corriger. */
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+
+  const totals = boardTotals(board, { studentIds, arrearKeys, deductionIds });
+  const coveredCount = board.students.filter((r) => r.schoolCovered).length;
+  const shownStudents = coveredOnly
+    ? board.students.filter((r) => r.schoolCovered)
+    : board.students;
+
+  const settlement = board.settlement;
+
+  // ---- l'école avance la dette d'un élève, pour débloquer la part ---------
+  const applyCover = async (row: BoardStudent) => {
+    setBusy(true);
+    try {
+      const res = await coverStudentDebt({
+        studentId: row.studentId,
+        description: `Dette avancée par l'école — ${emploi.title} ${monthCode}`,
+      });
+      if (!res.ok) {
+        addToast({
+          type: "danger",
+          title: "Rien à avancer",
+          message: `${row.name} ne doit plus rien — sa part est déjà payable.`,
+        });
+        return;
+      }
+      setCovering(null);
+      // Sa part vient de se débloquer : elle doit être cochée, sinon l'avance
+      // ne servirait à rien sur ce règlement-ci.
+      setStudentIds((prev) =>
+        prev.includes(row.studentId) ? prev : [...prev, row.studentId],
+      );
+      addToast({
+        type: "success",
+        title: "Dette avancée par l'école",
+        message: `${formatDA(res.amount ?? row.totalDebt)} réglés sur la caisse — la part de l'enseignant est débloquée.`,
+        studentName: row.name,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ---- enregistrer le règlement de ce mois --------------------------------
+  const submit = async () => {
+    if (totals.gross <= 0 && totals.deductions <= 0) {
+      addToast({
+        type: "danger",
+        title: "Rien à régler",
+        message: "Cochez au moins un élève, un arriéré ou une retenue.",
+      });
+      return;
+    }
+    if (
+      totals.net < 0 &&
+      !confirm(
+        `Les retenues (${formatDA(totals.deductions)}) dépassent le brut (${formatDA(totals.gross)}).\n` +
+          `L'enseignant sera enregistré à ${formatDA(totals.net)}. Continuer ?`,
+      )
+    ) {
+      return;
+    }
+
+    const picked = { studentIds, arrearKeys, deductionIds };
+    const frozen = freezeBoard(db, board, picked);
+    const chosenStudents = board.students.filter(
+      (r) => studentIds.includes(r.studentId) && !r.withheld,
+    );
+    const chosenArrears = board.arrears.filter((r) => arrearKeys.includes(r.key));
+    const chosenDeductions = board.deductions.filter(
+      (d) => d.selectable && deductionIds.includes(d.id),
+    );
+
+    // Une scolarité d'enfant ENCORE DUE est soldée par ce règlement : le solde
+    // de l'enfant est recrédité, sans qu'aucun argent ne bouge — l'école est
+    // payée en versant moins au père.
+    const childCharges: TeacherChildCharge[] = [];
+    for (const d of chosenDeductions) {
+      if (d.kind !== "child" || !d.studentId || !d.subscriptionId || !d.monthCode) continue;
+      let row = childCharges.find((c) => c.studentId === d.studentId);
+      if (!row) {
+        row = { studentId: d.studentId, studentName: d.label.replace(/^Scolarité — /, ""), lines: [], amount: 0 };
+        childCharges.push(row);
+      }
+      row.lines.push({
+        subscriptionId: d.subscriptionId,
+        label: d.description ?? d.label,
+        monthCode: d.monthCode,
+        amount: d.amount,
+      });
+      row.amount = money(row.amount + d.amount);
+    }
+
+    const monthSnapshot: TeacherPaymentMonth[] = [
+      {
+        sessionId: emploi.sessionId,
+        title: emploi.title,
+        groupName: emploi.groupName,
+        monthCode,
+        seances: board.held,
+        presents: chosenStudents.reduce((s, r) => s + r.seances, 0),
+        students: chosenStudents.length,
+        gross: totals.students,
+      },
+    ];
+
+    const arrearSnapshot: TeacherPaymentArrear[] = chosenArrears.map((r) => ({
+      studentId: r.studentId,
+      studentName: r.name,
+      registrationNumber: r.registrationNumber,
+      sessionId: emploi.sessionId,
+      emploi: emploi.title,
+      monthCode: r.monthCode,
+      seances: r.seances,
+      amount: r.amount,
+    }));
+
+    const paidAt = new Date().toISOString();
+    setBusy(true);
+    try {
+      const res = await payTeacherSessions({
+        teacherId: teacher.id,
+        dueIds: chosenStudents.flatMap((r) => r.dueIds),
+        arrearDueIds: chosenArrears.flatMap((r) => r.dueIds),
+        arrears: arrearSnapshot,
+        amount: totals.net,
+        gross: totals.gross,
+        method: "group",
+        months: monthSnapshot,
+        board: frozen,
+        description:
+          note.trim() ||
+          `Règlement ${emploi.title} · ${monthCode} — ${teacher.firstName} ${teacher.lastName}`,
+        expenseIds: chosenDeductions.filter((d) => d.kind === "expense").map((d) => d.id),
+        acompteIds: chosenDeductions.filter((d) => d.kind === "acompte").map((d) => d.id),
+        childDebtIds: chosenDeductions.filter((d) => d.kind === "child_debt").map((d) => d.id),
+        childCharges,
+        details: [
+          {
+            dateKey: board.month?.startDate ?? "",
+            sessionId: emploi.sessionId,
+            title: `${emploi.title} — ${monthCode}`,
+            moduleName: emploi.title,
+            groupName: emploi.groupName,
+            startTime: emploi.timeLabel,
+            endTime: "",
+            presents: chosenStudents.reduce((s, r) => s + r.seances, 0),
+            passagers: board.month?.passagers.length ?? 0,
+            gross: chosenStudents.reduce((s, r) => s + r.credited, 0),
+            share: totals.students,
+          },
+        ],
+      });
+
+      if (!res.ok) {
+        addToast({ type: "danger", title: "Échec", message: "Le règlement n'a pas pu être enregistré." });
+        return;
+      }
+
+      addToast({
+        type: "success",
+        title: "Règlement enregistré",
+        message: `${formatDA(totals.net)} versés — ${emploi.title} · ${monthCode}.`,
+        studentName: `${teacher.firstName} ${teacher.lastName}`,
+      });
+
+      if (confirm(`Paiement de ${formatDA(totals.net)} enregistré. Imprimer la fiche de paie ?`)) {
+        printHtmlDocument(
+          buildTeacherMonthPayslip({
+            school: db.school,
+            teacher,
+            lang: language,
+            paidAt,
+            receiptNo: res.paymentId ? `PAY-${res.paymentId.slice(0, 8).toUpperCase()}` : undefined,
+            board: frozen,
+          }),
+        );
+      }
+      onDone();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const printPreview = () => {
+    printHtmlDocument(
+      buildTeacherMonthPayslip({
+        school: db.school,
+        teacher,
+        lang: language,
+        paidAt: new Date().toISOString(),
+        board: freezeBoard(db, board, { studentIds, arrearKeys, deductionIds }),
+      }),
+    );
+  };
+
+  /**
+   * CORRIGER UN RÈGLEMENT DÉJÀ ENREGISTRÉ.
+   *
+   * Seuls le net versé, la date et le libellé se rectifient : ce que le
+   * règlement a SOLDÉ (les présences, les dépenses, les acomptes) ne bouge pas,
+   * sinon la paie du mois suivant se rouvrirait toute seule. Le mouvement de
+   * caisse suit le nouveau montant au dinar près. Pour tout reprendre à zéro,
+   * c'est « Annuler ce règlement » qu'il faut : là, tout redevient dû.
+   */
+  const saveEdit = async (fields: { amount: number; paidAt: string; description: string }) => {
+    if (!settlement) return;
+    setBusy(true);
+    try {
+      const res = await updateTeacherPayment(settlement.id, fields);
+      setEditing(false);
+      addToast({
+        type: res.ok ? "success" : "danger",
+        title: res.ok ? "Règlement corrigé" : "Échec",
+        message: res.ok
+          ? `Net versé : ${formatDA(fields.amount)} — la caisse suit le nouveau montant.`
+          : "Ce règlement n'a pas pu être corrigé.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelSettlement = async () => {
+    if (!settlement) return;
+    if (
+      !confirm(
+        `Annuler le règlement de ${formatDA(settlement.amount)} ?\n\n` +
+          "Tout ce qu'il avait soldé redevient dû : les présences repassent en attente, " +
+          "les dépenses et les acomptes reviennent sur le prochain règlement, et le mouvement " +
+          "de caisse disparaît. Le mois pourra être réglé de nouveau.",
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await deleteTeacherPayment(settlement.id);
+      addToast({
+        type: res.ok ? "success" : "danger",
+        title: res.ok ? "Règlement annulé" : "Échec",
+        message: res.ok
+          ? `${formatDA(res.amount ?? 0)} rendus à la caisse — le mois ${monthCode} est de nouveau réglable.`
+          : "Ce règlement n'a pas pu être annulé.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* ---- en-tête du mois --------------------------------------------- */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button size="sm" variant="outline" onClick={onBack} className="gap-1.5">
+          <ArrowLeft className="h-3.5 w-3.5" /> Mois de cet emploi
+        </Button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone="primary" className="gap-1 font-bold">
+            <Layers className="h-3 w-3" />
+            {emploi.title} · {emploi.groupName}
+          </Badge>
+          <Badge tone={board.held >= board.size ? "success" : "warning"} className="font-mono font-bold">
+            {monthCodeLabel(monthCode)} — {board.held}/{board.size} séances
+          </Badge>
+        </div>
+      </div>
+
+      {/* ---- ce mois est-il déjà réglé ? ---------------------------------- */}
+      {settlement && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border-2 border-success/40 bg-success/10 p-3.5">
+          <div className="min-w-0">
+            <strong className="flex items-center gap-1.5 text-sm text-success">
+              <CheckCircle2 className="h-4 w-4" /> Ce mois a déjà été réglé —{" "}
+              {formatDA(settlement.amount)} nets
+            </strong>
+            <span className="block text-[11px] text-muted">
+              Le {formatDateFr(settlement.paidAt.slice(0, 10))} ·{" "}
+              {settlement.gross != null ? `brut ${formatDA(settlement.gross)}` : ""} · Reçu N° PAY-
+              {settlement.id.slice(0, 8).toUpperCase()}
+            </span>
+            <span className="block text-[11px] leading-relaxed text-muted">
+              Ce qui reste ci-dessous, s&apos;il y a quelque chose, ce sont des{" "}
+              <strong className="text-ink">arriérés</strong> : des parts retenues à l&apos;époque et
+              libérées depuis. Elles se règlent sur le mois suivant, pas ici.
+            </span>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() =>
+                settlement.board &&
+                printHtmlDocument(
+                  buildTeacherMonthPayslip({
+                    school: db.school,
+                    teacher,
+                    lang: language,
+                    paidAt: settlement.paidAt,
+                    receiptNo: `PAY-${settlement.id.slice(0, 8).toUpperCase()}`,
+                    board: settlement.board,
+                  }),
+                )
+              }
+              disabled={!settlement.board}
+              title={
+                settlement.board
+                  ? "Réimprimer la fiche de paie de ce règlement"
+                  : "Règlement enregistré avant cet écran — pas de fiche détaillée"
+              }
+            >
+              <Printer className="h-3.5 w-3.5" /> Réimprimer
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEditing(true)}
+              disabled={busy}
+              className="gap-1.5"
+              title="Corriger le net versé, la date ou le libellé — sans rouvrir ce qui a été soldé"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Modifier
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={cancelSettlement}
+              disabled={busy}
+              className="gap-1.5"
+              title="Tout ce que ce règlement a soldé redevient dû, et le mois redevient réglable"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Supprimer
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ---- le résumé, toujours visible ---------------------------------- */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <Stat label="Élèves du mois" value={String(board.students.length)} />
+        <Stat label="Table 1 — élèves" value={formatDA(totals.students)} tone="text-success" />
+        <Stat label="Table 2 — arriérés" value={formatDA(totals.arrears)} tone="text-primary" />
+        <Stat
+          label="Table 3 — retenues"
+          value={formatDA(totals.deductions)}
+          tone={totals.deductions > 0 ? "text-danger" : "text-muted"}
+        />
+        <Stat label="Net à verser" value={formatDA(totals.net)} tone="text-ink" />
+      </div>
+
+      {board.withheldTotal > 0 && (
+        <div className="flex items-start gap-2 rounded-2xl border border-warning/40 bg-warning/10 p-3 text-[11px] leading-relaxed text-warning">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <strong>{formatDA(board.withheldTotal)} sont retenus</strong> : ces élèves doivent encore
+            de l&apos;argent, la part que leurs séances rapportent ne se règle donc pas aujourd&apos;hui —
+            elle reviendra dès qu&apos;ils se seront acquittés. L&apos;école peut aussi ne pas faire
+            attendre l&apos;enseignant : « Payer de la caisse » avance la dette et débloque la part
+            immédiatement.
+          </span>
+        </div>
+      )}
+
+      {/* =================== TABLE 1 — LES ÉLÈVES DU MOIS ================== */}
+      <section className="overflow-hidden rounded-2xl border border-line">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-primary-50/60 p-3">
+          <div className="min-w-0">
+            <strong className="flex items-center gap-1.5 text-sm text-ink">
+              <Users className="h-4 w-4 text-primary" /> 1. Élèves de {monthCode} (
+              {board.students.length})
+            </strong>
+            <span className="block text-[11px] text-muted">
+              Part enseignant : {formatDA(board.teacherMonthShare)} le mois ÷ {board.size} séances ={" "}
+              <strong className="text-primary">{formatDA(board.perSeance)}</strong> la séance. La
+              colonne « Part enseignant » multiplie ce tarif par les séances payables de chaque
+              élève, au centime.
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* LE FILTRE DEMANDÉ : ne montrer que les élèves dont l'école a
+                avancé la dette. Il clignote tant qu'il y en a, parce que ce
+                sont exactement les lignes qu'un contrôle doit regarder. */}
+            <motion.button
+              type="button"
+              onClick={() => setCoveredOnly((v) => !v)}
+              disabled={coveredCount === 0}
+              animate={
+                coveredCount > 0 && !coveredOnly
+                  ? { boxShadow: ["0 0 0 0 rgba(239,68,68,0)", "0 0 0 6px rgba(239,68,68,0.18)", "0 0 0 0 rgba(239,68,68,0)"] }
+                  : {}
+              }
+              transition={{ duration: 1.6, repeat: Infinity }}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-bold transition-colors disabled:opacity-40 ${
+                coveredOnly
+                  ? "border-danger bg-danger text-white"
+                  : "border-danger/40 bg-danger/10 text-danger hover:bg-danger/20"
+              }`}
+              title="N'afficher que les élèves dont l'école a avancé la dette de sa caisse"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Dettes avancées par l&apos;école ({coveredCount})
+            </motion.button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setStudentIds(
+                  studentIds.length > 0
+                    ? []
+                    : board.students.filter((r) => !r.withheld && r.amount > 0).map((r) => r.studentId),
+                )
+              }
+            >
+              Tout cocher / décocher
+            </Button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto bg-surface">
+          <table className="w-full min-w-[1020px] text-[11px]">
+            <thead className="bg-canvas/60">
+              <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                <th className="px-2 py-2 text-center">Payer</th>
+                <th className="px-2 py-2">N°</th>
+                <th className="px-2 py-2">Élève</th>
+                {/* Le mois séance par séance, comme sur la feuille de présence. */}
+                {Array.from({ length: board.size }, (_, i) => (
+                  <th key={i} className="px-1 py-2 text-center" title={`Séance ${i + 1} du mois`}>
+                    S{i + 1}
+                  </th>
+                ))}
+                <th className="px-2 py-2 text-center">Séances</th>
+                <th className="px-2 py-2 text-center">P / A / An.</th>
+                <th className="px-2 py-2 text-center">Statut</th>
+                <th className="px-2 py-2 text-right">Versé</th>
+                <th className="px-2 py-2 text-right">Reste dû</th>
+                <th className="px-2 py-2 text-right">Part / séance</th>
+                <th className="px-2 py-2 text-right">Part enseignant</th>
+                <th className="px-2 py-2 text-center">Dette</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shownStudents.length === 0 ? (
+                <tr>
+                  <td colSpan={11 + board.size} className="px-3 py-8 text-center text-xs italic text-muted">
+                    {coveredOnly
+                      ? "Aucune dette avancée par l'école sur ce mois."
+                      : `Aucun élève sur ${monthCode} — ce mois n'a encore rien produit.`}
+                  </td>
+                </tr>
+              ) : (
+                shownStudents.map((r) => (
+                  <StudentLine
+                    key={r.studentId}
+                    row={r}
+                    size={board.size}
+                    checked={studentIds.includes(r.studentId)}
+                    onToggle={() =>
+                      setStudentIds((prev) =>
+                        prev.includes(r.studentId)
+                          ? prev.filter((x) => x !== r.studentId)
+                          : [...prev, r.studentId],
+                      )
+                    }
+                    onCover={() => setCovering(r)}
+                    busy={busy}
+                  />
+                ))
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-line bg-canvas/60">
+                <td
+                  colSpan={9 + board.size}
+                  className="px-2 py-2.5 text-right text-[11px] font-bold text-ink"
+                >
+                  TOTAL — ce que ce mois rapporte à l&apos;enseignant
+                </td>
+                <td className="px-2 py-2.5 text-right font-mono text-sm font-black text-success">
+                  {formatDA(totals.students)}
+                </td>
+                <td />
+              </tr>
+              {board.withheldTotal > 0 && (
+                <tr className="bg-warning/10">
+                  <td
+                    colSpan={9 + board.size}
+                    className="px-2 py-2 text-right text-[10px] font-bold text-warning"
+                  >
+                    Retenu (élèves encore en dette) — réglé dès qu&apos;ils auront payé
+                  </td>
+                  <td className="px-2 py-2 text-right font-mono text-xs font-bold text-warning">
+                    {formatDA(board.withheldTotal)}
+                  </td>
+                  <td />
+                </tr>
+              )}
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+      {/* =================== TABLE 2 — LES ARRIÉRÉS ======================== */}
+      <section className="overflow-hidden rounded-2xl border-2 border-success/40">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-success/10 p-3">
+          <div className="min-w-0">
+            <strong className="flex items-center gap-1.5 text-sm text-success">
+              <HandCoins className="h-4 w-4" /> 2. Arriérés — élèves ayant payé en retard (
+              {board.arrears.length})
+            </strong>
+            <span className="block text-[11px] leading-relaxed text-muted">
+              Ces parts appartiennent à des <strong className="text-ink">mois déjà réglés</strong> :
+              elles avaient été retenues faute de paiement. L&apos;élève s&apos;est acquitté depuis
+              — elles sont donc dues aujourd&apos;hui, réglées par ce versement,{" "}
+              <strong>sans se mélanger au mois courant</strong>. Les élèves qui n&apos;ont toujours
+              pas payé ne figurent pas ici : leur part reste retenue.
+            </span>
+          </div>
+          {board.arrears.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setArrearKeys(arrearKeys.length > 0 ? [] : board.arrears.map((r) => r.key))
+              }
+            >
+              Tout cocher / décocher
+            </Button>
+          )}
+        </div>
+
+        {board.arrears.length === 0 ? (
+          <p className="bg-surface px-3 py-6 text-center text-xs italic text-muted">
+            Aucun arriéré à rattraper sur cet emploi du temps.
+          </p>
+        ) : (
+          <div className="overflow-x-auto bg-surface">
+            <table className="w-full min-w-[880px] text-[11px]">
+              <thead className="bg-canvas/60">
+                <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                  <th className="px-2 py-2 text-center">Régler</th>
+                  <th className="px-2 py-2">N°</th>
+                  <th className="px-2 py-2">Élève</th>
+                  <th className="px-2 py-2 text-center">Mois d&apos;origine</th>
+                  <th className="px-2 py-2 text-center">Séances</th>
+                  <th className="px-2 py-2">Dates concernées</th>
+                  <th className="px-2 py-2 text-right">Versé par l&apos;élève</th>
+                  <th className="px-2 py-2 text-right">Part / séance</th>
+                  <th className="px-2 py-2 text-right">Part rattrapée</th>
+                </tr>
+              </thead>
+              <tbody>
+                {board.arrears.map((r) => {
+                  const picked = arrearKeys.includes(r.key);
+                  return (
+                    <tr
+                      key={r.key}
+                      className={`border-t border-line/60 ${picked ? "bg-success/5" : ""}`}
+                    >
+                      <td className="px-2 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={picked}
+                          onChange={() =>
+                            setArrearKeys((prev) =>
+                              prev.includes(r.key)
+                                ? prev.filter((k) => k !== r.key)
+                                : [...prev, r.key],
+                            )
+                          }
+                          className="h-4 w-4"
+                        />
+                      </td>
+                      <td className="px-2 py-2 font-mono text-[10px] text-muted">
+                        {r.registrationNumber || "—"}
+                      </td>
+                      <td className="px-2 py-2">
+                        <strong className="block text-ink">{r.name}</strong>
+                        {r.caseLabel && (
+                          <Badge tone="warning" className="mt-0.5 text-[8px]">
+                            {r.caseLabel}
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        <Badge tone="success" className="font-mono text-[10px]">
+                          {r.monthCode}
+                        </Badge>
+                      </td>
+                      <td className="px-2 py-2 text-center font-mono">{r.seances}</td>
+                      <td className="px-2 py-2 text-[10px] text-muted">
+                        {r.dates.map(formatDateFr).join(" · ") || "—"}
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono">{formatDA(r.credited)}</td>
+                      <td className="px-2 py-2 text-right font-mono text-muted">
+                        {formatDA(r.perSeance)}
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono font-bold text-success">
+                        {formatDA(r.amount)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-line bg-canvas/60">
+                  <td colSpan={8} className="px-2 py-2.5 text-right text-[11px] font-bold text-ink">
+                    TOTAL DES ARRIÉRÉS RATTRAPÉS
+                  </td>
+                  <td className="px-2 py-2.5 text-right font-mono text-sm font-black text-success">
+                    {formatDA(totals.arrears)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* =================== TABLE 3 — LES RETENUES ======================== */}
+      <section className="overflow-hidden rounded-2xl border-2 border-danger/30">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-danger/10 p-3">
+          <div className="min-w-0">
+            <strong className="flex items-center gap-1.5 text-sm text-danger">
+              <Receipt className="h-4 w-4" /> 3. Retenues sur cette paie ({board.deductions.length})
+            </strong>
+            <span className="block text-[11px] leading-relaxed text-muted">
+              Les dépenses que l&apos;école a avancées pour lui, ses acomptes, la scolarité{" "}
+              <strong className="text-ink">encore due</strong> de ses enfants sur leurs emplois du
+              temps, et celle que le guichet a{" "}
+              <strong className="text-ink">déjà créditée en la portant sur ce salaire</strong>. Les
+              lignes déjà réglées restent affichées, marquées comme telles : c&apos;est ce qui
+              permet de vérifier qu&apos;on ne retient rien deux fois.
+            </span>
+          </div>
+          {board.deductions.some((d) => d.selectable) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setDeductionIds(
+                  deductionIds.length > 0
+                    ? []
+                    : board.deductions.filter((d) => d.selectable).map((d) => d.id),
+                )
+              }
+            >
+              Tout cocher / décocher
+            </Button>
+          )}
+        </div>
+
+        {board.deductions.length === 0 ? (
+          <p className="bg-surface px-3 py-6 text-center text-xs italic text-muted">
+            Aucune dépense, aucun acompte, aucune scolarité d&apos;enfant à retenir.
+          </p>
+        ) : (
+          <div className="overflow-x-auto bg-surface">
+            <table className="w-full min-w-[720px] text-[11px]">
+              <thead className="bg-canvas/60">
+                <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                  <th className="px-2 py-2 text-center">Retenir</th>
+                  <th className="px-2 py-2">Date</th>
+                  <th className="px-2 py-2">Nature</th>
+                  <th className="px-2 py-2">Libellé</th>
+                  <th className="px-2 py-2 text-center">Statut</th>
+                  <th className="px-2 py-2 text-right">Montant</th>
+                </tr>
+              </thead>
+              <tbody>
+                {board.deductions.map((d) => (
+                  <DeductionLine
+                    key={d.id}
+                    row={d}
+                    checked={deductionIds.includes(d.id)}
+                    onToggle={() =>
+                      setDeductionIds((prev) =>
+                        prev.includes(d.id) ? prev.filter((x) => x !== d.id) : [...prev, d.id],
+                      )
+                    }
+                  />
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-line bg-canvas/60">
+                  <td colSpan={5} className="px-2 py-2.5 text-right text-[11px] font-bold text-ink">
+                    TOTAL DES RETENUES
+                  </td>
+                  <td className="px-2 py-2.5 text-right font-mono text-sm font-black text-danger">
+                    − {formatDA(totals.deductions)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* =================== LE RÉSUMÉ ET LE VERSEMENT ===================== */}
+      <section className="space-y-3 rounded-2xl border-2 border-primary/40 bg-primary-50/40 p-4">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+          Résumé du règlement — {emploi.title} · {monthCodeLabel(monthCode)}
+        </span>
+
+        <div className="space-y-1.5">
+          <SummaryLine
+            label={`Table 1 — élèves de ${monthCode} (${studentIds.length} réglé(s))`}
+            value={formatDA(totals.students)}
+            tone="text-ink"
+          />
+          <SummaryLine
+            label={`Table 2 — arriérés rattrapés (${arrearKeys.length})`}
+            value={formatDA(totals.arrears)}
+            tone="text-success"
+          />
+          <div className="border-t border-line pt-1.5">
+            <SummaryLine label="TOTAL BRUT" value={formatDA(totals.gross)} tone="text-primary" />
+          </div>
+          <SummaryLine
+            label={`Table 3 — retenues (${deductionIds.length})`}
+            value={`− ${formatDA(totals.deductions)}`}
+            tone="text-danger"
+          />
+          <div className="flex items-center justify-between border-t-2 border-primary/40 pt-2">
+            <strong className="text-sm text-ink">NET À VERSER À L&apos;ENSEIGNANT</strong>
+            <strong className="font-mono text-xl font-black text-primary">
+              {formatDA(totals.net)}
+            </strong>
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+            Libellé du règlement (optionnel)
+          </label>
+          <Input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={`Règlement ${emploi.title} · ${monthCode}`}
+          />
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-line pt-3">
+          <Button variant="outline" onClick={printPreview} className="gap-1.5">
+            <Printer className="h-4 w-4" /> Aperçu / imprimer
+          </Button>
+          <Button
+            variant="success"
+            onClick={submit}
+            disabled={busy}
+            className="gap-1.5"
+            title={
+              settlement
+                ? "Ce mois a déjà été réglé — un nouveau versement ne paiera que ce qui reste dû"
+                : "Enregistrer le règlement de ce mois"
+            }
+          >
+            <Wallet className="h-4 w-4" />
+            {settlement ? "Régler le reliquat" : "Enregistrer le règlement"} —{" "}
+            {formatDA(totals.net)}
+          </Button>
+        </div>
+      </section>
+
+      {/* ---- corriger le règlement déjà enregistré -------------------------- */}
+      {editing && settlement && (
+        <EditPaymentModal
+          amount={settlement.amount}
+          paidAt={settlement.paidAt}
+          description={settlement.description}
+          busy={busy}
+          onSave={saveEdit}
+          onClose={() => setEditing(false)}
+        />
+      )}
+
+      {/* ---- l'école avance la dette d'un élève ---------------------------- */}
+      {covering && (
+        <CoverModal
+          row={covering}
+          busy={busy}
+          onConfirm={() => applyCover(covering)}
+          onClose={() => setCovering(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function StudentLine({
+  row,
+  size,
+  checked,
+  onToggle,
+  onCover,
+  busy,
+}: {
+  row: BoardStudent;
+  size: number;
+  checked: boolean;
+  onToggle: () => void;
+  onCover: () => void;
+  busy: boolean;
+}) {
+  const state = PAY_STATE_LABEL[row.payState] ?? PAY_STATE_LABEL.pending;
+  return (
+    <motion.tr
+      layout
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className={`border-t border-line/60 align-middle ${
+        row.schoolCovered
+          ? "bg-danger/10"
+          : row.withheld
+            ? "bg-warning/5"
+            : checked
+              ? "bg-success/5"
+              : ""
+      }`}
+    >
+      <td className="px-2 py-2 text-center">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={row.withheld || row.amount <= 0}
+          onChange={onToggle}
+          className="h-4 w-4 disabled:opacity-30"
+          title={
+            row.withheld
+              ? "Part retenue : cet élève doit encore de l'argent"
+              : row.amount <= 0
+                ? "Rien à régler pour cet élève sur ce mois"
+                : "Régler la part de cet élève"
+          }
+        />
+      </td>
+      <td className="px-2 py-2 font-mono text-[10px] text-muted">
+        {row.registrationNumber || "—"}
+      </td>
+      <td className="px-2 py-2">
+        <strong className="block text-ink">{row.name}</strong>
+        <div className="mt-0.5 flex flex-wrap gap-1">
+          {row.caseLabel && (
+            <Badge tone="warning" className="text-[8px]">
+              {row.caseLabel}
+            </Badge>
+          )}
+          {/* L'élève dont l'école a avancé la dette : signalé en rouge, parce
+              que l'enseignant est payé alors que la famille n'a rien versé. */}
+          {row.schoolCovered && (
+            <motion.span
+              animate={{ opacity: [1, 0.55, 1] }}
+              transition={{ duration: 1.8, repeat: Infinity }}
+              className="inline-flex items-center gap-1 rounded-full bg-danger px-2 py-0.5 text-[8px] font-bold text-white"
+              title="L'école a avancé la dette de cet élève sur sa propre caisse"
+            >
+              <AlertTriangle className="h-2.5 w-2.5" /> avancé par l&apos;école
+            </motion.span>
+          )}
+          {row.phone && <span className="text-[9px] text-muted">{row.phone}</span>}
+        </div>
+      </td>
+      <SlotCells
+        slots={row.slots ?? Array.from({ length: size }, () => null)}
+      />
+      <td className="px-2 py-2 text-center font-mono">
+        {row.seances}
+        <span className="block text-[9px] text-muted">
+          {row.done}/{row.size}
+        </span>
+      </td>
+      <td className="px-2 py-2 text-center font-mono text-[10px]">
+        <span className="text-success">{row.presents}</span> /{" "}
+        <span className="text-danger">{row.absents}</span> /{" "}
+        <span className="text-primary">{row.cancelled}</span>
+      </td>
+      <td className="px-2 py-2 text-center">
+        <Badge tone={state.tone} className="text-[9px]">
+          {state.label}
+        </Badge>
+      </td>
+      <td className="px-2 py-2 text-right font-mono text-success">{formatDA(row.credited)}</td>
+      <td className="px-2 py-2 text-right font-mono">
+        {row.debt > 0 ? (
+          <span className="font-bold text-danger">{formatDA(row.debt)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        )}
+      </td>
+      <td className="px-2 py-2 text-right font-mono text-muted">{formatDA(row.perSeance)}</td>
+      <td className="px-2 py-2 text-right">
+        {row.withheld ? (
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold text-warning">
+            <Lock className="h-3 w-3" /> {formatDA(row.amount)}
+          </span>
+        ) : (
+          <strong className="font-mono text-success">{formatDA(row.amount)}</strong>
+        )}
+        {row.alreadyPaid > 0 && (
+          <span className="block text-[9px] text-muted">
+            déjà réglé {formatDA(row.alreadyPaid)}
+          </span>
+        )}
+      </td>
+      <td className="px-2 py-2 text-center">
+        {row.totalDebt > 0 ? (
+          <button
+            onClick={onCover}
+            disabled={busy}
+            className="inline-flex h-7 items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-2 text-[9px] font-bold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-40"
+            title={`Avancer ${formatDA(row.totalDebt)} de la caisse de l'école pour débloquer la part de l'enseignant`}
+          >
+            <Banknote className="h-3 w-3" /> Payer de la caisse
+          </button>
+        ) : (
+          <span className="text-[10px] text-success">✅</span>
+        )}
+      </td>
+    </motion.tr>
+  );
+}
+
+
+/**
+ * LES MÊMES PASTILLES QUE LA FEUILLE DE PRÉSENCE — même écran, même langage.
+ *
+ * `"before"` marque une séance tenue avant l'inscription de l'élève : elle
+ * n'a jamais été la sienne, donc elle reste vide plutôt que de se lire comme
+ * un pointage oublié.
+ */
+const SLOT_STYLE: Record<string, { short: string; cls: string; label: string }> = {
+  present: { short: "P", cls: "bg-success/15 text-success border-success/40", label: "Présent" },
+  late: { short: "R", cls: "bg-warning/15 text-warning border-warning/40", label: "Retard" },
+  absent: { short: "A", cls: "bg-danger/15 text-danger border-danger/40", label: "Absent" },
+  cancelled: { short: "\u00d7", cls: "bg-primary/15 text-primary border-primary/40", label: "Annulée" },
+  before: {
+    short: "",
+    cls: "border-dashed border-line bg-canvas/40 text-muted/40",
+    label: "Séance tenue avant son inscription",
+  },
+};
+
+function SlotCells({ slots }: { slots: (string | null)[] }) {
+  return (
+    <>
+      {slots.map((v, i) => {
+        const style = v ? SLOT_STYLE[v] : undefined;
+        return (
+          <td key={i} className="px-1 py-2 text-center">
+            <span
+              title={style ? `Séance ${i + 1} — ${style.label}` : `Séance ${i + 1} — pas encore pointée`}
+              className={`inline-flex h-6 w-6 items-center justify-center rounded-lg border text-[11px] font-black ${
+                style?.cls ?? "border-line bg-canvas text-muted/50"
+              }`}
+            >
+              {style ? style.short : "\u2013"}
+            </span>
+          </td>
+        );
+      })}
+    </>
+  );
+}
+
+const DED_KIND: Record<BoardDeduction["kind"], { label: string; tone: Tone; icon: React.ReactNode }> = {
+  expense: { label: "Dépense", tone: "warning", icon: <Receipt className="h-3 w-3" /> },
+  acompte: { label: "Acompte", tone: "primary", icon: <Wallet className="h-3 w-3" /> },
+  child: { label: "Scolarité enfant", tone: "danger", icon: <GraduationCap className="h-3 w-3" /> },
+  child_debt: {
+    label: "Scolarité avancée",
+    tone: "danger",
+    icon: <GraduationCap className="h-3 w-3" />,
+  },
+};
+
+function DeductionLine({
+  row,
+  checked,
+  onToggle,
+}: {
+  row: BoardDeduction;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const kind = DED_KIND[row.kind];
+  return (
+    <tr className={`border-t border-line/60 ${row.paid ? "opacity-60" : checked ? "bg-danger/5" : ""}`}>
+      <td className="px-2 py-2 text-center">
+        <input
+          type="checkbox"
+          checked={checked && row.selectable}
+          disabled={!row.selectable}
+          onChange={onToggle}
+          className="h-4 w-4 disabled:opacity-30"
+          title={row.selectable ? "Retenir cette ligne" : "Déjà retenue par un règlement précédent"}
+        />
+      </td>
+      <td className="px-2 py-2 font-mono text-[10px] text-muted">
+        {row.date ? formatDateFr(row.date) : "—"}
+      </td>
+      <td className="px-2 py-2">
+        <Badge tone={kind.tone} className="gap-1 text-[9px]">
+          {kind.icon} {kind.label}
+        </Badge>
+      </td>
+      <td className="px-2 py-2">
+        <strong className="block text-ink">{row.label}</strong>
+        {row.description && <span className="block text-[9px] text-muted">{row.description}</span>}
+      </td>
+      <td className="px-2 py-2 text-center">
+        <Badge tone={row.paid ? "success" : "warning"} className="text-[9px]">
+          {row.paid ? "Déjà retenue" : "À retenir"}
+        </Badge>
+      </td>
+      <td className="px-2 py-2 text-right font-mono font-bold text-danger">
+        − {formatDA(row.amount)}
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * CORRIGER UN RÈGLEMENT — le net, la date, le libellé, et rien d'autre.
+ *
+ * Rejouer ce qu'un règlement a soldé à l'occasion d'une faute de frappe
+ * rouvrirait un mois déjà payé : les présences redeviendraient dues et la paie
+ * suivante les réclamerait une seconde fois. Seul le mouvement de caisse suit
+ * le nouveau montant.
+ */
+function EditPaymentModal({
+  amount,
+  paidAt,
+  description,
+  busy,
+  onSave,
+  onClose,
+}: {
+  amount: number;
+  paidAt: string;
+  description: string;
+  busy: boolean;
+  onSave: (fields: { amount: number; paidAt: string; description: string }) => void;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(amount);
+  const [date, setDate] = useState(paidAt.slice(0, 10));
+  const [label, setLabel] = useState(description);
+
+  return (
+    <Modal open onClose={onClose} title="Corriger ce règlement">
+      <div className="space-y-3">
+        <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] leading-relaxed text-warning">
+          Seuls le <strong>net versé</strong>, la <strong>date</strong> et le{" "}
+          <strong>libellé</strong> se corrigent ici. Ce que ce règlement a soldé — les présences,
+          les dépenses, les acomptes — ne bouge pas : le rejouer rouvrirait un mois déjà payé.
+          Pour tout reprendre, utilisez « Supprimer ».
+        </p>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Net versé (DA)
+            </label>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={value || ""}
+              onChange={(e) => setValue(money(Number(e.target.value.replace(",", ".")) || 0))}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Date du règlement
+            </label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+            Libellé
+          </label>
+          <Input value={label} onChange={(e) => setLabel(e.target.value)} />
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button
+            onClick={() =>
+              onSave({
+                amount: value,
+                // La date garde l'heure d'origine : seul le jour se corrige.
+                paidAt: `${date}T${paidAt.slice(11) || "12:00:00.000Z"}`,
+                description: label.trim(),
+              })
+            }
+            disabled={busy}
+          >
+            Enregistrer
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * L'ÉCOLE AVANCE LA DETTE D'UN ÉLÈVE.
+ *
+ * Tant qu'un élève doit quelque chose, la part que ses séances rapportent est
+ * retenue. L'école peut la débloquer en avançant elle-même l'argent : deux
+ * mouvements entrent alors dans la caisse — le paiement porté au crédit de
+ * l'élève, et la sortie qui l'a financé. La dette doit être couverte ENTIÈREMENT,
+ * restes d'anciens paiements et frais d'inscription compris : c'est exactement
+ * ce que le blocage regarde, rien de moins ne le lèverait.
+ */
+function CoverModal({
+  row,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  row: BoardStudent;
+  busy: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const db = useData();
+  const summary = studentDebtSummary(db, row.studentId);
+
+  return (
+    <Modal open onClose={onClose} title="Avancer la dette de cet élève sur la caisse de l'école">
+      <div className="space-y-3">
+        <div className="rounded-xl bg-primary-50/60 p-3">
+          <strong className="block text-sm text-ink">{row.name}</strong>
+          <span className="text-[11px] text-muted">
+            N° {row.registrationNumber || "—"}
+            {row.phone ? ` · ${row.phone}` : ""}
+          </span>
+        </div>
+
+        <p className="text-xs leading-relaxed text-ink">
+          Tant que cet élève doit de l&apos;argent, la part que ses séances rapportent à
+          l&apos;enseignant est <strong>retenue</strong>. L&apos;école peut la débloquer en avançant
+          elle-même la dette : deux mouvements entrent dans la caisse — le paiement porté au crédit
+          de l&apos;élève, et la sortie qui l&apos;a financé.
+        </p>
+
+        <div className="space-y-1.5 rounded-xl border border-line bg-canvas/40 p-3 text-[11px]">
+          {summary.soldRows.map((r) => (
+            <div key={`${r.subscriptionId}-${r.code}`} className="flex justify-between gap-2">
+              <span className="min-w-0 truncate text-muted">
+                {r.label} · {r.code}
+              </span>
+              <strong className="shrink-0 font-mono text-danger">{formatDA(r.debt)}</strong>
+            </div>
+          ))}
+          {summary.rests > 0 && (
+            <div className="flex justify-between gap-2">
+              <span className="text-muted">Restes d&apos;anciens paiements</span>
+              <strong className="font-mono text-danger">{formatDA(summary.rests)}</strong>
+            </div>
+          )}
+          {summary.registrationDue > 0 && (
+            <div className="flex justify-between gap-2">
+              <span className="text-muted">Frais d&apos;inscription</span>
+              <strong className="font-mono text-danger">{formatDA(summary.registrationDue)}</strong>
+            </div>
+          )}
+          <div className="flex justify-between gap-2 border-t border-line pt-1.5">
+            <strong className="text-ink">Total à avancer</strong>
+            <strong className="font-mono text-danger">{formatDA(summary.total)}</strong>
+          </div>
+        </div>
+
+        <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] leading-relaxed text-warning">
+          La dette est couverte <strong>entièrement</strong> : c&apos;est la seule façon de lever la
+          retenue. L&apos;élève apparaîtra ensuite en rouge sur la table des élèves, et le filtre
+          « Dettes avancées par l&apos;école » le retrouvera d&apos;un clic.
+        </p>
+
+        <div className="flex justify-end gap-2 border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button
+            variant="danger"
+            onClick={onConfirm}
+            disabled={busy || summary.total <= 0}
+            className="gap-1.5"
+          >
+            <Banknote className="h-4 w-4" /> Avancer {formatDA(summary.total)}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function Stat({ label, value, tone = "text-ink" }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-3 text-center">
+      <span className="block text-[9px] font-bold uppercase tracking-wider text-muted">{label}</span>
+      <strong className={`mt-0.5 block font-mono text-base font-black ${tone}`}>{value}</strong>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div className="rounded-xl bg-canvas/60 p-2 text-center">
+      <span className="block text-[8px] font-bold uppercase tracking-wider text-muted">{label}</span>
+      <strong className={`block font-mono text-[11px] font-black ${tone}`}>{value}</strong>
+    </div>
+  );
+}
+
+function SummaryLine({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="text-muted">{label}</span>
+      <strong className={`font-mono ${tone}`}>{value}</strong>
+    </div>
+  );
+}

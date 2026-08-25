@@ -1380,6 +1380,7 @@ function StudentProfileView({
   const [firstName, setFirstName] = useState(student.firstName);
   const [lastName, setLastName] = useState(student.lastName);
   const [phone, setPhone] = useState(student.phone);
+  const [phone2, setPhone2] = useState(student.phone2 ?? "");
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1396,7 +1397,7 @@ function StudentProfileView({
         setPassword("");
       }
 
-      updateItem("students", student.id, { firstName, lastName, phone });
+      updateItem("students", student.id, { firstName, lastName, phone, phone2: phone2.trim() || undefined });
 
       // Also update logged-in session state
       updateUser({ name: `${firstName} ${lastName}` });
@@ -1430,6 +1431,16 @@ function StudentProfileView({
               <div>
                 <label className="block text-xs font-semibold text-muted mb-1 font-sans">Téléphone</label>
                 <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-muted mb-1 font-sans">
+                  Deuxième téléphone
+                </label>
+                <Input
+                  value={phone2}
+                  onChange={(e) => setPhone2(e.target.value)}
+                  placeholder="Numéro de secours (optionnel)"
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-muted mb-1">Email / Identifiant</label>

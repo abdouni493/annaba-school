@@ -174,3 +174,63 @@ fix the creation of students make it the user type the avance amount for the sub
 
 give me the full sql code that i have to run for this new updates if needed
 then push all updates to repo
+
+
+
+fix the creation of students make option of user can set second number of the student and make it display on the interface of view details and edit interface
+
+fix the interface of create new emploi du temps make new option user can create new emploi du temps contains two diffrent levels or more 
+like this examply : make possibility for the user can create new emploi tu temps for 4eme sem and 3eme lycee and let him select the groupes for each one 
+
+fix the interface of open group from the dashboard make new option on the interface of Encaisser un solde for each student make this shortcut for set the price that student have to pay like this example : 
+if the selected group emploi du temps have 4 seances and the price for one seance is for example 450da then make sure to make button for increase by the value of one seance but its have to be according to the current seances of this student like this example : 
+if the emploi du temps have 4 seance and the student is on the first seance then let the user click on that proposition button for increase with seance price value 4 times the first time when user click on it then its will display on the text box 450 if the user click on it again then  its will display 900 if he click again its will display 1350 if he click again then its will display 1800 
+if the user on the second seance then let him click for first time 
+450 if the user click on it again then  its will display 900 if he click again its will display 1350
+according to the current seance for that student and accordign to the maximum seances for that emploi du temps and do not let the user can click on that button if the amount verser is bigger than the amount total of that emploi du temps 
+then on the same interface make option fo rmake this treatement automatically like this : 
+if the user on the first seance by 4 seances then its will display proposition directly 1800 let user click on it to display it on the text box of amount payed by student 
+if the student starts on the 3rd seance then display for him proposition of 900 
+and let the user can edit the amouont verser manually 
+
+fix the interface of open groupe on the dashboard make it display the total number of students of that emploi du temps 
+and total number of presented students 
+and total number of absent students 
+and total number of calceled 
+and total number of pending 
+make this cards updates on the same time of user set the presences on the same intreface
+
+fix the interface of payment button action for the teachers 
+i want to change all the logic and design to make it like this exctly : 
+first thing make it when user click on payment interface then display for him only the list of all emplois du temps that assigned for that teacher 
+let user can click on each emploi du temps to display for him list of months with animation from M1 to M12 and and make it display the statue of each month according to the presented seances for each month like this : 
+m1 4/4 its means the emploi du temps have 4 seances and the teacher have teached and presented all that 4 seances to pass to the next month 
+make m2 for example display like this : 3/4 that means its not closed 
+and make sure to make this list of months display also the statue of each month if the user have saved payment for that month or not 
+then let the user can click on each month from the list from m1 to m12
+when user click on it then display for him the first table display all the students normally with statue and presences of each student and statue of payment for each student exactly the same displaying how it is right now 
+and make sure to make it calculate the payments and teacher part for each payment correcty and display the total from that table correctly with make sure to let the table correctly calculating that part of the teacher correctly according to the programmation of that groupe like this example : 
+total cost of subscription is 1800 the teacher part is 1150 and the price that have to get that teacher for each seance is 1150 divided by the number of seance for that emploi du temps so make sure to make it calculate the number of presented seances from the student and make it display column for each student how much have to get teacher from his presented and payments 
+if the sudent have not pay then do not let the teacher can pay from it except if the user comes to pay the debt of that student from the school money then let the teacher can pay from that student normally and display that student with red after payment from the school money and make sure to create new filtering button on the interface of students when user cick on it its will display the students that user payed for his debts frm the school money with alert anomations 
+then for the same interface of payment for teacher make sure to make it calculate correctly with dicimal for each student 
+and make the table will display on the last the total how much teacher have to get payed from this table 
+then on the same interface of payment for teachers let it display the second table special for the students that payed retard like this : 
+if the user create the payment for the m1 but there is some students have not payed on m1 and they comes to pay the m1 on the m2 befor create the payement of m2 then make sure to make them display on this table with informations of that student like the first table exactly and make sure to fix the calculating on this case
+make it calculate correctly the retard exactly the same calculate methode like the first table but make sure to make this second table only display the students that payed retard do not display on it the not payed students 
+and make sure to make for each student will display how much have to get the teacher for each student like the first table 
+then make the same interface of payment for teacher display the 3rd table make it display the expenses of that teacher that will minus from his payment make sure to make it display the liste of expenses created to that teacher on this month with display statue of them if payed or not payed if the user create the payment of them then make sure to make them display with payed statue 
+and make sure to make this table of expenses also display the expenses of his sons 
+the amount that have to pay for the presenting on this emploi du temps like the other students 
+and make sure to make this table also display the amount that user get payed from his son from the interface of dashboard befor the creating the of that his father teacher as debt will minus from his payment 
+then make this table display the total on the last of the interface 
+then make sure to make the lst of the interface display the resume for each table and make it calculate the net amount that have to pay for that teacher on this month make make option for print on the same page of the payment teacher and make sure to make the printing template display all the small details of this interface exacty for the 1st and 2nd and 3rd tables with organisation with informations of the school and all the samll details for each table 
+then let the user create the payment and ask him for the printing after creation correclty of the payment 
+the change the statue of that month from the list of months m1 to m12 for each emplio du temps and make sure to make evrything save on that months with button action of edit and delelte the payment for the month that have payed statue maek sure if the student edit or delete then make it edit from the data base or delete from the history of payments to make user can create the payement again and let user can access for each month from the liste 
+then make sure to make the interface of view detals button action of the teacher on the history will display all the payments with filtering by emploi du temps and by filtering by the month and make it display the payemnets and user can click on view details to see all the small details exactly like the interface ocreate th payment 
+and make also button action for edit and delete 
+
+then make sure to fix the interfaces of caisse and reports make sure to make them dispaly the details correctly wtih this new updates 
+and make the interface of repports with new design better and better 
+with all this new system for the teacher payement to see the detials correctly with all fiterings 
+
+apply this updates then give me the full sql code that i have torun for this new updates and push all updates to repo with merge code directly without pull request 

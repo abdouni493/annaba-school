@@ -34,7 +34,9 @@ import { formatDA, positiveMoney } from "@/lib/utils";
 import { buildTeacherPaymentReport } from "@/lib/reports/teacherPayment";
 import { buildTeacherSettlementReceipt } from "@/lib/reports/teacherSettlement";
 import { buildTeacherPayslip, type PayslipEmploi } from "@/lib/reports/teacherPayslip";
-import { TeacherPayModal } from "@/components/teachers/TeacherPayModal";
+import { TeacherPayCenter } from "@/components/teachers/TeacherPayCenter";
+import { PayBoardView } from "@/components/teachers/PayBoardView";
+import { buildTeacherMonthPayslip } from "@/lib/reports/teacherMonthPayslip";
 import { TeacherMonthsModal } from "@/components/teachers/TeacherMonthsModal";
 import { teacherEmplois, unpaidStudents } from "@/lib/teacherMonths";
 import {
@@ -97,6 +99,16 @@ export function TeachersPage() {
    * auquel cas tout ce qu'il avait soldé redevient dû.
    */
   const [viewedPayment, setViewedPayment] = useState<TeacherPayment | null>(null);
+  /**
+   * LES FILTRES DE L'HISTORIQUE DES RÈGLEMENTS.
+   *
+   * Un enseignant qui donne quatre cours accumule vite quarante règlements. La
+   * question qu'on se pose n'est jamais « montre-moi tout » : c'est « qu'a-t-il
+   * touché sur CE groupe ? » ou « le M3 a-t-il été payé ? ». Les deux listes
+   * déroulantes répondent exactement à cela, et se combinent.
+   */
+  const [payEmploiFilter, setPayEmploiFilter] = useState("all");
+  const [payMonthFilter, setPayMonthFilter] = useState("all");
   const [editedPayment, setEditedPayment] = useState<TeacherPayment | null>(null);
   const [payAmount, setPayAmount] = useState<number>(0);
   const [payDate, setPayDate] = useState("");
@@ -429,14 +441,34 @@ export function TeachersPage() {
   };
 
   /**
-   * Reprints an old settlement. Payments written before the payslip existed
-   * have no per-emploi snapshot, so they fall back to the older, timing-based
-   * receipt rather than printing an empty table.
+   * Reprints an old settlement.
+   *
+   * Trois générations de règlements coexistent, et chacune se réimprime avec la
+   * fiche qui la décrit vraiment :
+   *  - les règlements de MOIS portent la photographie de leurs trois tables
+   *    (`board`) : c'est la fiche détaillée, colonne pour colonne ;
+   *  - ceux d'avant portent un instantané par emploi du temps : l'ancienne
+   *    fiche de paie ;
+   *  - les plus anciens n'ont qu'une liste de créneaux : le reçu d'origine.
    */
   const reprintSettlement = (paymentId: string) => {
     const pay = teacherPayments.find((p) => p.id === paymentId);
     const t = pay ? teachers.find((x) => x.id === pay.teacherId) : undefined;
     if (!pay || !t) return;
+
+    if (pay.board) {
+      printHtmlDocument(
+        buildTeacherMonthPayslip({
+          school,
+          teacher: t,
+          lang: language,
+          paidAt: pay.paidAt,
+          receiptNo: `PAY-${pay.id.slice(0, 8).toUpperCase()}`,
+          board: pay.board,
+        }),
+      );
+      return;
+    }
 
     const hasPayslip =
       (pay.expenses?.length ?? 0) > 0 ||
@@ -1677,10 +1709,45 @@ export function TeachersPage() {
 
               // Les VRAIS règlements de cet enseignant — plus aucune devinette
               // sur le libellé des mouvements de caisse.
-              const settlements = teacherPayments
+              const allSettlements = teacherPayments
                 .filter((p) => p.teacherId === selectedTeacher.id)
                 .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
-              const settlementLogs = settlements.map((pay) => ({
+
+              /** Les emplois du temps et les mois que ces règlements couvrent —
+               *  les seules valeurs que les filtres ont besoin de proposer. */
+              const payEmploiOptions = [
+                ...new Map(
+                  allSettlements.flatMap((pay) => [
+                    ...(pay.months ?? []).map(
+                      (m) => [m.sessionId, m.title] as [string, string],
+                    ),
+                    ...(pay.board ? [[pay.board.sessionId, pay.board.emploi] as [string, string]] : []),
+                  ]),
+                ).entries(),
+              ].sort((a, b) => a[1].localeCompare(b[1]));
+              const payMonthOptions = [
+                ...new Set(
+                  allSettlements.flatMap((pay) => [
+                    ...(pay.months ?? []).map((m) => m.monthCode),
+                    ...(pay.board ? [pay.board.monthCode] : []),
+                  ]),
+                ),
+              ].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+
+              const settlements = allSettlements.filter((pay) => {
+                const sessions = [
+                  ...(pay.months ?? []).map((m) => m.sessionId),
+                  ...(pay.board ? [pay.board.sessionId] : []),
+                ];
+                const codes = [
+                  ...(pay.months ?? []).map((m) => m.monthCode),
+                  ...(pay.board ? [pay.board.monthCode] : []),
+                ];
+                if (payEmploiFilter !== "all" && !sessions.includes(payEmploiFilter)) return false;
+                if (payMonthFilter !== "all" && !codes.includes(payMonthFilter)) return false;
+                return true;
+              });
+              const settlementLogs = allSettlements.map((pay) => ({
                 id: pay.id,
                 type: "payment" as const,
                 title: "Règlement de salaire",
@@ -1754,12 +1821,61 @@ export function TeachersPage() {
                   {/* Historique des règlements — avec les mois soldés et la
                       réimpression de la fiche de paie. */}
                   <div className="rounded-2xl border border-line bg-surface p-4">
-                    <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-muted">
-                      💸 Historique des règlements ({settlements.length})
-                    </h4>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted">
+                        💸 Historique des règlements ({settlements.length}
+                        {settlements.length !== allSettlements.length
+                          ? ` sur ${allSettlements.length}`
+                          : ""}
+                        )
+                      </h4>
+                      {/* Filtrer par emploi du temps et par mois — la seule
+                          façon de retrouver « ce qu'il a touché sur ce groupe
+                          au M3 » dans quarante lignes. */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Select
+                          value={payEmploiFilter}
+                          onChange={(e) => setPayEmploiFilter(e.target.value)}
+                          className="h-8 w-48 text-[11px]"
+                        >
+                          <option value="all">Tous les emplois du temps</option>
+                          {payEmploiOptions.map(([id, label]) => (
+                            <option key={id} value={id}>
+                              {label}
+                            </option>
+                          ))}
+                        </Select>
+                        <Select
+                          value={payMonthFilter}
+                          onChange={(e) => setPayMonthFilter(e.target.value)}
+                          className="h-8 w-32 text-[11px]"
+                        >
+                          <option value="all">Tous les mois</option>
+                          {payMonthOptions.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </Select>
+                        {(payEmploiFilter !== "all" || payMonthFilter !== "all") && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setPayEmploiFilter("all");
+                              setPayMonthFilter("all");
+                            }}
+                          >
+                            Réinitialiser
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                     {settlements.length === 0 ? (
                       <p className="py-6 text-center text-xs italic text-muted">
-                        Aucun règlement enregistré pour cet enseignant.
+                        {allSettlements.length === 0
+                          ? "Aucun règlement enregistré pour cet enseignant."
+                          : "Aucun règlement ne correspond à ces filtres."}
                       </p>
                     ) : (
                       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
@@ -2271,8 +2387,8 @@ export function TeachersPage() {
         </div>
       </Modal>
 
-      {/* Règlement — organisé par emploi du temps et par mois */}
-      <TeacherPayModal
+      {/* Règlement — un emploi du temps, un mois, trois tables et un net. */}
+      <TeacherPayCenter
         open={isTimingPayOpen}
         teacher={selectedTeacher}
         onClose={() => setIsTimingPayOpen(false)}
@@ -2386,6 +2502,14 @@ export function TeachersPage() {
                 {" · "}Reçu N° PAY-{viewedPayment.id.slice(0, 8).toUpperCase()}
               </span>
             </div>
+
+            {/* LE DÉTAIL EXACT DE L'ÉCRAN DE RÈGLEMENT.
+
+                Les règlements écrits par l'écran « un mois à la fois » portent
+                la photographie de leurs trois tables : elle est réaffichée ici
+                telle quelle, colonne pour colonne. Les règlements plus anciens
+                n'en ont pas — les récapitulatifs qui suivent les décrivent. */}
+            {viewedPayment.board && <PayBoardView board={viewedPayment.board} />}
 
             {/* Les mois soldés */}
             <div className="rounded-xl border border-line bg-surface p-3">

@@ -481,6 +481,12 @@ create table if not exists public.teacher_payments (
   -- depuis. Figées ici pour que la fiche de paie les imprime avec leur mois
   -- d'origine, sans les confondre avec le mois courant.
   arrears        jsonb,
+  -- LA PHOTOGRAPHIE FIGÉE de l'écran de règlement d'un mois : ses trois tables
+  -- (élèves du mois, arriérés rattrapés, retenues) et leurs totaux. Relue telle
+  -- quelle par « voir le détail », la réimpression et les rapports — jamais
+  -- recalculée, pour qu'un tarif corrigé depuis ne contredise pas ce qui a été
+  -- versé. NULL = règlement antérieur à cet écran.
+  board          jsonb,
   -- Le mouvement de caisse écrit par ce règlement : annuler l'un annule l'autre.
   cash_id        text,
   paid_at        text not null default ''
@@ -597,6 +603,11 @@ create table if not exists public.schedule_sessions (
   end_time     text not null default '',
   day_times    jsonb,                            -- horaires jour par jour : {"saturday":{"startTime":"08:00","endTime":"10:00"}}
   day_salles   jsonb,                            -- salle jour par jour : {"saturday":"salle-1","tuesday":"salle-2"}
+  -- Emploi du temps MULTI-NIVEAUX : les groupes de CHAQUE classe,
+  -- {"cls-4am":["grp-a","grp-b"],"cls-3as":["grp-c"]}. class_id garde la
+  -- première classe et group_ids l'union de tous les groupes, pour que le scan,
+  -- les présences et la paie lisent les mêmes colonnes qu'avant.
+  class_groups jsonb,
   is_open      boolean,                          -- séance libre
   title        text,
   period_start text,
@@ -665,6 +676,9 @@ create table if not exists public.students (
   last_name              text not null default '',
   birth_date             text not null default '',
   phone                  text not null default '',
+  -- Le SECOND numéro de la famille : celui qu'on compose quand le premier ne
+  -- répond pas. Facultatif, et recherché comme le premier.
+  phone2                 text,
   email                  text not null default '',
   rfid                   text not null default '',
   is_free                boolean not null default false,

@@ -241,9 +241,63 @@ export function isArchivedSub(db: Database, subscriptionId?: string): boolean {
  */
 export function sessionGroupIds(session?: ScheduleSession): string[] {
   if (!session) return [];
-  const list = session.groupIds?.filter(Boolean) ?? [];
+  // Un emploi multi-niveaux range ses groupes CLASSE PAR CLASSE : l'union de
+  // ces listes est la vraie composition du créneau, `groupIds` n'en étant que
+  // le reflet à plat. On lit donc les deux, dans cet ordre.
+  const perClass = Object.values(session.classGroups ?? {}).flat().filter(Boolean);
+  const list = [...perClass, ...(session.groupIds?.filter(Boolean) ?? [])];
   if (list.length > 0) return [...new Set(list)];
   return session.groupId ? [session.groupId] : [];
+}
+
+// ---- Un emploi du temps, PLUSIEURS NIVEAUX --------------------------------
+/**
+ * Les classes (niveaux) d'un emploi du temps.
+ *
+ * Un créneau peut réunir la 4e moyenne et la 3e secondaire — deux niveaux qui
+ * partagent la même heure, la même salle et le même enseignant, chacun avec
+ * ses propres groupes. `classGroups` porte l'association complète, `classIds`
+ * la liste à plat, et `classId` la PREMIÈRE classe (la colonne historique que
+ * le scan et la base lisent). Lire toujours par ici.
+ */
+export function sessionClassIds(session?: ScheduleSession): string[] {
+  if (!session) return [];
+  const keys = Object.keys(session.classGroups ?? {});
+  const list = [...keys, ...(session.classIds?.filter(Boolean) ?? [])];
+  if (list.length > 0) return [...new Set(list.filter(Boolean))];
+  return session.classId ? [session.classId] : [];
+}
+
+/** Cet emploi du temps couvre-t-il plusieurs niveaux ? */
+export function isMultiLevelSession(session?: ScheduleSession): boolean {
+  return sessionClassIds(session).length > 1;
+}
+
+/** « 4AM · 3AS » — les niveaux d'un emploi, lisibles d'un coup. */
+export function sessionClassesLabel(db: Database, session?: ScheduleSession): string {
+  const ids = sessionClassIds(session);
+  if (ids.length === 0) return "—";
+  return ids
+    .map((id) => db.classes.find((c) => c.id === id)?.name ?? "—")
+    .join(" · ");
+}
+
+/** Cet emploi du temps réunit-il cette classe ? */
+export function sessionHasClass(session: ScheduleSession, classId: string): boolean {
+  return sessionClassIds(session).includes(classId);
+}
+
+/**
+ * Les groupes qu'UNE classe amène sur cet emploi du temps.
+ *
+ * Sur un emploi à un seul niveau, ce sont simplement tous ses groupes : la
+ * question ne se pose pas. Sur un emploi multi-niveaux, chaque classe a les
+ * siens, et c'est précisément ce que `classGroups` conserve.
+ */
+export function sessionGroupsOfClass(session: ScheduleSession, classId: string): string[] {
+  const mapped = session.classGroups?.[classId];
+  if (mapped && mapped.length > 0) return [...new Set(mapped.filter(Boolean))];
+  return sessionClassIds(session).length > 1 ? [] : sessionGroupIds(session);
 }
 
 /** « Groupe A · Groupe B » — les groupes d'un emploi, lisibles d'un coup. */
@@ -354,9 +408,16 @@ export function sessionLabel(
   session: ScheduleSession,
   opts: { withGroup?: boolean } = {},
 ): string {
+  const classIds = sessionClassIds(session);
   const cls = classOf(db, session.classId);
   const parts = [
-    cls ? classLabel(db, cls) : "",
+    // Un emploi multi-niveaux porte TOUS ses niveaux dans son intitulé, sinon
+    // « 4AM » désignerait aussi le créneau partagé avec la 3AS.
+    classIds.length > 1
+      ? classIds.map((id) => db.classes.find((c) => c.id === id)?.name ?? "—").join(" + ")
+      : cls
+        ? classLabel(db, cls)
+        : "",
     moduleName(db, session.moduleId),
     // Un emploi du temps peut réunir PLUSIEURS groupes : l'intitulé les porte
     // tous, sinon deux demi-groupes du même créneau se lisent à l'identique.
@@ -1529,6 +1590,9 @@ export function studentMatches(db: Database, student: Student, query: string): b
     `${student.firstName} ${student.lastName}`.toLowerCase().includes(q) ||
     `${student.lastName} ${student.firstName}`.toLowerCase().includes(q) ||
     (student.phone ?? "").includes(q) ||
+    // Le second numéro se cherche comme le premier : une famille qui appelle
+    // depuis l'autre ligne doit se retrouver du premier coup.
+    (student.phone2 ?? "").includes(q) ||
     num.includes(q) ||
     num.replace(/^0+/, "").includes(q.replace(/^0+/, ""))
   );

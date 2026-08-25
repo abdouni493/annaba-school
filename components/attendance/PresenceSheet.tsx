@@ -33,7 +33,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/SearchInput";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money } from "@/lib/utils";
 import { printHtmlDocument } from "@/lib/print";
 import { presenceSheetHtml, soldReceiptHtml } from "@/lib/reports/documents";
 import {
@@ -55,6 +55,7 @@ import {
   UserMinus,
   UserPlus,
   UserRoundPlus,
+  Users,
   Wallet,
   X,
 } from "lucide-react";
@@ -83,6 +84,7 @@ import {
   moduleName as moduleNameOf,
   monthCodeLabel,
   monthOrder,
+  netPriceFor,
   registrationNumberOf,
   schoolPerSeanceOf,
   salleName,
@@ -183,6 +185,28 @@ export function PresenceSheet({
   const slotCount = sub ? slotCountFor(db, sub.id, roster.map((s) => s.id), monthCode) : cycleSizeOf(sub);
 
   const scheduledDay = session.days.includes(JS_DAYS[new Date(`${date}T12:00:00`).getDay()]);
+
+  /**
+   * LE COMPTE DE LA JOURNÉE, EN CINQ NOMBRES.
+   *
+   * La question que la réception pose en ouvrant un groupe : combien sont
+   * inscrits, combien sont là, combien manquent, pour combien la séance est
+   * annulée, et combien restent à pointer. Le calcul lit les MÊMES lignes que
+   * le tableau, donc chaque clic sur « présent » ou « absent » le déplace dans
+   * la seconde — il n'y a rien à rafraîchir.
+   */
+  const dayTally = useMemo(() => {
+    const tally = { total: roster.length, present: 0, absent: 0, cancelled: 0, pending: 0 };
+    for (const st of roster) {
+      const rec = attendanceOn(db, st.id, session.id, date);
+      if (!rec) tally.pending += 1;
+      else if (rec.status === "cancelled") tally.cancelled += 1;
+      else if (rec.status === "absent") tally.absent += 1;
+      else tally.present += 1;
+    }
+    return tally;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roster, db.attendance, session.id, date]);
 
   // ---- writing ------------------------------------------------------------
   const write = async (student: Student, status: AttendanceStatus | null) => {
@@ -533,6 +557,45 @@ export function PresenceSheet({
         )}
       </div>
 
+      {/* ---- le compte de la journée, mis à jour à chaque clic ------------- */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <TallyCard
+          label="Élèves du groupe"
+          value={dayTally.total}
+          tone="primary"
+          icon={<Users className="h-4 w-4" />}
+          hint={`Inscrits sur ${monthCode}`}
+        />
+        <TallyCard
+          label="Présents"
+          value={dayTally.present}
+          tone="success"
+          icon={<Check className="h-4 w-4" />}
+          hint={pctOf(dayTally.present, dayTally.total)}
+        />
+        <TallyCard
+          label="Absents"
+          value={dayTally.absent}
+          tone="danger"
+          icon={<X className="h-4 w-4" />}
+          hint={pctOf(dayTally.absent, dayTally.total)}
+        />
+        <TallyCard
+          label="Séance annulée"
+          value={dayTally.cancelled}
+          tone="primary"
+          icon={<Slash className="h-4 w-4" />}
+          hint="Ne coûte rien"
+        />
+        <TallyCard
+          label="À pointer"
+          value={dayTally.pending}
+          tone={dayTally.pending > 0 ? "warning" : "success"}
+          icon={<Clock className="h-4 w-4" />}
+          hint={dayTally.pending === 0 ? "Journée complète" : "Reste à saisir"}
+        />
+      </div>
+
       {!scheduledDay && (
         <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] text-warning">
           Ce créneau n&apos;est pas programmé ce jour-là — le pointage reste possible mais vérifiez la
@@ -678,6 +741,22 @@ export function PresenceSheet({
                 Régler la totalité ({formatDA(pay.suggestion)})
               </button>
             )}
+
+            {/* ---- LE RACCOURCI « UNE SÉANCE DE PLUS » -----------------------
+                La réception ne calcule plus de tête. Un bouton ajoute le prix
+                d'UNE séance, et il ne peut être cliqué qu'autant de fois qu'il
+                reste de séances à cet élève sur ce mois : un enfant qui en est
+                à sa 1re séance sur 4 peut monter jusqu'à 4 × le prix, celui qui
+                en est à sa 3e jusqu'à 2 × — jamais au-delà du mois. Le second
+                bouton propose directement ce total, et le montant reste
+                modifiable à la main. */}
+            <SeanceStepper
+              student={pay.student}
+              subscriptionId={pay.subscriptionId}
+              monthCode={pay.monthCode}
+              amount={pay.amount || 0}
+              onAmount={(next) => setPay({ ...pay, amount: next })}
+            />
 
             {/* Ce que ce versement laisse derrière lui. Un élève qui donne 2000
                 sur un mois à 1800 ne « perd » pas les 200 : ils restent sur le
@@ -857,6 +936,180 @@ export function PresenceSheet({
 }
 
 // ---------------------------------------------------------------------------
+
+/** « 12 / 18 » lu en pourcentage — vide quand il n'y a personne à rapporter. */
+function pctOf(part: number, total: number): string {
+  if (total <= 0) return "—";
+  return `${Math.round((part / total) * 100)} % du groupe`;
+}
+
+const TALLY_TONE: Record<"primary" | "success" | "danger" | "warning", string> = {
+  primary: "border-primary/30 bg-primary-50/50 text-primary",
+  success: "border-success/30 bg-success/10 text-success",
+  danger: "border-danger/30 bg-danger/10 text-danger",
+  warning: "border-warning/40 bg-warning/10 text-warning",
+};
+
+/**
+ * Une carte du compte de la journée.
+ *
+ * Elle ne détient aucun état : elle affiche ce que la feuille vient de
+ * recalculer, donc elle se met à jour dans la même image que le pointage.
+ */
+function TallyCard({
+  label,
+  value,
+  tone,
+  icon,
+  hint,
+}: {
+  label: string;
+  value: number;
+  tone: "primary" | "success" | "danger" | "warning";
+  icon: React.ReactNode;
+  hint?: string;
+}) {
+  return (
+    <div className={`rounded-2xl border p-3 transition-colors ${TALLY_TONE[tone]}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">{label}</span>
+        {icon}
+      </div>
+      <strong className="mt-0.5 block text-2xl font-black leading-none">{value}</strong>
+      {hint && <span className="mt-1 block text-[10px] opacity-75">{hint}</span>}
+    </div>
+  );
+}
+
+/**
+ * LE RACCOURCI DE SAISIE DU MONTANT : « + une séance ».
+ *
+ * Le problème qu'il résout est trivial et coûte pourtant vingt secondes à
+ * chaque encaissement : la réception connaît le prix d'une séance, connaît le
+ * nombre de séances qui restent à l'élève sur ce mois, et refait la
+ * multiplication de tête. Ici, un bouton ajoute une séance, et un second pose
+ * directement le total.
+ *
+ * Le plafond n'est pas le même pour tout le monde : il vaut ce qu'il RESTE à
+ * l'élève sur son mois. Quatre séances au programme et l'élève à sa première :
+ * quatre clics possibles (450, 900, 1 350, 1 800). Le même élève à sa
+ * troisième : deux clics. Un élève entré en cours de mois n'a jamais à payer
+ * les séances tenues avant lui — son plafond descend d'autant. Passé ce
+ * plafond le bouton se verrouille : on ne fait pas payer plus que le mois.
+ *
+ * Le champ reste libre : ces boutons écrivent dedans, ils ne le remplacent pas.
+ */
+function SeanceStepper({
+  student,
+  subscriptionId,
+  monthCode,
+  amount,
+  onAmount,
+}: {
+  student: Student;
+  subscriptionId: string;
+  monthCode: string;
+  amount: number;
+  onAmount: (next: number) => void;
+}) {
+  const db = useData();
+  const sub = db.subscriptions.find((x) => x.id === subscriptionId);
+  const cycle = cycleOf(db, student.id, subscriptionId, monthCode);
+
+  // Son tarif à LUI : un « école seule » ne paie que la part de l'école, et une
+  // remise s'applique avant tout calcul.
+  const enrollment = db.enrollments.find(
+    (e) => e.studentId === student.id && e.subscriptionId === subscriptionId,
+  );
+  const unit = netPriceFor(
+    studentListPrice(student, sub),
+    enrollment?.discount ?? student.subscriptionDiscounts?.[subscriptionId],
+  );
+
+  /** Les séances de ce mois qui sont les siennes (celles d'avant son arrivée ne
+   *  le sont pas), et celles qu'il n'a pas encore faites. */
+  const mine = Math.max(0, cycle.size - cycle.lead);
+  const remaining = Math.max(0, mine - cycle.done);
+  const cap = money(remaining * unit);
+  const current = Math.min(cycle.done + 1, Math.max(mine, 1));
+
+  if (unit <= 0 || mine <= 0) return null;
+
+  const steps = Math.round((amount || 0) / unit);
+  const atCap = cap > 0 && (amount || 0) >= cap;
+
+  return (
+    <div className="space-y-2 rounded-xl border border-primary/30 bg-primary-50/40 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+          ⚡ Calcul rapide — {formatDA(unit)} la séance
+        </span>
+        <Badge tone="neutral" className="text-[9px]">
+          Séance {current}/{mine} · {remaining} restante(s)
+        </Badge>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={remaining === 0 || atCap}
+          onClick={() => onAmount(money(Math.min(cap, (amount || 0) + unit)))}
+          className="gap-1.5"
+          title={
+            remaining === 0
+              ? "Toutes les séances de ce mois sont déjà tenues"
+              : `Ajouter le prix d'une séance (${formatDA(unit)})`
+          }
+        >
+          <Banknote className="h-3.5 w-3.5" /> + 1 séance ({formatDA(unit)})
+        </Button>
+
+        {/* La proposition toute faite : ce que les séances qui lui restent
+            coûtent, d'un seul clic. */}
+        <Button
+          size="sm"
+          variant="success"
+          disabled={cap <= 0}
+          onClick={() => onAmount(cap)}
+          className="gap-1.5"
+          title={`Les ${remaining} séance(s) qui lui restent sur ${monthCode}`}
+        >
+          <HandCoins className="h-3.5 w-3.5" /> Proposition : {formatDA(cap)}
+        </Button>
+
+        {(amount || 0) > 0 && (
+          <Button size="sm" variant="ghost" onClick={() => onAmount(0)}>
+            Effacer
+          </Button>
+        )}
+      </div>
+
+      <p className="text-[10px] leading-relaxed text-muted">
+        {steps > 0 ? (
+          <>
+            <strong className="text-primary">
+              {steps} séance(s) × {formatDA(unit)} = {formatDA(money(steps * unit))}
+            </strong>{" "}
+            —{" "}
+          </>
+        ) : null}
+        {atCap ? (
+          <span className="font-semibold text-warning">
+            Plafond atteint : le mois complet de cet élève vaut {formatDA(cap)}, on ne peut pas lui
+            en facturer davantage ici.
+          </span>
+        ) : (
+          <>
+            il en est à sa <strong className="text-ink">séance {current}</strong> sur {mine} ; le
+            bouton peut donc être cliqué <strong className="text-ink">{remaining} fois</strong> au
+            plus, soit {formatDA(cap)}. Le montant reste modifiable à la main.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
 
 /**
  * « Élève existant » — il est déjà dans la base, on l'ajoute simplement à cet
@@ -1419,7 +1672,14 @@ function StudentRow({
           </Badge>
         )}
       </td>
-      <td className="px-2 py-2 text-muted">{student.phone || "—"}</td>
+      <td className="px-2 py-2 text-muted">
+        {student.phone || "—"}
+        {/* Le second numéro : celui qu'on compose quand le premier ne répond
+            pas. Il se lit sur la feuille, sans ouvrir la fiche. */}
+        {student.phone2 && (
+          <span className="block text-[10px] opacity-80">2<sup>e</sup> : {student.phone2}</span>
+        )}
+      </td>
 
       {Array.from({ length: slotCount }, (_, i) => {
         // Before his arrival the séance simply is not his: the box stays empty
