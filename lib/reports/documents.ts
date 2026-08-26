@@ -11,7 +11,7 @@
 
 import type { Language } from "@/lib/store/settings";
 import type { Database } from "@/lib/store/data";
-import type { AttendanceStatus, ScheduleSession, Student } from "@/lib/types";
+import type { AttendanceStatus, School, ScheduleSession, Student } from "@/lib/types";
 import {
   bannerHtml,
   letterheadHtml,
@@ -23,10 +23,12 @@ import {
   formatDateFr,
   groupName,
   monthCodeLabel,
+  receiptNumberOf,
   registrationNumberOf,
   salleName,
   sessionLabel,
   studentCaseLabel,
+  studentLevelLabel,
   studentName,
   teacherName,
 } from "@/lib/helpers";
@@ -125,6 +127,192 @@ export function inscriptionVoucherHtml(
 }
 
 // ---------------------------------------------------------------------------
+// LE REÇU DE PAIEMENT DE L'ÉLÈVE — le petit ticket "وصل دفع" remis à la
+// famille à chaque encaissement (rechargement de solde, règlement de frais,
+// séance libre). Un seul générateur visuel (`brandedTicketHtml`) habille les
+// trois documents : même logo, mêmes couleurs, même reçu numéroté — seul le
+// contenu des lignes change d'un cas à l'autre.
+// ---------------------------------------------------------------------------
+const TICKET_LABELS = {
+  fr: {
+    docTitle: "Reçu de Paiement",
+    receiptNo: "N° de reçu :",
+    name: "Nom et prénom :",
+    level: "Niveau :",
+    group: "Emploi du temps :",
+    date: "Date :",
+    amount: "Montant :",
+    month: "Mois :",
+    note: "Remarque :",
+    items: "Désignation",
+    itemsDate: "Mois / Date",
+    total: "Total",
+    thanks: "Merci pour votre confiance",
+    disclaimer: "Ce reçu ne constitue pas une pièce justificative de remboursement.",
+    da: "DA",
+  },
+  ar: {
+    docTitle: "وصل دفع",
+    receiptNo: "رقم الوصل :",
+    name: "الاسم واللقب :",
+    level: "المستوى :",
+    group: "المجموعة :",
+    date: "التاريخ :",
+    amount: "المبلغ :",
+    month: "الشهر :",
+    note: "الملاحظة :",
+    items: "البيان",
+    itemsDate: "الشهر / التاريخ",
+    total: "المجموع",
+    thanks: "شكرا على ثقتكم",
+    disclaimer: "هذا الوصل لا يعتبر سندا لاسترجاع المبلغ",
+    da: "دج",
+  },
+} as const;
+
+/** Amounts on the branded ticket read "4.000 دج" — dot-grouped, currency
+ *  spelled per language — the convention printed on the sample template. */
+function daTicket(n: number, lang: Language): string {
+  const value = Math.round((Number(n) || 0) * 100) / 100;
+  const digits = Number.isInteger(value) ? 0 : 2;
+  const grouped = Math.abs(value).toLocaleString("de-DE", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  return `${value < 0 ? "-" : ""}${grouped} ${TICKET_LABELS[lang].da}`;
+}
+
+const TICKET_CSS = `
+  @page { size: A5; margin: 8mm; }
+  body { padding: 14px 0; background: #f6ecf1; }
+  .rcpt { max-width: 380px; margin: 0 auto; background: #fff; border: 1px solid #efd9e3; border-radius: 16px 16px 0 0; padding: 20px 22px 6px; }
+  .rcpt-head { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; }
+  .rcpt-logo, .rcpt-logo-fallback { width: 78px; height: 78px; border-radius: 50%; object-fit: cover; border: 3px solid #fbe4ee; margin-bottom: 6px; }
+  .rcpt-logo-fallback { background: #7a1440; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 2em; }
+  .rcpt-desc { font-size: 0.72em; color: #7a1440; font-weight: 700; }
+  .rcpt-name { font-size: 1.4em; font-weight: 800; color: #7a1440; letter-spacing: 0.3px; margin: 1px 0; }
+  .rcpt-contact { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; font-size: 0.72em; color: #4a4453; }
+  .rcpt-sep { border-top: 1px dashed #d9c3cf; margin: 12px 0; }
+  .rcpt-title-box { margin: 0 auto; width: fit-content; border: 1.5px solid #1e1b2e; border-radius: 10px; padding: 5px 26px; font-weight: 800; font-size: 1.05em; text-align: center; color: #1e1b2e; }
+  .rcpt-no { text-align: center; font-size: 0.85em; margin-top: 9px; color: #3a3444; }
+  .rcpt-no strong { font-family: monospace; font-size: 1.15em; color: #7a1440; letter-spacing: 1.5px; }
+  .rcpt-fields { display: flex; flex-direction: column; gap: 9px; margin-top: 2px; }
+  .field { display: flex; justify-content: center; align-items: baseline; gap: 10px; font-size: 0.86em; text-align: center; }
+  .field-label { font-weight: 700; color: #3a3444; white-space: nowrap; }
+  .field-value { color: #1e1b2e; font-weight: 600; }
+  .field-value.muted { color: #a79fae; font-weight: 400; }
+  .field-amount .field-value { font-size: 1.2em; font-weight: 800; color: #15803d; }
+  .field-value.danger { color: #b91c1c; font-weight: 800; }
+  .field-value.success { color: #15803d; font-weight: 800; }
+  .rcpt-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 0.8em; }
+  .rcpt-table th { background: #fbe4ee; color: #7a1440; font-weight: 700; padding: 6px; text-align: center; }
+  .rcpt-table td { padding: 6px; border-bottom: 1px solid #f4e9ee; text-align: center; }
+  .rcpt-table td.num { text-align: end; font-family: monospace; font-weight: 700; }
+  .rcpt-table tfoot td { border-top: 2px solid #7a1440; font-weight: 800; color: #7a1440; border-bottom: none; }
+  .rcpt-thanks { text-align: center; font-weight: 700; color: #7a1440; font-size: 0.95em; margin-top: 8px; }
+  .rcpt-disclaimer { text-align: center; font-size: 0.68em; color: #8c8594; font-style: italic; margin: 4px 0 10px; }
+  .rcpt-torn { height: 12px; background-image: linear-gradient(135deg, transparent 50%, #f6ecf1 50%), linear-gradient(45deg, #f6ecf1 50%, transparent 50%); background-size: 16px 16px; background-position: top left, top right; background-repeat: repeat-x; }
+`;
+
+interface TicketRow {
+  label: string;
+  meta?: string;
+  amount: number;
+  extraLabel?: string;
+  extra?: string;
+  extraTone?: "success" | "danger" | "muted";
+}
+
+function brandedTicketHtml(opts: {
+  school: School;
+  language: Language;
+  docTitle?: string;
+  receiptNo: string;
+  name: string;
+  level?: string;
+  date?: string;
+  rows: TicketRow[];
+  note?: string;
+}): string {
+  const { school, language: lang, rows } = opts;
+  const L = TICKET_LABELS[lang];
+  const total = rows.reduce((s, r) => s + r.amount, 0);
+  const single = rows.length <= 1 ? rows[0] : undefined;
+
+  const logo = school.logo
+    ? `<img src="${esc(school.logo)}" alt="logo" class="rcpt-logo" />`
+    : `<div class="rcpt-logo-fallback">🎓</div>`;
+
+  const extraToneClass = (t?: TicketRow["extraTone"]) =>
+    t === "danger" ? "danger" : t === "muted" ? "muted" : "success";
+
+  const fieldsHtml = single
+    ? `
+      <div class="field"><span class="field-label">${L.group}</span><span class="field-value">${esc(single.label)}</span></div>
+      ${single.meta ? `<div class="field"><span class="field-label">${L.month}</span><span class="field-value">${esc(single.meta)}</span></div>` : ""}
+      <div class="field field-amount"><span class="field-label">${L.amount}</span><span class="field-value">${daTicket(single.amount, lang)}</span></div>
+      ${
+        single.extra
+          ? `<div class="field"><span class="field-label">${esc(single.extraLabel ?? "")}</span><span class="field-value ${extraToneClass(single.extraTone)}">${esc(single.extra)}</span></div>`
+          : ""
+      }
+    `
+    : `
+      <table class="rcpt-table">
+        <thead><tr><th>${L.items}</th><th>${L.itemsDate}</th><th>${L.amount.replace(" :", "")}</th></tr></thead>
+        <tbody>
+          ${rows
+            .map(
+              (r) => `<tr>
+                <td>${esc(r.label)}</td>
+                <td>${esc(r.meta ?? "—")}</td>
+                <td class="num">${daTicket(r.amount, lang)}</td>
+              </tr>`,
+            )
+            .join("")}
+        </tbody>
+        <tfoot><tr><td colspan="2">${L.total}</td><td class="num">${daTicket(total, lang)}</td></tr></tfoot>
+      </table>
+    `;
+
+  const body = `
+    <div class="rcpt">
+      <div class="rcpt-head">
+        ${logo}
+        ${school.description ? `<div class="rcpt-desc">${esc(school.description)}</div>` : ""}
+        <div class="rcpt-name">${esc(school.name)}</div>
+        <div class="rcpt-contact">
+          ${school.address ? `<span>📍 ${esc(school.address)}</span>` : ""}
+          ${school.phone ? `<span>📞 ${esc(school.phone)}</span>` : ""}
+        </div>
+      </div>
+      <div class="rcpt-sep"></div>
+      <div class="rcpt-title-box">${esc(opts.docTitle || L.docTitle)}</div>
+      <div class="rcpt-no">${L.receiptNo} <strong>${esc(opts.receiptNo)}</strong></div>
+      <div class="rcpt-sep"></div>
+      <div class="rcpt-fields">
+        <div class="field"><span class="field-label">${L.name}</span><span class="field-value">${esc(opts.name)}</span></div>
+        ${opts.level ? `<div class="field"><span class="field-label">${L.level}</span><span class="field-value">${esc(opts.level)}</span></div>` : ""}
+        ${opts.date ? `<div class="field"><span class="field-label">${L.date}</span><span class="field-value">${esc(formatDateFr(opts.date))}</span></div>` : ""}
+        ${fieldsHtml}
+        <div class="field"><span class="field-label">${L.note}</span><span class="field-value ${opts.note ? "" : "muted"}">${esc(opts.note || "—")}</span></div>
+      </div>
+      <div class="rcpt-sep"></div>
+      <div class="rcpt-thanks">★ ${L.thanks} ★</div>
+      <div class="rcpt-disclaimer">${L.disclaimer}</div>
+    </div>
+    <div class="rcpt-torn"></div>
+  `;
+
+  return printDocument({
+    title: opts.docTitle || L.docTitle,
+    lang,
+    bodyHtml: body,
+    extraCss: TICKET_CSS,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Reçu de paiement — every solde recharge.
 // ---------------------------------------------------------------------------
 export interface SoldReceiptLine {
@@ -146,42 +334,26 @@ export function soldReceiptHtml(
   },
 ): string {
   const { student, lines, language } = opts;
-  const total = lines.reduce((s, l) => s + l.amount, 0);
+  const extraLabel = language === "ar" ? "الرصيد الجديد :" : "Nouveau solde :";
 
-  const rows = lines
-    .map(
-      (l) => `<tr>
-        <td><strong>${esc(l.label)}</strong></td>
-        <td class="ctr">${esc(monthCodeLabel(l.monthCode))}</td>
-        <td class="num">${da(l.amount)}</td>
-        <td class="num"><span class="badge ${l.balanceAfter < 0 ? "badge-danger" : "badge-success"}">${da(l.balanceAfter)}</span></td>
-      </tr>`,
-    )
-    .join("");
-
-  const body = `
-    ${letterheadHtml(db.school)}
-    ${bannerHtml(opts.title || "Reçu de paiement", `${esc(studentName(student))} — N° ${esc(registrationNumberOf(db, student))} — ${new Date().toLocaleDateString("fr-FR")}`)}
-    <div class="frame frame-success">
-      <h3>Détail du versement</h3>
-      <table>
-        <thead>
-          <tr><th>Emploi du temps</th><th class="ctr">Mois</th><th class="num">Montant versé</th><th class="num">Nouveau solde</th></tr>
-        </thead>
-        <tbody>${rows || `<tr><td colspan="4" class="ctr">—</td></tr>`}</tbody>
-      </table>
-      ${opts.note ? `<p style="margin-top:10px;font-size:0.85em;color:#5c567a">${esc(opts.note)}</p>` : ""}
-    </div>
-    <div class="summary-card">
-      <h3>Récapitulatif</h3>
-      <div class="summary-line"><span>Élève</span><strong>${esc(studentName(student))}</strong></div>
-      <div class="summary-line"><span>N° d'inscription</span><strong style="font-family:monospace">${esc(registrationNumberOf(db, student))}</strong></div>
-      <div class="net-pay-box"><span>Total encaissé</span><span>${da(total)}</span></div>
-    </div>
-    ${signaturesHtml("La Direction", "Le Payeur")}
-    ${metaFooterHtml(db.school.name, language)}
-  `;
-  return printDocument({ title: opts.title || "Reçu de paiement", lang: language, bodyHtml: body });
+  return brandedTicketHtml({
+    school: db.school,
+    language,
+    docTitle: opts.title,
+    receiptNo: receiptNumberOf(db),
+    name: studentName(student),
+    level: studentLevelLabel(db, student),
+    date: new Date().toISOString().slice(0, 10),
+    note: opts.note,
+    rows: lines.map((l) => ({
+      label: l.label,
+      meta: monthCodeLabel(l.monthCode),
+      amount: l.amount,
+      extraLabel,
+      extra: daTicket(l.balanceAfter, language),
+      extraTone: l.balanceAfter < 0 ? "danger" : "success",
+    })),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -216,62 +388,30 @@ export function chargeReceiptHtml(
   },
 ): string {
   const { student, lines, language } = opts;
-  const paid = lines.reduce((s, l) => s + l.amount, 0);
+  const extraLabel = language === "ar" ? "الباقي على هذا الفرض :" : "Reste sur ce frais :";
+  const soldeLabel = language === "ar" ? "مسدد بالكامل" : "Soldé";
 
-  const rows = lines
-    .map(
-      (l) => `<tr>
-        <td><strong>${esc(l.label)}</strong></td>
-        <td class="ctr">${esc(formatDateFr(l.date))}</td>
-        <td class="num">${da(l.total)}</td>
-        <td class="num"><strong>${da(l.amount)}</strong></td>
-        <td class="num"><span class="badge ${l.remaining > 0 ? "badge-danger" : "badge-success"}">${
-          l.remaining > 0 ? da(l.remaining) : "Soldé"
-        }</span></td>
-      </tr>`,
-    )
-    .join("");
-
-  const body = `
-    ${letterheadHtml(db.school)}
-    ${bannerHtml(
-      opts.title || "Reçu de règlement de frais",
-      `${esc(studentName(student))} — N° ${esc(registrationNumberOf(db, student))} — ${new Date().toLocaleDateString("fr-FR")}`,
-    )}
-    <div class="frame frame-success">
-      <h3>Frais réglés</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Frais</th>
-            <th class="ctr">Du</th>
-            <th class="num">Montant du frais</th>
-            <th class="num">Versé</th>
-            <th class="num">Reste dû</th>
-          </tr>
-        </thead>
-        <tbody>${rows || `<tr><td colspan="5" class="ctr">—</td></tr>`}</tbody>
-      </table>
-      ${opts.note ? `<p style="margin-top:10px;font-size:0.85em;color:#5c567a">${esc(opts.note)}</p>` : ""}
-    </div>
-    <div class="summary-card">
-      <h3>Récapitulatif</h3>
-      <div class="summary-line"><span>Élève</span><strong>${esc(studentName(student))}</strong></div>
-      <div class="summary-line"><span>N° d'inscription</span><strong style="font-family:monospace">${esc(registrationNumberOf(db, student))}</strong></div>
-      ${
-        opts.restAfter !== undefined
-          ? `<div class="summary-line"><span>Frais restant dus après ce versement</span><strong>${da(opts.restAfter)}</strong></div>`
-          : ""
-      }
-      <div class="net-pay-box"><span>Total encaissé</span><span>${da(paid)}</span></div>
-    </div>
-    ${signaturesHtml("La Direction", "Le Payeur")}
-    ${metaFooterHtml(db.school.name, language)}
-  `;
-  return printDocument({
-    title: opts.title || "Reçu de règlement de frais",
-    lang: language,
-    bodyHtml: body,
+  return brandedTicketHtml({
+    school: db.school,
+    language,
+    docTitle: opts.title,
+    receiptNo: receiptNumberOf(db),
+    name: studentName(student),
+    level: studentLevelLabel(db, student),
+    date: new Date().toISOString().slice(0, 10),
+    note:
+      opts.note ??
+      (opts.restAfter !== undefined && opts.restAfter > 0
+        ? `${language === "ar" ? "إجمالي الباقي على كل الفرائض" : "Total restant dû, tous frais confondus"} : ${daTicket(opts.restAfter, language)}`
+        : undefined),
+    rows: lines.map((l) => ({
+      label: l.label,
+      meta: formatDateFr(l.date),
+      amount: l.amount,
+      extraLabel,
+      extra: l.remaining > 0 ? daTicket(l.remaining, language) : soldeLabel,
+      extraTone: l.remaining > 0 ? "danger" : "success",
+    })),
   });
 }
 
@@ -382,6 +522,8 @@ export function seanceLibreInvoiceHtml(
     payer: string;
     /** set when the payer is a registered student */
     registrationNumber?: string;
+    /** class/level of the payer, when he is a registered student */
+    classLabel?: string;
     itemLabel: string;
     price: number;
     date: string;
@@ -390,38 +532,21 @@ export function seanceLibreInvoiceHtml(
   },
 ): string {
   const { payer, itemLabel, price, date, time, language } = opts;
-  const body = `
-    <div class="ticket">
-      <div class="ticket-head">
-        <strong>${esc(db.school.name)}</strong>
-        <span>${esc(db.school.address || "")}</span>
-        <span>${esc(db.school.phone || "")}</span>
-      </div>
-      <h1>Reçu — Séance libre</h1>
-      <div class="line"><span>Date</span><strong>${esc(formatDateFr(date))}${time ? ` · ${esc(time)}` : ""}</strong></div>
-      <div class="line"><span>Élève</span><strong>${esc(payer)}</strong></div>
-      ${opts.registrationNumber ? `<div class="line"><span>N° d'inscription</span><strong style="font-family:monospace">${esc(opts.registrationNumber)}</strong></div>` : ""}
-      <div class="line"><span>Séance</span><strong>${esc(itemLabel)}</strong></div>
-      <div class="total"><span>Total payé</span><span>${da(price)}</span></div>
-      <p class="thanks">Merci et bonne séance.</p>
-    </div>
-  `;
-  const css = `
-    @page { size: A5; margin: 8mm; }
-    body { padding: 0; background: #fff; }
-    .ticket { max-width: 340px; margin: 0 auto; border: 1px solid #e8e6f4; border-radius: 12px; padding: 16px; background: #fff; }
-    .ticket-head { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; border-bottom: 1px dashed #c0b6e9; padding-bottom: 10px; }
-    .ticket-head strong { font-size: 1.1em; color: #7c3aed; }
-    .ticket-head span { font-size: 0.75em; color: #5c567a; }
-    .ticket h1 { font-size: 1em; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0; color: #1e1b4b; }
-    .line { display: flex; justify-content: space-between; gap: 10px; font-size: 0.85em; padding: 5px 0; border-bottom: 1px solid #f1f0fb; }
-    .total { display: flex; justify-content: space-between; margin-top: 12px; padding: 10px; border-radius: 8px; background: #f0fdf4; border: 1px solid #22c55e; color: #15803d; font-weight: 800; }
-    .thanks { text-align: center; font-size: 0.75em; color: #999; font-style: italic; margin-top: 12px; }
-  `;
-  return printDocument({
-    title: "Reçu séance libre",
-    lang: language,
-    bodyHtml: body,
-    extraCss: css,
+  const docTitle = language === "ar" ? "وصل — حصة حرة" : "Reçu — Séance libre";
+
+  return brandedTicketHtml({
+    school: db.school,
+    language,
+    docTitle,
+    receiptNo: receiptNumberOf(db),
+    name: payer,
+    level: opts.classLabel,
+    rows: [
+      {
+        label: itemLabel,
+        meta: time ? `${formatDateFr(date)} · ${time}` : formatDateFr(date),
+        amount: price,
+      },
+    ],
   });
 }

@@ -1,32 +1,22 @@
 "use client";
 
 /**
- * LA FICHE DE PAIE D'UN MOIS — le miroir imprimé de l'écran de règlement.
+ * LA FICHE DE PAIE D'UN MOIS — « فيش دفعة الأستاذ », calquée sur le modèle
+ * papier de l'école (logo, coordonnées, puis trois tableaux numérotés) :
  *
- * Elle reprend, dans le même ordre et avec les mêmes colonnes, les trois tables
- * que la réception vient de lire à l'écran :
+ *   1. la liste des élèves du mois et ce que leurs séances rapportent ;
+ *   2. les mekhalfat du mois précédent — arriérés débloqués par un paiement
+ *      tardif, et séances libres tombées sur ce mois ;
+ *   3. les dépenses retenues sur la paie (avances, frais, scolarité des
+ *      enfants).
  *
- *   1. les ÉLÈVES du mois — séances, versements, part de l'enseignant, avec la
- *      mention explicite des parts retenues et des dettes avancées par l'école ;
- *   2. les ARRIÉRÉS rattrapés — des parts d'un mois DÉJÀ réglé, libérées par un
- *      paiement tardif, présentées avec leur mois d'origine et leurs dates ;
- *   3. les RETENUES — dépenses, acomptes, scolarité de ses enfants.
- *
- * Puis le résumé : table 1 + table 2 − table 3 = net versé. L'enseignant doit
- * pouvoir refaire l'addition ligne à ligne, sans rien avoir à croire sur parole.
+ * Puis le résumé : table 1 + table 2 − table 3 = net versé.
  */
 
 import type { School, Teacher, TeacherPayBoard } from "@/lib/types";
 import type { Language } from "@/lib/store/settings";
-import {
-  bannerHtml,
-  fmtDate,
-  fmtDateTime,
-  letterheadHtml,
-  metaFooterHtml,
-  printDocument,
-  signaturesHtml,
-} from "@/lib/printTemplates";
+import { fmtDateTime, metaFooterHtml, printDocument } from "@/lib/printTemplates";
+import { monthCodeLabel, schoolYearLabel } from "@/lib/helpers";
 
 function esc(v: unknown): string {
   return String(v ?? "")
@@ -36,230 +26,113 @@ function esc(v: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-/**
- * Un montant AVEC SES DÉCIMALES.
- *
- * La part d'une séance tombe rarement juste (1 333,33 DA) : arrondir chaque
- * ligne au dinar ferait que la somme des lignes ne retombe plus sur le net.
- * Les décimales ne s'affichent que lorsqu'il y en a.
- */
-const da = (n: number) => {
-  const value = Math.round((Number(n) || 0) * 100) / 100;
-  const digits = Number.isInteger(value) ? 0 : 2;
-  return `${value.toLocaleString("fr-DZ", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })} DA`;
-};
-
-/**
- * UNE SÉANCE DU MOIS, IMPRIMÉE COMME SUR LA FEUILLE DE PRÉSENCE.
- *
- * P / R / A / × sont exactement les pastilles que la réception a sous les yeux
- * toute la journée : la fiche de paie ne réinvente pas un vocabulaire pour
- * l'occasion. Une case vide est une séance non pointée, une case grisée une
- * séance tenue avant l'inscription de l'élève — elle n'a jamais été la sienne.
- */
-const SLOT_MARK: Record<string, { text: string; cls: string }> = {
-  present: { text: "P", cls: "slot-p" },
-  late: { text: "R", cls: "slot-r" },
-  absent: { text: "A", cls: "slot-a" },
-  cancelled: { text: "×", cls: "slot-c" },
-  before: { text: "·", cls: "slot-b" },
-};
-
-function slotCells(slots: (string | null)[] | undefined, size: number): string {
-  const list = slots ?? Array.from({ length: size }, () => null);
-  return list
-    .map((v) => {
-      const mark = v ? SLOT_MARK[v] : undefined;
-      return `<td style="text-align:center; padding:3px;"><span class="slot ${mark?.cls ?? "slot-n"}">${mark?.text ?? "–"}</span></td>`;
-    })
-    .join("");
-}
-
-const EXTRA_CSS = `
-  .board-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; background:#f5f3ff; border:1px solid #e8e6f4; border-radius:10px; padding:10px 14px; margin-bottom:12px; }
-  .board-head h4 { margin:0 0 2px; font-size:1em; color:#5b21b6; }
-  .board-head span { display:block; font-size:0.76em; color:#5c567a; }
-  .board-head .chip { background:#fff; border:1px solid #c0b6e9; border-radius:999px; padding:4px 12px; font-size:0.74em; font-weight:700; color:#7c3aed; white-space:nowrap; }
-  .tbl-title { display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin:16px 0 6px; }
-  .tbl-title h3 { margin:0; font-size:0.95em; color:#5b21b6; }
-  .tbl-title em { font-style:normal; font-size:0.74em; color:#5c567a; }
-  .row-withheld td { background:#fff7ed; }
-  .row-covered td { background:#fef2f2; }
-  .tag { display:inline-block; border-radius:999px; padding:1px 7px; font-size:0.72em; font-weight:700; }
-  .tag-danger { background:#fee2e2; color:#b91c1c; }
-  .tag-warn { background:#fef3c7; color:#b45309; }
-  .tag-ok { background:#dcfce7; color:#15803d; }
-  .tag-mute { background:#f1f0f7; color:#5c567a; }
-  .sum { width:100%; border-collapse:collapse; margin-top:14px; }
-  .sum td { padding:7px 12px; border-bottom:1px solid #ece9f8; font-size:0.9em; }
-  .sum td:last-child { text-align:end; font-family:monospace; font-weight:700; }
-  .sum tr.net td { background:#f5f3ff; border-top:2px solid #7c3aed; border-bottom:none; font-size:1.1em; font-weight:800; color:#5b21b6; }
-  .sum tr.minus td:last-child { color:#b91c1c; }
-  .slot { display:inline-block; width:18px; height:18px; line-height:17px; text-align:center; border-radius:5px; border:1px solid #ddd9f0; font-size:0.72em; font-weight:800; }
-  .slot-p { background:#dcfce7; border-color:#86efac; color:#15803d; }
-  .slot-r { background:#fef3c7; border-color:#fcd34d; color:#b45309; }
-  .slot-a { background:#fee2e2; border-color:#fca5a5; color:#b91c1c; }
-  .slot-c { background:#ede9fe; border-color:#c4b5fd; color:#6d28d9; }
-  .slot-b { background:#f8f7fd; border-style:dashed; color:#c8c4dd; }
-  .slot-n { background:#fff; color:#c8c4dd; }
-  .note { font-size:0.75em; color:#5c567a; margin:6px 0 0; font-style:italic; }
-  .empty { padding:12px; text-align:center; font-style:italic; color:#5c567a; font-size:0.82em; border:1px dashed #ddd9f0; border-radius:8px; }
-`;
-
 const LABELS = {
   fr: {
-    docTitle: "Fiche de Paie — Règlement d'un mois",
+    docTitle: "Fiche de Paie de l'Enseignant",
     receiptNo: "Bon N° :",
-    teacherInfo: "Enseignant",
-    fullName: "Nom complet :",
-    phone: "Téléphone :",
-    email: "E-mail :",
-    status: "Statut :",
-    passager: "Enseignant passager (sans compte)",
-    regular: "Enseignant de l'école",
-    emploiInfo: "Emploi du temps réglé",
+    teacherName: "Nom et prénom de l'enseignant",
+    group: "Groupe",
     month: "Mois",
-    seances: "Séances tenues",
-    monthPrice: "Prix du mois (élève)",
-    teacherShare: "Part de l'enseignant (mois)",
-    perSeance: "Part par séance",
-
-    t1: "1. Élèves du mois",
-    t1note:
-      "Une ligne par élève du mois : ce qu'il a suivi, ce qu'il a versé, et ce que ses séances rapportent à l'enseignant. Une part RETENUE appartient à un élève qui doit encore de l'argent : elle sera réglée dès qu'il se sera acquitté.",
-    slotLegend:
-      "Colonnes S1…Sn : P = présent, R = retard, A = absent, × = séance annulée, – = pas encore pointée, · = séance tenue avant son inscription.",
-    t2: "2a. Retards de paiement — élèves ayant payé en retard",
-    t2note:
-      "Ces parts appartiennent à des MOIS DÉJÀ RÉGLÉS : elles avaient été retenues faute de paiement. L'élève s'est acquitté depuis, elles sont donc dues aujourd'hui — sans se confondre avec le mois courant.",
-    t2b: "2b. Séances libres du mois — élèves de passage",
-    t2bnote:
-      "Un élève de passage paie sa séance sur place : ce que l'école ne garde pas revient à l'enseignant, avec le mois où la séance est tombée.",
-    t3: "3. Retenues sur la paie",
-    t3note:
-      "Dépenses avancées par l'école, acomptes déjà versés, et scolarité des enfants de l'enseignant réglée sur son salaire.",
-
+    year: "Année scolaire",
+    t1title: "Liste des élèves et des séances",
     number: "N°",
-    student: "Élève",
-    case: "Cas",
-    presence: "P / A / An.",
-    paidSeances: "Séances payables",
-    unit: "Part / séance",
-    credited: "Versé par l'élève",
-    debt: "Reste dû",
-    share: "Part enseignant",
-    origin: "Mois d'origine",
-    dates: "Dates concernées",
-    dedDate: "Date",
-    dedKind: "Nature",
-    dedLabel: "Libellé",
-    dedAmount: "Montant",
+    student: "Nom et prénom de l'élève",
+    seances: "Nb. séances",
+    amountCol: "Montant des séances (DA)",
+    total: "Total",
+    withheldTag: "Retenu",
+    noStudents: "Aucun élève sur ce mois.",
+    t2title: "Arriérés du mois précédent",
+    tStudent: "Élève",
+    status: "Statut",
+    arrearStatus: (m: string) => `Règlement en retard — ${m}`,
+    passagerTag: "Séance libre",
+    noPrevious: "Aucun arriéré ni séance libre sur ce mois.",
+    t3title: "Dépenses de l'enseignant",
+    label: "Désignation",
     expense: "Dépense",
     acompte: "Acompte",
     child: "Scolarité enfant",
     childDebt: "Scolarité avancée",
-    subtotal: "Sous-total",
-    noStudents: "Aucun élève réglé sur ce mois.",
-    noArrears: "Aucun retard de paiement à rattraper.",
-    noPassagers: "Aucune séance libre sur ce mois.",
-    passagerTag: "Élève de passage",
-    seanceLabel: "Séance",
-    dateHour: "Date & horaire",
-    pricePaid: "Prix payé",
-    schoolShare: "Part école",
-    noDeductions: "Aucune retenue sur cette paie.",
-
-    withheld: "retenu",
-    covered: "dette avancée par l'école",
-    summary: "Résumé du règlement",
-    sumStudents: "Total des élèves du mois (table 1) :",
-    sumArrears: "Total des retards de paiement rattrapés (table 2a) :",
-    sumPassagers: "Total des séances libres (table 2b) :",
-    sumGross: "TOTAL BRUT :",
-    sumDeductions: "Retenues (table 3) :",
-    sumNet: "NET VERSÉ À L'ENSEIGNANT :",
-    paidOn: "Payé le :",
+    noExpenses: "Aucune dépense retenue sur cette paie.",
+    net: "Net à payer à l'enseignant",
     signTeacher: "Signature de l'enseignant",
-    signCashier: "La Caisse / Direction",
+    signAdmin: "Signature de l'administration",
+    paidOn: "Date de paiement :",
   },
   ar: {
-    docTitle: "كشف الراتب — تسوية شهر",
-    receiptNo: "وصل رقم :",
-    teacherInfo: "الأستاذ",
-    fullName: "الاسم الكامل :",
-    phone: "الهاتف :",
-    email: "البريد الإلكتروني :",
-    status: "الحالة :",
-    passager: "أستاذ عابر (بدون حساب)",
-    regular: "أستاذ بالمدرسة",
-    emploiInfo: "جدول التوقيت المسوّى",
+    docTitle: "فيش دفعة الأستاذ",
+    receiptNo: "رقم الفيش :",
+    teacherName: "اسم ولقب الأستاذ",
+    group: "المجموعة",
     month: "الشهر",
-    seances: "الحصص المنجزة",
-    monthPrice: "سعر الشهر (للتلميذ)",
-    teacherShare: "نصيب الأستاذ (الشهر)",
-    perSeance: "النصيب لكل حصة",
-
-    t1: "1. تلاميذ الشهر",
-    t1note:
-      "سطر لكل تلميذ : ما حضره، ما دفعه، وما تدرّه حصصه على الأستاذ. المبلغ المحجوز يخص تلميذًا لا يزال مدينًا، ويُدفع فور تسديده.",
-    slotLegend:
-      "الأعمدة S1…Sn : P = حاضر، R = متأخر، A = غائب، × = حصة ملغاة، – = لم تُسجَّل بعد، · = حصة سابقة لتسجيله.",
-    t2: "2أ. متأخرات الدفع — تلاميذ دفعوا متأخرين",
-    t2note:
-      "تخص هذه المبالغ أشهرًا سُوّيت من قبل : حُجزت لعدم الدفع، وقد سدّد التلميذ منذ ذلك الحين فأصبحت مستحقة اليوم.",
-    t2b: "2ب. الحصص الحرة للشهر — تلاميذ عابرون",
-    t2bnote:
-      "التلميذ العابر يدفع حصته في الحين : ما لا تحتفظ به المدرسة يعود إلى الأستاذ، مع الشهر الذي وقعت فيه الحصة.",
-    t3: "3. الخصومات من الراتب",
-    t3note: "مصاريف قدّمتها المدرسة، تسبيقات، ودراسة أبناء الأستاذ المخصومة من راتبه.",
-
+    year: "السنة الدراسية",
+    t1title: "قائمة التلاميذ والحصص",
     number: "رقم",
-    student: "التلميذ",
-    case: "الحالة",
-    presence: "ح / غ / ملغاة",
-    paidSeances: "الحصص المستحقة",
-    unit: "النصيب / حصة",
-    credited: "المدفوع من التلميذ",
-    debt: "الباقي",
-    share: "نصيب الأستاذ",
-    origin: "الشهر الأصلي",
-    dates: "التواريخ المعنية",
-    dedDate: "التاريخ",
-    dedKind: "النوع",
-    dedLabel: "البيان",
-    dedAmount: "المبلغ",
+    student: "اسم ولقب التلميذ",
+    seances: "عدد الحصص",
+    amountCol: "مبلغ الحصص(دج)",
+    total: "المجموع",
+    withheldTag: "محجوز",
+    noStudents: "لا يوجد تلاميذ على هذا الشهر.",
+    t2title: "مخلفات الشهر السابق",
+    tStudent: "التلميذ",
+    status: "الحالة",
+    arrearStatus: (m: string) => `تسوية متأخرة — ${m}`,
+    passagerTag: "حصة حرة",
+    noPrevious: "لا توجد مخلفات على الشهر السابق.",
+    t3title: "مصاريف الأستاذ",
+    label: "البيان",
     expense: "مصروف",
     acompte: "تسبيق",
     child: "دراسة ابن",
     childDebt: "دراسة مقدَّمة",
-    subtotal: "المجموع الجزئي",
-    noStudents: "لا يوجد تلميذ مسوّى في هذا الشهر.",
-    noArrears: "لا توجد متأخرات.",
-    noPassagers: "لا توجد حصص حرة في هذا الشهر.",
-    passagerTag: "تلميذ عابر",
-    seanceLabel: "الحصة",
-    dateHour: "التاريخ والتوقيت",
-    pricePaid: "المبلغ المدفوع",
-    schoolShare: "نصيب المدرسة",
-    noDeductions: "لا توجد خصومات.",
-
-    withheld: "محجوز",
-    covered: "دين قدّمته المدرسة",
-    summary: "ملخص التسوية",
-    sumStudents: "مجموع تلاميذ الشهر (الجدول 1) :",
-    sumArrears: "مجموع متأخرات الدفع (الجدول 2أ) :",
-    sumPassagers: "مجموع الحصص الحرة (الجدول 2ب) :",
-    sumGross: "المجموع الخام :",
-    sumDeductions: "الخصومات (الجدول 3) :",
-    sumNet: "الصافي المدفوع للأستاذ :",
-    paidOn: "تاريخ الدفع :",
+    noExpenses: "لا توجد مصاريف على هذا الفيش.",
+    net: "الصافي المستحق للأستاذ",
     signTeacher: "إمضاء الأستاذ",
-    signCashier: "الصندوق / الإدارة",
+    signAdmin: "إمضاء الإدارة",
+    paidOn: "تاريخ الدفع :",
   },
 } as const;
+
+const TP_CSS = `
+  body { background: #f6ecf1; }
+  .tp-page { background: #fff; }
+  .tp-header { display: flex; justify-content: space-between; align-items: stretch; flex-wrap: wrap; gap: 16px; border: 1px solid #f0d9e3; border-radius: 14px; padding: 16px 18px; margin-bottom: 18px; background: #fff; }
+  .tp-brand { display: flex; align-items: center; gap: 14px; }
+  .tp-logo, .tp-logo-fallback { width: 82px; height: 82px; border-radius: 50%; object-fit: cover; border: 3px solid #fbe4ee; flex-shrink: 0; }
+  .tp-logo-fallback { background: #7a1440; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 2.2em; }
+  .tp-desc { margin: 0; font-size: 0.78em; color: #7a1440; font-weight: 700; }
+  .tp-name { margin: 1px 0; font-size: 1.5em; font-weight: 800; color: #7a1440; }
+  .tp-contact { display: flex; flex-direction: column; gap: 1px; font-size: 0.78em; color: #4a4453; }
+  .tp-right { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 240px; }
+  .tp-title-box { background: linear-gradient(135deg, #7a1440, #4d0c28); color: #fff; text-align: center; font-weight: 800; font-size: 1.05em; padding: 8px 14px; border-radius: 10px; }
+  .tp-title-box small { display: block; font-size: 0.68em; font-weight: 600; opacity: 0.9; margin-top: 3px; letter-spacing: 0.5px; }
+  .tp-fields { width: 100%; border-collapse: collapse; font-size: 0.82em; }
+  .tp-fields th { text-align: start; color: #5c5566; font-weight: 700; padding: 3px 8px 3px 0; white-space: nowrap; }
+  .tp-fields td { text-align: start; font-weight: 700; color: #1e1b2e; padding: 3px 0; }
+  .tp-section { margin-bottom: 16px; }
+  .tp-section-title { display: flex; align-items: center; gap: 8px; font-weight: 800; color: #7a1440; font-size: 1em; margin-bottom: 8px; }
+  .tp-num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: #7a1440; color: #fff; font-size: 0.8em; flex-shrink: 0; }
+  .tp-table { width: 100%; border-collapse: collapse; font-size: 0.85em; border: 1px solid #f0d9e3; border-radius: 10px; overflow: hidden; }
+  .tp-table th { background: #7a1440; color: #fff; padding: 8px; font-weight: 700; text-align: center; }
+  .tp-table td { padding: 7px 8px; border-bottom: 1px solid #f6e9ee; text-align: center; }
+  .tp-table td.num { text-align: end; font-family: monospace; font-weight: 700; }
+  .tp-table tbody tr:nth-child(even) { background: #fdf5f8; }
+  .tp-table tfoot td { background: #fbe4ee; color: #7a1440; font-weight: 800; border-top: 2px solid #7a1440; border-bottom: none; }
+  .tp-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .tp-empty { text-align: center; color: #9a93a3; font-size: 0.82em; font-style: italic; padding: 14px; border: 1px dashed #e6d4de; border-radius: 10px; }
+  .tp-net { display: flex; justify-content: space-between; align-items: center; background: #fdf5f8; border: 2px solid #7a1440; border-radius: 12px; padding: 14px 18px; margin: 18px 0; font-weight: 800; color: #5c0f30; font-size: 1.05em; }
+  .tp-net.negative { border-color: #b91c1c; color: #b91c1c; background: #fdf2f2; }
+  .tp-net span:last-child { font-size: 1.3em; }
+  .tp-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 26px; }
+  .tp-sign-box { border: 1px dashed #d9c3cf; border-radius: 10px; height: 80px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 10px; font-size: 0.8em; font-weight: 700; color: #5c5566; text-transform: uppercase; }
+  .tp-paidon { text-align: end; margin-top: 14px; font-size: 0.85em; color: #4a4453; }
+  .tp-tag { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 0.72em; font-weight: 700; margin-inline-start: 4px; }
+  .tp-tag-warn { background: #fef3c7; color: #b45309; }
+  .tp-tag-mute { background: #f1f0f7; color: #5c567a; }
+  @media print { body { background: #fff; } }
+`;
 
 export interface TeacherMonthPayslipData {
   school: School;
@@ -274,257 +147,181 @@ export interface TeacherMonthPayslipData {
 export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string {
   const { school, teacher, lang, board } = data;
   const L = LABELS[lang];
-  const receiptNo = data.receiptNo ?? "";
+  const receiptNo = data.receiptNo;
 
+  /** Montant AVEC SES DÉCIMALES (la part d'une séance tombe rarement juste) —
+   *  groupé au point, devise selon la langue, comme sur le fiche papier. */
+  const da = (n: number) => {
+    const value = Math.round((Number(n) || 0) * 100) / 100;
+    const digits = Number.isInteger(value) ? 0 : 2;
+    const grouped = Math.abs(value).toLocaleString("de-DE", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    return `${value < 0 ? "-" : ""}${grouped} ${lang === "ar" ? "دج" : "DA"}`;
+  };
+
+  const teacherFullName = `${teacher.firstName} ${teacher.lastName}`.trim();
+  const logo = school.logo
+    ? `<img src="${esc(school.logo)}" alt="logo" class="tp-logo" />`
+    : `<div class="tp-logo-fallback">🎓</div>`;
+
+  // ---- en-tête : logo, école, et le petit encart "fiche" ------------------
+  const headerHtml = `
+    <div class="tp-header">
+      <div class="tp-brand">
+        ${logo}
+        <div>
+          ${school.description ? `<p class="tp-desc">${esc(school.description)}</p>` : ""}
+          <h1 class="tp-name">${esc(school.name)}</h1>
+          <div class="tp-contact">
+            ${school.address ? `<span>📍 ${esc(school.address)}</span>` : ""}
+            ${school.phone ? `<span>📞 ${esc(school.phone)}</span>` : ""}
+          </div>
+        </div>
+      </div>
+      <div class="tp-right">
+        <div class="tp-title-box">
+          ${L.docTitle}
+          ${receiptNo ? `<small>${L.receiptNo} ${esc(receiptNo)}</small>` : ""}
+        </div>
+        <table class="tp-fields">
+          <tr><th>${L.teacherName} :</th><td>${esc(teacherFullName)}</td></tr>
+          <tr><th>${L.group} :</th><td>${esc(board.emploi)} — ${esc(board.groupName)}</td></tr>
+          <tr><th>${L.month} :</th><td>${esc(monthCodeLabel(board.monthCode))}</td></tr>
+          <tr><th>${L.year} :</th><td>${esc(schoolYearLabel(data.paidAt))}</td></tr>
+        </table>
+      </div>
+    </div>`;
+
+  // ---- 1. la liste des élèves et des séances ------------------------------
+  const s1Rows = board.students
+    .map((r) => {
+      const tags = [
+        r.caseLabel ? `<span class="tp-tag tp-tag-mute">${esc(r.caseLabel)}</span>` : "",
+        r.withheld ? `<span class="tp-tag tp-tag-warn">${L.withheldTag}</span>` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `<tr>
+        <td style="font-family:monospace;">${esc(r.registrationNumber || "—")}</td>
+        <td style="text-align:start;"><strong>${esc(r.name)}</strong>${tags ? `<br/>${tags}` : ""}</td>
+        <td>${r.seances}</td>
+        <td class="num">${r.withheld ? "—" : da(r.amount)}</td>
+      </tr>`;
+    })
+    .join("");
+  const s1Seances = board.students.reduce((s, r) => s + r.seances, 0);
+
+  const section1 = `
+    <div class="tp-section">
+      <div class="tp-section-title"><span class="tp-num">1</span>${L.t1title}</div>
+      ${
+        board.students.length === 0
+          ? `<div class="tp-empty">${L.noStudents}</div>`
+          : `<table class="tp-table">
+        <thead><tr><th>${L.number}</th><th style="text-align:start;">${L.student}</th><th>${L.seances}</th><th>${L.amountCol}</th></tr></thead>
+        <tbody>${s1Rows}</tbody>
+        <tfoot><tr><td colspan="2">${L.total}</td><td>${s1Seances}</td><td class="num">${da(board.studentsTotal)}</td></tr></tfoot>
+      </table>`
+      }
+    </div>`;
+
+  // ---- 2. mekhalfat du mois précédent : arriérés + séances libres ---------
+  const prevRows = [
+    ...board.arrears.map((a) => ({
+      name: a.name,
+      status: L.arrearStatus(monthCodeLabel(a.monthCode)),
+      amount: a.amount,
+    })),
+    ...(board.passagers ?? []).map((p) => ({
+      name: p.name,
+      status: L.passagerTag,
+      amount: p.teacherShare,
+    })),
+  ];
+  const prevTotal = board.arrearsTotal + (board.passagersTotal ?? 0);
+
+  const section2 = `
+    <div class="tp-section">
+      <div class="tp-section-title"><span class="tp-num">2</span>${L.t2title}</div>
+      ${
+        prevRows.length === 0
+          ? `<div class="tp-empty">${L.noPrevious}</div>`
+          : `<table class="tp-table">
+        <thead><tr><th style="text-align:start;">${L.tStudent}</th><th>${L.status}</th><th>${L.amountCol}</th></tr></thead>
+        <tbody>${prevRows
+          .map(
+            (r) => `<tr>
+          <td style="text-align:start;"><strong>${esc(r.name)}</strong></td>
+          <td style="font-size:0.82em;">${esc(r.status)}</td>
+          <td class="num">${da(r.amount)}</td>
+        </tr>`,
+          )
+          .join("")}</tbody>
+        <tfoot><tr><td colspan="2">${L.total}</td><td class="num">${da(prevTotal)}</td></tr></tfoot>
+      </table>`
+      }
+    </div>`;
+
+  // ---- 3. les dépenses retenues sur la paie -------------------------------
   const kindLabel: Record<string, string> = {
     expense: L.expense,
     acompte: L.acompte,
     child: L.child,
     child_debt: L.childDebt,
   };
+  const section3 = `
+    <div class="tp-section">
+      <div class="tp-section-title"><span class="tp-num">3</span>${L.t3title}</div>
+      ${
+        board.deductions.length === 0
+          ? `<div class="tp-empty">${L.noExpenses}</div>`
+          : `<table class="tp-table">
+        <thead><tr><th style="text-align:start;">${L.label}</th><th>${L.amountCol}</th></tr></thead>
+        <tbody>${board.deductions
+          .map(
+            (d) => `<tr>
+          <td style="text-align:start;">
+            <strong>${esc(d.label)}</strong> <span class="tp-tag tp-tag-mute">${esc(kindLabel[d.kind] ?? d.kind)}</span>
+            ${d.description ? `<br/><span style="font-size:0.78em;color:#5c567a;">${esc(d.description)}</span>` : ""}
+          </td>
+          <td class="num">− ${da(d.amount)}</td>
+        </tr>`,
+          )
+          .join("")}</tbody>
+        <tfoot><tr><td>${L.total}</td><td class="num">− ${da(board.deductionsTotal)}</td></tr></tfoot>
+      </table>`
+      }
+    </div>`;
 
-  // ---- en-tête : l'enseignant et l'emploi du temps réglé -------------------
-  const headHtml = `
-    <div class="frame frame-info" style="margin-bottom:16px;">
-      <h3>${L.teacherInfo}</h3>
-      <table style="margin-top:0;">
-        <tr>
-          <td style="width:18%; font-weight:bold; color:#5c567a;">${L.fullName}</td>
-          <td style="width:32%; font-weight:bold; font-size:1.05em;">${esc(teacher.firstName)} ${esc(teacher.lastName)}</td>
-          <td style="width:18%; font-weight:bold; color:#5c567a;">${L.phone}</td>
-          <td style="width:32%; font-family:monospace;">${esc(teacher.phone) || "—"}</td>
-        </tr>
-        <tr>
-          <td style="font-weight:bold; color:#5c567a;">${L.email}</td>
-          <td>${esc(teacher.email) || "—"}</td>
-          <td style="font-weight:bold; color:#5c567a;">${L.status}</td>
-          <td>${teacher.isPassager ? L.passager : L.regular}</td>
-        </tr>
-      </table>
+  const netHtml = `
+    <div class="tp-net${board.net < 0 ? " negative" : ""}">
+      <span>${L.net}</span>
+      <span>${da(board.net)}</span>
+    </div>`;
+
+  const signHtml = `
+    <div class="tp-sign">
+      <div class="tp-sign-box">${L.signTeacher}</div>
+      <div class="tp-sign-box">${L.signAdmin}</div>
     </div>
-
-    <div class="board-head">
-      <div>
-        <h4>${esc(board.emploi)} — ${esc(board.groupName)}</h4>
-        <span>${esc(board.className)} · ${esc(board.salleName)} · ${esc(board.daysLabel)} · ${esc(board.timeLabel)}</span>
-        <span>${L.monthPrice} ${da(board.monthPrice)} · ${L.teacherShare} ${da(board.teacherMonthShare)} · ${L.perSeance} ${da(board.perSeance)}</span>
-      </div>
-      <div style="text-align:end;">
-        <span class="chip">${L.month} ${esc(board.monthCode)}</span>
-        <span style="margin-top:6px;">${L.seances} : <strong>${board.held}/${board.size}</strong></span>
-      </div>
-    </div>`;
-
-  // ---- table 1 : les élèves du mois ---------------------------------------
-  const studentsRows = board.students
-    .map((r) => {
-      const cls = r.schoolCovered ? "row-covered" : r.withheld ? "row-withheld" : "";
-      const flags = [
-        r.withheld ? `<span class="tag tag-warn">${L.withheld}</span>` : "",
-        r.schoolCovered ? `<span class="tag tag-danger">${L.covered}</span>` : "",
-        r.caseLabel ? `<span class="tag tag-mute">${esc(r.caseLabel)}</span>` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      return `
-      <tr class="${cls}">
-        <td style="font-family:monospace;">${esc(r.registrationNumber) || "—"}</td>
-        <td><strong>${esc(r.name)}</strong>${flags ? `<br/>${flags}` : ""}</td>
-        ${slotCells(r.slots, board.size)}
-        <td style="text-align:center; font-family:monospace;">${r.presents} / ${r.absents} / ${r.cancelled}</td>
-        <td style="text-align:center; font-family:monospace;">${r.seances}</td>
-        <td style="text-align:end; font-family:monospace;">${da(r.perSeance)}</td>
-        <td style="text-align:end; font-family:monospace;">${da(r.credited)}</td>
-        <td style="text-align:end; font-family:monospace; color:${r.debt > 0 ? "#b91c1c" : "#5c567a"};">${r.debt > 0 ? da(r.debt) : "—"}</td>
-        <td style="text-align:end; font-family:monospace; font-weight:700;">${r.withheld ? `<span class="tag tag-warn">${L.withheld}</span>` : da(r.amount)}</td>
-      </tr>`;
-    })
-    .join("");
-
-  const table1 = `
-    <div class="tbl-title"><h3>${L.t1}</h3><em>${board.students.length} élève(s)</em></div>
-    ${
-      board.students.length === 0
-        ? `<div class="empty">${L.noStudents}</div>`
-        : `<table>
-      <thead>
-        <tr>
-          <th>${L.number}</th><th>${L.student}</th>
-          ${Array.from({ length: board.size }, (_, i) => `<th style="text-align:center;">S${i + 1}</th>`).join("")}
-          <th style="text-align:center;">${L.presence}</th>
-          <th style="text-align:center;">${L.paidSeances}</th><th style="text-align:end;">${L.unit}</th>
-          <th style="text-align:end;">${L.credited}</th><th style="text-align:end;">${L.debt}</th>
-          <th style="text-align:end;">${L.share}</th>
-        </tr>
-      </thead>
-      <tbody>${studentsRows}</tbody>
-      <tfoot>
-        <tr>
-          <td colspan="${7 + board.size}" style="text-align:end; font-weight:700;">${L.subtotal}</td>
-          <td style="text-align:end; font-family:monospace; font-weight:800; color:#5b21b6;">${da(board.studentsTotal)}</td>
-        </tr>
-      </tfoot>
-    </table>`
-    }
-    <p class="note">${L.t1note} ${L.slotLegend}</p>`;
-
-  // ---- table 2 : les arriérés rattrapés -----------------------------------
-  const arrearRows = board.arrears
-    .map(
-      (r) => `
-      <tr>
-        <td style="font-family:monospace;">${esc(r.registrationNumber) || "—"}</td>
-        <td><strong>${esc(r.name)}</strong>${r.caseLabel ? `<br/><span class="tag tag-mute">${esc(r.caseLabel)}</span>` : ""}</td>
-        <td style="text-align:center;"><span class="tag tag-ok">${esc(r.monthCode)}</span></td>
-        <td style="text-align:center; font-family:monospace;">${r.seances}</td>
-        <td style="font-size:0.78em;">${r.dates.map((d) => fmtDate(d, lang)).join(" · ") || "—"}</td>
-        <td style="text-align:end; font-family:monospace;">${da(r.credited)}</td>
-        <td style="text-align:end; font-family:monospace; font-weight:700;">${da(r.amount)}</td>
-      </tr>`,
-    )
-    .join("");
-
-  const table2 = `
-    <div class="tbl-title"><h3>${L.t2}</h3><em>${board.arrears.length} ligne(s)</em></div>
-    ${
-      board.arrears.length === 0
-        ? `<div class="empty">${L.noArrears}</div>`
-        : `<table>
-      <thead>
-        <tr>
-          <th>${L.number}</th><th>${L.student}</th><th style="text-align:center;">${L.origin}</th>
-          <th style="text-align:center;">${L.paidSeances}</th><th>${L.dates}</th>
-          <th style="text-align:end;">${L.credited}</th><th style="text-align:end;">${L.share}</th>
-        </tr>
-      </thead>
-      <tbody>${arrearRows}</tbody>
-      <tfoot>
-        <tr>
-          <td colspan="6" style="text-align:end; font-weight:700;">${L.subtotal}</td>
-          <td style="text-align:end; font-family:monospace; font-weight:800; color:#15803d;">${da(board.arrearsTotal)}</td>
-        </tr>
-      </tfoot>
-    </table>`
-    }
-    <p class="note">${L.t2note}</p>`;
-
-  // ---- table 2 bis : les séances libres du mois ---------------------------
-  const passagers = board.passagers ?? [];
-  const passagersTotal = board.passagersTotal ?? 0;
-  const passagerRows = passagers
-    .map(
-      (r) => `
-      <tr>
-        <td style="font-size:0.8em;">${fmtDate(r.date, lang)}${
-          r.startTime || r.endTime
-            ? `<br/><span style="font-family:monospace; font-size:0.85em; color:#5c567a;">${esc(r.startTime ?? "")} → ${esc(r.endTime ?? "")}</span>`
-            : ""
-        }</td>
-        <td><strong>${esc(r.name)}</strong><br/><span class="tag tag-mute">${L.passagerTag}</span></td>
-        <td style="font-size:0.8em; color:#5c567a;">${esc(r.label ?? "")}</td>
-        <td style="text-align:end; font-family:monospace;">${da(r.price)}</td>
-        <td style="text-align:end; font-family:monospace; color:#5c567a;">${da(r.schoolShare)}</td>
-        <td style="text-align:end; font-family:monospace; font-weight:700;">${da(r.teacherShare)}</td>
-      </tr>`,
-    )
-    .join("");
-
-  const table2b = `
-    <div class="tbl-title"><h3>${L.t2b}</h3><em>${passagers.length} ligne(s)</em></div>
-    ${
-      passagers.length === 0
-        ? `<div class="empty">${L.noPassagers}</div>`
-        : `<table>
-      <thead>
-        <tr>
-          <th>${L.dateHour}</th><th>${L.student}</th><th>${L.seanceLabel}</th>
-          <th style="text-align:end;">${L.pricePaid}</th>
-          <th style="text-align:end;">${L.schoolShare}</th>
-          <th style="text-align:end;">${L.share}</th>
-        </tr>
-      </thead>
-      <tbody>${passagerRows}</tbody>
-      <tfoot>
-        <tr>
-          <td colspan="5" style="text-align:end; font-weight:700;">${L.subtotal}</td>
-          <td style="text-align:end; font-family:monospace; font-weight:800; color:#5b21b6;">${da(passagersTotal)}</td>
-        </tr>
-      </tfoot>
-    </table>`
-    }
-    <p class="note">${L.t2bnote}</p>`;
-
-  // ---- table 3 : les retenues ---------------------------------------------
-  const dedRows = board.deductions
-    .map(
-      (d) => `
-      <tr>
-        <td style="font-family:monospace; font-size:0.8em;">${d.date ? fmtDate(d.date, lang) : "—"}</td>
-        <td><span class="tag tag-mute">${kindLabel[d.kind] ?? d.kind}</span></td>
-        <td><strong>${esc(d.label)}</strong>${d.description ? `<br/><span style="font-size:0.78em; color:#5c567a;">${esc(d.description)}</span>` : ""}</td>
-        <td style="text-align:end; font-family:monospace; color:#b91c1c; font-weight:700;">− ${da(d.amount)}</td>
-      </tr>`,
-    )
-    .join("");
-
-  const table3 = `
-    <div class="tbl-title"><h3>${L.t3}</h3><em>${board.deductions.length} ligne(s)</em></div>
-    ${
-      board.deductions.length === 0
-        ? `<div class="empty">${L.noDeductions}</div>`
-        : `<table>
-      <thead>
-        <tr>
-          <th>${L.dedDate}</th><th>${L.dedKind}</th><th>${L.dedLabel}</th>
-          <th style="text-align:end;">${L.dedAmount}</th>
-        </tr>
-      </thead>
-      <tbody>${dedRows}</tbody>
-      <tfoot>
-        <tr>
-          <td colspan="3" style="text-align:end; font-weight:700;">${L.subtotal}</td>
-          <td style="text-align:end; font-family:monospace; font-weight:800; color:#b91c1c;">− ${da(board.deductionsTotal)}</td>
-        </tr>
-      </tfoot>
-    </table>`
-    }
-    <p class="note">${L.t3note}</p>`;
-
-  // ---- le résumé -----------------------------------------------------------
-  const summary = `
-    <div class="frame" style="margin-top:18px;">
-      <h3>${L.summary}</h3>
-      <table class="sum">
-        <tr><td>${L.sumStudents}</td><td>${da(board.studentsTotal)}</td></tr>
-        <tr><td>${L.sumArrears}</td><td>${da(board.arrearsTotal)}</td></tr>
-        <tr><td>${L.sumPassagers}</td><td>${da(passagersTotal)}</td></tr>
-        <tr><td style="font-weight:700;">${L.sumGross}</td><td>${da(board.gross)}</td></tr>
-        <tr class="minus"><td>${L.sumDeductions}</td><td>− ${da(board.deductionsTotal)}</td></tr>
-        <tr><td>${L.paidOn}</td><td>${fmtDateTime(data.paidAt, lang)}</td></tr>
-        <tr class="net"><td>${L.sumNet}</td><td>${da(board.net)}</td></tr>
-      </table>
-    </div>`;
+    <div class="tp-paidon">${L.paidOn} <strong>${fmtDateTime(data.paidAt, lang)}</strong></div>`;
 
   const bodyHtml = `
-    ${letterheadHtml(school)}
-    ${bannerHtml(
-      `${L.docTitle} — ${esc(board.emploi)} · ${esc(board.monthCode)}`,
-      receiptNo ? `${L.receiptNo} ${esc(receiptNo)}` : undefined,
-    )}
-    ${headHtml}
-    ${table1}
-    ${table2}
-    ${table2b}
-    ${table3}
-    ${summary}
-    ${signaturesHtml(L.signTeacher, L.signCashier)}
-    ${metaFooterHtml(school.name, lang)}
-  `;
+    <div class="tp-page">
+      ${headerHtml}
+      ${section1}
+      <div class="tp-cols">${section2}${section3}</div>
+      ${netHtml}
+      ${signHtml}
+      ${metaFooterHtml(school.name, lang)}
+    </div>`;
 
   return printDocument({
     title: `${L.docTitle} - ${teacher.firstName} ${teacher.lastName} - ${board.monthCode}`,
     lang,
     bodyHtml,
-    extraCss: EXTRA_CSS,
+    extraCss: TP_CSS,
   });
 }

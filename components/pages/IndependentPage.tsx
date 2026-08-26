@@ -412,6 +412,7 @@ export function IndependentPage() {
       seanceLibreInvoiceHtml(db, {
         payer: data.personName,
         registrationNumber: data.registrationNumber,
+        classLabel: data.classLabel,
         itemLabel: data.itemLabel,
         price: data.price,
         date: data.date,

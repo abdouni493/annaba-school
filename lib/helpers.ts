@@ -1785,6 +1785,36 @@ export function registrationNumberOf(db: Database, student: Student): string {
   return formatRegistrationNumber(idx + 1);
 }
 
+/** "000001" — the sequential number printed on a payment receipt (reçu de
+ *  paiement). Counts every `Payment` row ever written, oldest first. */
+export function receiptNumberOf(db: Database, paymentId?: string): string {
+  const idx = paymentId ? db.payments.findIndex((p) => p.id === paymentId) : -1;
+  const n = idx >= 0 ? idx + 1 : db.payments.length + 1;
+  return String(Math.max(1, n)).padStart(6, "0");
+}
+
+/** "2024/2025" — the school year a date falls in; the year turns over in
+ *  September, when the new "rentrée" starts. */
+export function schoolYearLabel(dateIso?: string): string {
+  const d = dateIso ? new Date(dateIso) : new Date();
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  return m >= 9 ? `${y}/${y + 1}` : `${y - 1}/${y}`;
+}
+
+/** The class/level(s) a student currently studies in, joined from his
+ *  subscriptions — "Terminale (Sciences)" style; "-" when he has none. */
+export function studentLevelLabel(db: Database, student: Student): string {
+  const labels = new Set<string>();
+  for (const subId of student.subscriptionIds) {
+    const sub = db.subscriptions.find((s) => s.id === subId);
+    const sess = sub ? db.sessions.find((se) => se.id === sub.sessionId) : undefined;
+    const cls = sess ? db.classes.find((c) => c.id === sess.classId) : undefined;
+    if (cls) labels.add(classLabel(db, cls));
+  }
+  return [...labels].join(" · ") || "-";
+}
+
 /** One search box for the rosters: full name, phone, or registration number
  *  (typing "12" finds 00012). */
 export function studentMatches(db: Database, student: Student, query: string): boolean {
