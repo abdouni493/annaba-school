@@ -132,6 +132,9 @@ export interface Teacher {
   /** "enseignant passager": intervenant sans compte de connexion, réglé
    *  créneau par créneau depuis la fiche enseignant */
   isPassager?: boolean;
+  /** quand la fiche a été créée — c'est ce qui met les derniers arrivés en tête
+   *  de la liste des enseignants. Absent sur les fiches d'avant la colonne. */
+  createdAt?: string;
 }
 
 /** One settlement written for a teacher (fixed amount or percentage-based). */

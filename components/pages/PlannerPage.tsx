@@ -994,6 +994,7 @@ export function PlannerPage() {
             email: "",
             paymentType: "percentage",
             isPassager: true,
+            createdAt: new Date().toISOString(),
           };
           // A passager has no login: the row is simply added to the store.
           push("teachers", newTeacher);

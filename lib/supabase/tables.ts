@@ -92,7 +92,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   teachers: {
     table: "teachers", pk: "id", pkField: "id",
     fields: ["id", "firstName", "lastName", "phone", "email", "paymentType",
-             "monthlyAmount", "startDate", "percentage", "isPassager"],
+             "monthlyAmount", "startDate", "percentage", "isPassager", "createdAt"],
   },
   reception: {
     table: "reception_staff", pk: "id", pkField: "id",

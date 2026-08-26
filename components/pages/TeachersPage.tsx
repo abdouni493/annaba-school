@@ -237,6 +237,28 @@ export function TeachersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teachers, sessions, subscriptions, students, attendance, unpaidTeacher, payments, db.enrollments, independent]);
 
+  /**
+   * LES ENSEIGNANTS, DU DERNIER ARRIVÉ AU PLUS ANCIEN.
+   *
+   * La fiche créée aujourd'hui doit être la première lue : c'est celle qu'on
+   * vient chercher. `createdAt` porte la date de création, et rien d'autre ne
+   * décide de l'ordre — surtout pas l'ordre de lecture de la table, qui bouge
+   * dès qu'une ancienne fiche est modifiée.
+   *
+   * Les fiches d'avant la colonne n'ont pas de `createdAt` : elles passent
+   * derrière les nouvelles, en gardant entre elles leur ordre d'origine
+   * inversé, la seule ancienneté qu'on leur connaisse.
+   */
+  const orderedTeachers = useMemo(() => {
+    const rank = new Map(teachers.map((t, i) => [t.id, i] as const));
+    return [...teachers].sort((a, b) => {
+      if (a.createdAt && b.createdAt) return b.createdAt.localeCompare(a.createdAt);
+      if (a.createdAt) return -1;
+      if (b.createdAt) return 1;
+      return (rank.get(b.id) ?? 0) - (rank.get(a.id) ?? 0);
+    });
+  }, [teachers]);
+
   // Helpers
   const getTeacherUnpaidSessions = (tid: string) => {
     return unpaidTeacher.filter((u) => u.teacherId === tid && !u.paid);
@@ -567,6 +589,7 @@ export function TeachersPage() {
       email: "",
       paymentType: "percentage",
       isPassager: true,
+      createdAt: new Date().toISOString(),
     };
     // A passager has no login: the row is simply added to the store.
     push("teachers", newTeacher);
@@ -616,6 +639,7 @@ export function TeachersPage() {
       phone: phone.trim(),
       email: email.trim(),
       paymentType,
+      createdAt: new Date().toISOString(),
       ...payFields(),
     };
 
@@ -865,7 +889,7 @@ export function TeachersPage() {
 
       {/* Grid of teachers */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {teachers
+        {orderedTeachers
           .filter((t) => {
             if (teacherKind === "staff" && t.isPassager) return false;
             if (teacherKind === "passager" && !t.isPassager) return false;

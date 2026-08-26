@@ -449,7 +449,10 @@ create table if not exists public.teachers (
   monthly_amount numeric,
   start_date     text,
   percentage     numeric,
-  is_passager    boolean                       -- intervenant sans compte de connexion
+  is_passager    boolean,                      -- intervenant sans compte de connexion
+  -- création de la fiche : c'est ce qui met les derniers arrivés en tête de la
+  -- liste des enseignants, sans dépendre de l'ordre de lecture de la table.
+  created_at     text
 );
 
 -- Règlement d'un enseignant : ce qu'il a touché, et tout ce qui a été déduit.
