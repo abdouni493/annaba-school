@@ -137,6 +137,17 @@ export interface PresenceSheetProps {
   onMonthChange: (code: string) => void;
   /** opens the create-student screen with this emploi already ticked */
   onCreateStudent?: () => void;
+  /**
+   * LES DROITS DE CELUI QUI OUVRE LA FEUILLE.
+   *
+   * La feuille sert deux écrans — le tableau de bord et « Présences » — qui
+   * n'accordent pas les mêmes droits. Plutôt que de deviner d'où elle est
+   * ouverte, elle reçoit la réponse : peut-il pointer ? peut-il encaisser ?
+   *
+   * Absent = oui, ce que voit l'administration.
+   */
+  canMark?: boolean;
+  canCollect?: boolean;
 }
 
 export function PresenceSheet({
@@ -145,6 +156,8 @@ export function PresenceSheet({
   monthCode,
   onMonthChange,
   onCreateStudent,
+  canMark = true,
+  canCollect = true,
 }: PresenceSheetProps) {
   const db = useData();
   const {
@@ -290,7 +303,21 @@ export function PresenceSheet({
   }, [roster, db.attendance, session.id, date]);
 
   // ---- writing ------------------------------------------------------------
+  /**
+   * Le refus se dit une fois, ici : les boutons interdits ne s'affichent déjà
+   * pas, mais la feuille se pilote aussi au clavier et au badge — l'écriture
+   * elle-même doit donc savoir dire non.
+   */
+  const refuse = (what: string) => {
+    addToast({
+      type: "danger",
+      title: "Action non autorisée",
+      message: `Votre compte n'a pas le droit de ${what}.`,
+    });
+  };
+
   const write = async (student: Student, status: AttendanceStatus | null) => {
+    if (!canMark) return refuse("pointer les présences");
     setBusyId(student.id);
     const res = await setPresence({
       studentId: student.id,
@@ -336,6 +363,7 @@ export function PresenceSheet({
    * l'enseignant s'en va avec elle, tant qu'elle n'a pas été réglée.
    */
   const removeRecord = async (student: Student, record: AttendanceRecord) => {
+    if (!canMark) return refuse("corriger un pointage");
     const day = dayKeyOf(record.timestamp);
     setBusyId(student.id);
     const res = await setPresence({
@@ -438,6 +466,7 @@ export function PresenceSheet({
    * rendu). Un « tout présent » respecte au contraire ce qui a déjà été choisi.
    */
   const markAll = async (ids: string[], status: "present" | "cancelled") => {
+    if (!canMark) return refuse("pointer les présences");
     for (const id of ids) {
       const student = db.students.find((s) => s.id === id);
       if (!student) continue;
@@ -459,6 +488,7 @@ export function PresenceSheet({
 
   // ---- cashing a solde in -------------------------------------------------
   const submitPay = async () => {
+    if (!canCollect) return refuse("encaisser un paiement");
     if (!pay || !sub) return;
     const amount = Math.max(0, Math.round(pay.amount || 0));
     if (amount <= 0) {
@@ -899,7 +929,7 @@ export function PresenceSheet({
                   date={date}
                   busy={busyId === st.id}
                   onWrite={write}
-                  onPay={setPay}
+                  onPay={canCollect ? setPay : undefined}
                   onDrill={(kind) => setDrill({ student: st, kind })}
                   onLeave={() => setLeaving(st)}
                   onHistory={() => setHistory(st)}
@@ -1042,7 +1072,7 @@ export function PresenceSheet({
           subscriptionId={sub.id}
           monthIndex={monthIndex}
           onClose={() => setDrill(null)}
-          onPay={setPay}
+          onPay={canCollect ? setPay : undefined}
         />
       )}
 
@@ -2295,7 +2325,8 @@ function StudentRow({
   date: string;
   busy: boolean;
   onWrite: (student: Student, status: AttendanceStatus | null) => void;
-  onPay: (t: PayTarget) => void;
+  /** absent = ce compte n'encaisse pas : le bouton ne s'affiche pas */
+  onPay?: (t: PayTarget) => void;
   onDrill: (kind: "previous" | "other" | "all") => void;
   onLeave: () => void;
   onHistory: () => void;
@@ -2423,22 +2454,24 @@ function StudentRow({
           ) : (
             <Badge tone="success" title={`${monthCode} réglé`}>✅</Badge>
           )}
-          <button
-            onClick={() =>
-              onPay({
-                student,
-                subscriptionId,
-                label,
-                monthCode,
-                amount: monthDue || 0,
-                suggestion: monthDue,
-              })
-            }
-            title="Encaisser un solde sur ce mois"
-            className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary text-white transition-colors hover:brightness-110"
-          >
-            <Wallet className="h-3.5 w-3.5" />
-          </button>
+          {onPay && (
+            <button
+              onClick={() =>
+                onPay({
+                  student,
+                  subscriptionId,
+                  label,
+                  monthCode,
+                  amount: monthDue || 0,
+                  suggestion: monthDue,
+                })
+              }
+              title="Encaisser un solde sur ce mois"
+              className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary text-white transition-colors hover:brightness-110"
+            >
+              <Wallet className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             onClick={onHistory}
             title="Historique des paiements — modifier ou supprimer"
@@ -3030,7 +3063,8 @@ function DebtDrill({
   subscriptionId: string;
   monthIndex: number;
   onClose: () => void;
-  onPay: (t: PayTarget) => void;
+  /** absent = ce compte n'encaisse pas : le bouton ne s'affiche pas */
+  onPay?: (t: PayTarget) => void;
 }) {
   const db = useData();
 
@@ -3097,22 +3131,24 @@ function DebtDrill({
                   <Badge tone="danger" className="font-mono">
                     {formatDA(r.debt)}
                   </Badge>
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      onPay({
-                        student,
-                        subscriptionId: r.subscriptionId,
-                        label: r.label,
-                        monthCode: r.code,
-                        amount: r.debt,
-                        suggestion: r.debt,
-                        description: `Règlement ${r.code} — ${r.label}`,
-                      })
-                    }
-                  >
-                    Payer
-                  </Button>
+                  {onPay && (
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        onPay({
+                          student,
+                          subscriptionId: r.subscriptionId,
+                          label: r.label,
+                          monthCode: r.code,
+                          amount: r.debt,
+                          suggestion: r.debt,
+                          description: `Règlement ${r.code} — ${r.label}`,
+                        })
+                      }
+                    >
+                      Payer
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}

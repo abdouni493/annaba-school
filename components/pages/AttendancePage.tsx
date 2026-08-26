@@ -47,6 +47,7 @@ import {
   teacherName,
 } from "@/lib/helpers";
 
+import { useCan } from "@/lib/usePermissions";
 const JS_DAYS: Day[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 const STATUS_LABEL: Record<string, { label: string; tone: "success" | "warning" | "danger" | "primary" }> = {
@@ -57,6 +58,7 @@ const STATUS_LABEL: Record<string, { label: string; tone: "success" | "warning" 
 };
 
 export function AttendancePage() {
+  const can = useCan("attendance");
   const db = useData();
   const { sessions, students, attendance } = db;
   useSettings();
@@ -264,6 +266,8 @@ export function AttendancePage() {
                   date={sheetDate}
                   monthCode={month}
                   onMonthChange={setMonth}
+                  canMark={can("mark")}
+                  canCollect={can("collect_payment")}
                   onCreateStudent={() => {
                     const sub = db.subscriptions.find((x) => x.sessionId === activeSession.id);
                     setCreateSubIds(sub ? [sub.id] : []);

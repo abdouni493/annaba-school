@@ -11,7 +11,7 @@
 
 import type { Language } from "@/lib/store/settings";
 import type { Database } from "@/lib/store/data";
-import type { AttendanceStatus, School, ScheduleSession, Student } from "@/lib/types";
+import type { AttendanceStatus, Payment, School, ScheduleSession, Student } from "@/lib/types";
 import {
   bannerHtml,
   letterheadHtml,
@@ -20,6 +20,7 @@ import {
   signaturesHtml,
 } from "@/lib/printTemplates";
 import {
+  enrollmentLabel,
   formatDateFr,
   groupName,
   monthCodeLabel,
@@ -28,6 +29,7 @@ import {
   salleName,
   sessionLabel,
   studentCaseLabel,
+  studentChargeDebt,
   studentLevelLabel,
   studentName,
   teacherName,
@@ -172,7 +174,7 @@ const TICKET_LABELS = {
 
 /** Amounts on the branded ticket read "4.000 دج" — dot-grouped, currency
  *  spelled per language — the convention printed on the sample template. */
-function daTicket(n: number, lang: Language): string {
+export function daTicket(n: number, lang: Language): string {
   const value = Math.round((Number(n) || 0) * 100) / 100;
   const digits = Number.isInteger(value) ? 0 : 2;
   const grouped = Math.abs(value).toLocaleString("de-DE", {
@@ -182,7 +184,7 @@ function daTicket(n: number, lang: Language): string {
   return `${value < 0 ? "-" : ""}${grouped} ${TICKET_LABELS[lang].da}`;
 }
 
-const TICKET_CSS = `
+export const TICKET_CSS = `
   @page { size: A5; margin: 8mm; }
   body { padding: 14px 0; background: #f6ecf1; }
   .rcpt { max-width: 380px; margin: 0 auto; background: #fff; border: 1px solid #efd9e3; border-radius: 16px 16px 0 0; padding: 20px 22px 6px; }
@@ -209,12 +211,20 @@ const TICKET_CSS = `
   .rcpt-table td { padding: 6px; border-bottom: 1px solid #f4e9ee; text-align: center; }
   .rcpt-table td.num { text-align: end; font-family: monospace; font-weight: 700; }
   .rcpt-table tfoot td { border-top: 2px solid #7a1440; font-weight: 800; color: #7a1440; border-bottom: none; }
+  .rcpt-summary { display: flex; flex-direction: column; gap: 6px; }
+  .rcpt-summary-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 0.84em; color: #3a3444; }
+  .rcpt-summary-line strong { font-family: monospace; font-weight: 800; color: #1e1b2e; }
+  .rcpt-summary-line strong.danger { color: #b91c1c; }
+  .rcpt-summary-line strong.success { color: #15803d; }
+  .rcpt-summary-line strong.muted { color: #a79fae; font-weight: 600; }
+  .rcpt-summary-line.strong { border-top: 2px solid #7a1440; margin-top: 4px; padding-top: 8px; font-size: 0.98em; font-weight: 800; color: #7a1440; }
+  .rcpt-summary-line.strong strong { font-size: 1.15em; }
   .rcpt-thanks { text-align: center; font-weight: 700; color: #7a1440; font-size: 0.95em; margin-top: 8px; }
   .rcpt-disclaimer { text-align: center; font-size: 0.68em; color: #8c8594; font-style: italic; margin: 4px 0 10px; }
   .rcpt-torn { height: 12px; background-image: linear-gradient(135deg, transparent 50%, #f6ecf1 50%), linear-gradient(45deg, #f6ecf1 50%, transparent 50%); background-size: 16px 16px; background-position: top left, top right; background-repeat: repeat-x; }
 `;
 
-interface TicketRow {
+export interface TicketRow {
   label: string;
   meta?: string;
   amount: number;
@@ -223,7 +233,23 @@ interface TicketRow {
   extraTone?: "success" | "danger" | "muted";
 }
 
-function brandedTicketHtml(opts: {
+/** Une ligne « libellé — valeur » du récapitulatif, sous le tableau. */
+export interface TicketSummaryLine {
+  label: string;
+  value: string;
+  tone?: "success" | "danger" | "muted";
+  /** la ligne du bas, celle qu'on lit en premier */
+  strong?: boolean;
+}
+
+/**
+ * LE MODÈLE PAPIER DE L'ÉCOLE — le seul générateur visuel des reçus.
+ *
+ * Reçu de solde, reçu de frais, acompte d'un travailleur, fiche de paie d'un
+ * travailleur : tous sortent d'ici, donc tous se ressemblent, et changer le
+ * logo ou l'en-tête les change tous d'un coup.
+ */
+export function brandedTicketHtml(opts: {
   school: School;
   language: Language;
   docTitle?: string;
@@ -233,6 +259,10 @@ function brandedTicketHtml(opts: {
   date?: string;
   rows: TicketRow[];
   note?: string;
+  /** le récapitulatif chiffré, quand le document en demande un */
+  summary?: TicketSummaryLine[];
+  /** le titre du tableau des lignes, quand « Désignation » ne suffit pas */
+  itemsLabel?: string;
 }): string {
   const { school, language: lang, rows } = opts;
   const L = TICKET_LABELS[lang];
@@ -259,7 +289,7 @@ function brandedTicketHtml(opts: {
     `
     : `
       <table class="rcpt-table">
-        <thead><tr><th>${L.items}</th><th>${L.itemsDate}</th><th>${L.amount.replace(" :", "")}</th></tr></thead>
+        <thead><tr><th>${esc(opts.itemsLabel ?? L.items)}</th><th>${L.itemsDate}</th><th>${L.amount.replace(" :", "")}</th></tr></thead>
         <tbody>
           ${rows
             .map(
@@ -274,6 +304,20 @@ function brandedTicketHtml(opts: {
         <tfoot><tr><td colspan="2">${L.total}</td><td class="num">${daTicket(total, lang)}</td></tr></tfoot>
       </table>
     `;
+
+  const summaryHtml = opts.summary?.length
+    ? `<div class="rcpt-sep"></div>
+       <div class="rcpt-summary">
+         ${opts.summary
+           .map(
+             (line) => `<div class="rcpt-summary-line${line.strong ? " strong" : ""}">
+               <span>${esc(line.label)}</span>
+               <strong class="${extraToneClass(line.tone)}">${esc(line.value)}</strong>
+             </div>`,
+           )
+           .join("")}
+       </div>`
+    : "";
 
   const body = `
     <div class="rcpt">
@@ -297,6 +341,7 @@ function brandedTicketHtml(opts: {
         ${fieldsHtml}
         <div class="field"><span class="field-label">${L.note}</span><span class="field-value ${opts.note ? "" : "muted"}">${esc(opts.note || "—")}</span></div>
       </div>
+      ${summaryHtml}
       <div class="rcpt-sep"></div>
       <div class="rcpt-thanks">★ ${L.thanks} ★</div>
       <div class="rcpt-disclaimer">${L.disclaimer}</div>
@@ -412,6 +457,81 @@ export function chargeReceiptHtml(
       extra: l.remaining > 0 ? daTicket(l.remaining, language) : soldeLabel,
       extraTone: l.remaining > 0 ? "danger" : "success",
     })),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reçu d'UN versement déjà enregistré — réimprimé longtemps après coup.
+// ---------------------------------------------------------------------------
+
+/**
+ * LE REÇU D'UN PAIEMENT QU'ON RELIT.
+ *
+ * `soldReceiptHtml` sert au moment de l'encaissement : la réception SAIT ce
+ * qu'elle vient de faire, et lui passe le libellé, le mois et le solde obtenu.
+ * Ici on part du versement lui-même, des mois ou des années plus tard —
+ * l'historique d'un élève, la cloche du tableau de bord — et tout se relit
+ * depuis la ligne : sur quel emploi du temps il portait, quel mois il créditait,
+ * et ce qu'il a laissé derrière lui.
+ *
+ * Un règlement de FRAIS (un livre, une tenue) sort sur son propre reçu : la
+ * dernière colonne n'y dit pas un solde mais ce qui reste dû sur ce frais-là.
+ */
+export function paymentReceiptHtml(
+  db: Database,
+  opts: { payment: Payment; language: Language; title?: string },
+): string {
+  const { payment, language } = opts;
+  const student = db.students.find((s) => s.id === payment.studentId);
+  if (!student) {
+    throw new Error("Le versement ne porte sur aucun élève connu.");
+  }
+
+  // Un règlement de frais : le reçu dit ce qu'il reste dû SUR CE FRAIS.
+  if (payment.chargeId) {
+    const charge = db.studentCharges.find((c) => c.id === payment.chargeId);
+    if (charge) {
+      return chargeReceiptHtml(db, {
+        student,
+        language,
+        title: opts.title,
+        lines: [
+          {
+            label: charge.name,
+            date: charge.date,
+            total: charge.amount,
+            amount: payment.amountPaid,
+            remaining: Math.max(0, charge.amount - (charge.paidAmount ?? 0)),
+          },
+        ],
+        restAfter: studentChargeDebt(db, student.id),
+      });
+    }
+  }
+
+  const enrollment = payment.enrollmentId
+    ? db.enrollments.find((e) => e.id === payment.enrollmentId)
+    : undefined;
+  const label = enrollment
+    ? enrollmentLabel(db, enrollment)
+    : payment.description || "Versement";
+
+  return soldReceiptHtml(db, {
+    student,
+    language,
+    title: opts.title,
+    note: payment.description,
+    lines: [
+      {
+        label,
+        monthCode: payment.monthCode ?? "",
+        amount: payment.amountPaid,
+        // Le solde d'aujourd'hui, pas celui du jour du versement : c'est le seul
+        // qu'on connaisse encore, et c'est celui qui intéresse la famille quand
+        // elle repart avec le papier.
+        balanceAfter: enrollment?.balance ?? 0,
+      },
+    ],
   });
 }
 

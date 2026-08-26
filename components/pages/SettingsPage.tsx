@@ -31,7 +31,9 @@ import {
 } from "lucide-react";
 import { WhatsAppSettingsPanel } from "@/components/whatsapp/WhatsAppSettingsPanel";
 
+import { useCan } from "@/lib/usePermissions";
 export function SettingsPage() {
+  const can = useCan("settings");
   const dataStore = useData();
   const { school, modules, moduleAbsenceRules, setModuleAbsenceRule, updateSchool, restoreState } = dataStore;
   const sessionUser = useSession((s) => s.user);
@@ -39,7 +41,14 @@ export function SettingsPage() {
   const [logoUploading, setLogoUploading] = useState(false);
 
   // Tabs navigation state
-  const [activeTab, setActiveTab] = useState<"school" | "security" | "whatsapp" | "backup">("school");
+  /**
+   * L'écran s'ouvre sur le PREMIER onglet auquel ce compte a droit. Il n'a pas
+   * à tomber sur « Établissement » pour découvrir qu'il ne peut pas l'ouvrir.
+   */
+  const [activeTab, setActiveTab] = useState<"school" | "security" | "whatsapp" | "backup">(
+    () =>
+      (["school", "security", "whatsapp", "backup"] as const).find((t) => can(t)) ?? "school",
+  );
 
   // School Form State
   const [schoolName, setSchoolName] = useState(school?.name || "");
@@ -203,59 +212,67 @@ export function SettingsPage() {
             Catégories
           </span>
           
-          <button
-            onClick={() => setActiveTab("school")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
-              activeTab === "school"
-                ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
-                : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
-            }`}
-          >
-            <SchoolIcon className="h-4.5 w-4.5" />
-            <span>Établissement</span>
-          </button>
+          {can("school") && (
+<button
+              onClick={() => setActiveTab("school")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
+                activeTab === "school"
+                  ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
+                  : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
+              }`}
+            >
+              <SchoolIcon className="h-4.5 w-4.5" />
+              <span>Établissement</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab("security")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
-              activeTab === "security"
-                ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
-                : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
-            }`}
-          >
-            <Shield className="h-4.5 w-4.5" />
-            <span>Identifiants & Sécurité</span>
-          </button>
+          {can("security") && (
+<button
+              onClick={() => setActiveTab("security")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
+                activeTab === "security"
+                  ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
+                  : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
+              }`}
+            >
+              <Shield className="h-4.5 w-4.5" />
+              <span>Identifiants & Sécurité</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab("whatsapp")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
-              activeTab === "whatsapp"
-                ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
-                : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
-            }`}
-          >
-            <MessageCircle className="h-4.5 w-4.5" />
-            <span>WhatsApp</span>
-          </button>
+          {can("whatsapp") && (
+<button
+              onClick={() => setActiveTab("whatsapp")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
+                activeTab === "whatsapp"
+                  ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
+                  : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
+              }`}
+            >
+              <MessageCircle className="h-4.5 w-4.5" />
+              <span>WhatsApp</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab("backup")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
-              activeTab === "backup"
-                ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
-                : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
-            }`}
-          >
-            <Download className="h-4.5 w-4.5" />
-            <span>Sauvegarde & Données</span>
-          </button>
+          {can("backup") && (
+<button
+              onClick={() => setActiveTab("backup")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all ${
+                activeTab === "backup"
+                  ? "bg-primary-50 text-primary border border-primary/20 shadow-sm"
+                  : "text-muted hover:text-ink hover:bg-canvas/50 border border-transparent"
+              }`}
+            >
+              <Download className="h-4.5 w-4.5" />
+              <span>Sauvegarde & Données</span>
+            </button>
+          )}
         </div>
 
         {/* Settings Active View */}
         <div className="flex-1 w-full">
           {/* TAB 1: School Profile */}
-          {activeTab === "school" && (
+          {activeTab === "school" && can("school") && (
             <Card className="border border-line rounded-2xl card-shadow">
               <CardBody className="space-y-6 p-6">
                 <div>
@@ -581,7 +598,7 @@ export function SettingsPage() {
           )}
 
           {/* TAB 2: Credentials & Security */}
-          {activeTab === "security" && (
+          {activeTab === "security" && can("security") && (
             <Card className="border border-line rounded-2xl card-shadow">
               <CardBody className="space-y-6 p-6">
                 <div>
@@ -656,10 +673,10 @@ export function SettingsPage() {
           )}
 
           {/* TAB 3: WhatsApp gateway */}
-          {activeTab === "whatsapp" && <WhatsAppSettingsPanel />}
+          {activeTab === "whatsapp" && can("whatsapp") && <WhatsAppSettingsPanel />}
 
           {/* TAB 4: Backup & Restore */}
-          {activeTab === "backup" && (
+          {activeTab === "backup" && can("backup") && (
             <div className="space-y-6">
               {/* Export panel */}
               <Card className="border border-line rounded-2xl card-shadow">

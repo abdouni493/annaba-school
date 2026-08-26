@@ -37,6 +37,10 @@ import { TeacherPages } from "@/components/pages/TeacherPages";
 import { PresenceSheet } from "@/components/attendance/PresenceSheet";
 import { CreateStudentModal } from "@/components/students/CreateStudentModal";
 import { StudentSituationModal } from "@/components/students/StudentSituationModal";
+import { WorkerPaymentsAlert } from "@/components/dashboard/WorkerPaymentsAlert";
+import { AccessDenied } from "@/components/layout/AccessDenied";
+import { useAccessRights, useCan } from "@/lib/usePermissions";
+import { canSeePage } from "@/lib/permissions";
 import { formatDA, money } from "@/lib/utils";
 import {
   DAY_LABELS_FR,
@@ -103,7 +107,13 @@ function colorOf(id: string): string {
 
 export default function DashboardPage() {
   const { user } = useSession();
+  const rights = useAccessRights();
   if (user?.role === "teacher") return <TeacherPages slug="dashboard" />;
+  // Le tableau de bord n'est pas servi par le répartiteur de modules : c'est
+  // une route à lui, et son garde-fou doit donc vivre ici. Un travailleur à qui
+  // l'écran n'a pas été ouvert y arrive pourtant — c'est la page d'accueil par
+  // défaut de son rôle.
+  if (!canSeePage(rights, "dashboard")) return <AccessDenied />;
   return <AdminDashboard />;
 }
 
@@ -113,6 +123,10 @@ function AdminDashboard() {
   const db = useData();
   const { sessions, attendance, students, subscriptions, classes, cashMove, push } = db;
   const { addToast } = useToast();
+  const can = useCan("dashboard");
+  const { user } = useSession();
+  /** La cloche des encaissements des travailleurs ne regarde que la direction. */
+  const isAdmin = user?.role === "admin";
 
   const isoOf = (d: Date) => d.toLocaleDateString("fr-CA");
   const todayIso = isoOf(new Date());
@@ -316,6 +330,16 @@ function AdminDashboard() {
   const openDow = JS_DAYS[new Date(`${openDate}T12:00:00`).getDay()];
 
   const openSheet = (s: ScheduleSession, on: string = date) => {
+    // Un travailleur à qui l'on n'a pas ouvert la feuille de présence peut voir
+    // la grille du jour sans pouvoir l'ouvrir : le clic ne fait alors rien.
+    if (!can("open_presence")) {
+      addToast({
+        type: "danger",
+        title: "Action non autorisée",
+        message: "Votre compte n'a pas le droit d'ouvrir une feuille de présence.",
+      });
+      return;
+    }
     setMonth(sessionCurrentMonthCode(db, s.id));
     setOpenDate(on);
     setOpenSessionId(s.id);
@@ -480,23 +504,34 @@ function AdminDashboard() {
           subtitle="Emplois du temps du jour, fiches de présence et caisse"
         />
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => openCreateFor([])} className="gap-2">
-            <UserPlus className="h-4 w-4" /> Nouvel élève
-          </Button>
+          {isAdmin && <WorkerPaymentsAlert />}
+          {can("create_student") && (
+            <Button onClick={() => openCreateFor([])} className="gap-2">
+              <UserPlus className="h-4 w-4" /> Nouvel élève
+            </Button>
+          )}
           {/* « Il en est où ? » — la question du parent au comptoir, tous ses
               emplois du temps dans un seul tableau, encaissement compris. */}
-          <Button variant="outline" onClick={() => setSituationOpen(true)} className="gap-2">
-            <UserSearch className="h-4 w-4 text-primary" /> Situation d&apos;un élève
-          </Button>
-          <Button variant="outline" onClick={() => openCash("deposit")} className="gap-2">
-            <ArrowDownLeft className="h-4 w-4 text-success" /> Dépôt
-          </Button>
-          <Button variant="outline" onClick={() => openCash("expense")} className="gap-2">
-            <Receipt className="h-4 w-4 text-warning" /> Dépense
-          </Button>
-          <Button variant="outline" onClick={() => openCash("withdraw")} className="gap-2">
-            <ArrowUpRight className="h-4 w-4 text-danger" /> Retrait
-          </Button>
+          {can("student_situation") && (
+            <Button variant="outline" onClick={() => setSituationOpen(true)} className="gap-2">
+              <UserSearch className="h-4 w-4 text-primary" /> Situation d&apos;un élève
+            </Button>
+          )}
+          {can("cash_deposit") && (
+            <Button variant="outline" onClick={() => openCash("deposit")} className="gap-2">
+              <ArrowDownLeft className="h-4 w-4 text-success" /> Dépôt
+            </Button>
+          )}
+          {can("cash_expense") && (
+            <Button variant="outline" onClick={() => openCash("expense")} className="gap-2">
+              <Receipt className="h-4 w-4 text-warning" /> Dépense
+            </Button>
+          )}
+          {can("cash_withdraw") && (
+            <Button variant="outline" onClick={() => openCash("withdraw")} className="gap-2">
+              <ArrowUpRight className="h-4 w-4 text-danger" /> Retrait
+            </Button>
+          )}
         </div>
       </div>
 
@@ -981,6 +1016,8 @@ function AdminDashboard() {
               date={openDate}
               monthCode={month}
               onMonthChange={setMonth}
+              canMark={can("mark_presence")}
+              canCollect={can("collect_payment")}
               onCreateStudent={() => {
                 const sub = db.subscriptions.find((x) => x.sessionId === openSession.id);
                 openCreateFor(sub ? [sub.id] : []);

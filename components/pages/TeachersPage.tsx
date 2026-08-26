@@ -54,7 +54,9 @@ import {
 } from "@/lib/helpers";
 import { useSettings } from "@/lib/store/settings";
 
+import { useCan } from "@/lib/usePermissions";
 export function TeachersPage() {
+  const can = useCan("teachers");
   const db = useData();
   const {
     teachers,
@@ -844,16 +846,20 @@ export function TeachersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <PageHeader emoji="👨‍🏫" title="Enseignants" subtitle="Gérer le corps enseignant et leurs salaires" />
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => { resetForm(); setIsPassagerCreateOpen(true); }}
-            className="flex items-center gap-2 border-warning/30 text-warning hover:bg-warning/10"
-          >
-            <Plus className="h-4 w-4" /> Enseignant Passager
-          </Button>
-          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" /> Nouvel Enseignant
-          </Button>
+          {can("create_passager") && (
+            <Button
+              variant="outline"
+              onClick={() => { resetForm(); setIsPassagerCreateOpen(true); }}
+              className="flex items-center gap-2 border-warning/30 text-warning hover:bg-warning/10"
+            >
+              <Plus className="h-4 w-4" /> Enseignant Passager
+            </Button>
+          )}
+          {can("create") && (
+            <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+              <Plus className="h-4 w-4" /> Nouvel Enseignant
+            </Button>
+          )}
         </div>
       </div>
 
@@ -936,18 +942,22 @@ export function TeachersPage() {
                     {/* A "passager" has no account and no contract with the
                         school: only the two actions the brief asks for. */}
                     <div className="grid grid-cols-2 gap-2 my-2 flex-1 items-center">
-                      <button
-                        onClick={() => openDetails(t)}
-                        className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
-                      >
-                        <Eye className="h-3.5 w-3.5" /> Détails
-                      </button>
-                      <button
-                        onClick={() => openTimingPay(t)}
-                        className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-success/15 text-success border border-success/30 hover:bg-success/25 transition-colors"
-                      >
-                        <DollarSign className="h-3.5 w-3.5" /> Payer
-                      </button>
+                      {can("view") && (
+<button
+                          onClick={() => openDetails(t)}
+                          className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> Détails
+                        </button>
+                      )}
+                      {can("pay") && (
+<button
+                          onClick={() => openTimingPay(t)}
+                          className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-success/15 text-success border border-success/30 hover:bg-success/25 transition-colors"
+                        >
+                          <DollarSign className="h-3.5 w-3.5" /> Payer
+                        </button>
+                      )}
                       <button
                         onClick={() => openMonths(t)}
                         className="col-span-2 flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-primary/15 text-primary border border-primary/30 hover:bg-primary/25 transition-colors"
@@ -956,47 +966,59 @@ export function TeachersPage() {
                       </button>
                       {!t.isPassager && (
                         <>
-                          <button
-                            onClick={() => openAcompte(t)}
-                            className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
-                          >
-                            <Plus className="h-3.5 w-3.5" /> Acompte
-                          </button>
-                          <button
-                            onClick={() => openExpense(t)}
-                            className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 transition-colors"
-                          >
-                            <Receipt className="h-3.5 w-3.5" /> Dépense
-                          </button>
-                          <button
-                            onClick={() => openAbsence(t)}
-                            className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25 transition-colors"
-                          >
-                            <Plus className="h-3.5 w-3.5" /> Absence
-                          </button>
-                          <button
-                            onClick={() => openPrint(t)}
-                            className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
-                          >
-                            <Printer className="h-3.5 w-3.5" /> Rapport
-                          </button>
-                          <button
-                            onClick={() => openEdit(t)}
-                            className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
-                          >
-                            <Edit className="h-3.5 w-3.5" /> Modifier
-                          </button>
+                          {can("acompte") && (
+<button
+                              onClick={() => openAcompte(t)}
+                              className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
+                            >
+                              <Plus className="h-3.5 w-3.5" /> Acompte
+                            </button>
+                          )}
+                          {can("expense") && (
+<button
+                              onClick={() => openExpense(t)}
+                              className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 transition-colors"
+                            >
+                              <Receipt className="h-3.5 w-3.5" /> Dépense
+                            </button>
+                          )}
+                          {can("absence") && (
+<button
+                              onClick={() => openAbsence(t)}
+                              className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25 transition-colors"
+                            >
+                              <Plus className="h-3.5 w-3.5" /> Absence
+                            </button>
+                          )}
+                          {can("print") && (
+<button
+                              onClick={() => openPrint(t)}
+                              className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
+                            >
+                              <Printer className="h-3.5 w-3.5" /> Rapport
+                            </button>
+                          )}
+                          {can("edit") && (
+<button
+                              onClick={() => openEdit(t)}
+                              className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
+                            >
+                              <Edit className="h-3.5 w-3.5" /> Modifier
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
 
                     <div className="border-t border-line pt-2">
-                      <button
-                        onClick={() => handleDelete(t.id)}
-                        className="flex items-center justify-center gap-1.5 w-full py-2 px-3 text-xs font-bold rounded-xl bg-danger text-white hover:bg-danger/90 transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" /> Supprimer
-                      </button>
+                      {can("delete") && (
+<button
+                          onClick={() => handleDelete(t.id)}
+                          className="flex items-center justify-center gap-1.5 w-full py-2 px-3 text-xs font-bold rounded-xl bg-danger text-white hover:bg-danger/90 transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Supprimer
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}

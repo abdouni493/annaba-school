@@ -267,6 +267,90 @@ $$;
 
 grant execute on function public.admin_create_user(text, text, text, text, text) to authenticated;
 
+
+-- -----------------------------------------------------------------------------
+--  LES COMPTES DES TRAVAILLEURS — activés APRÈS coup, sur une fiche existante
+--
+--  Un travailleur créé sans compte porte un identifiant à lui (« wrk-… »). Le
+--  jour où l'administration lui ouvre un accès, l'ancienne fonction
+--  `admin_create_user` rendait un identifiant TOUT NEUF : il aurait fallu
+--  déplacer la fiche, ses pointages, ses acomptes et ses règlements sous ce
+--  nouvel identifiant. On garde donc la fiche là où elle est, et c'est le PROFIL
+--  qui pointe vers elle (`entity_id`) — exactement ce que l'application lit
+--  pour retrouver les droits d'un compte.
+-- -----------------------------------------------------------------------------
+
+-- Crée le compte d'une fiche DÉJÀ EN BASE, sans déplacer la fiche.
+create or replace function public.admin_create_user_for(
+  p_entity_id text,
+  p_email     text,
+  p_password  text,
+  p_role      text,
+  p_full_name text default '',
+  p_username  text default null
+)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_staff() then
+    raise exception 'NOT_ALLOWED';
+  end if;
+  if p_role = 'admin' and not public.is_admin() then
+    raise exception 'NOT_ALLOWED';
+  end if;
+
+  return public._create_auth_user(
+    p_email, p_password, p_role, p_full_name, p_username, p_entity_id);
+end;
+$$;
+
+grant execute on function public.admin_create_user_for(text, text, text, text, text, text)
+  to authenticated;
+
+-- Le compte qui pilote une fiche, quand il en existe un. C'est lui qu'il faut
+-- viser pour changer un mot de passe ou un email : l'identifiant de la fiche
+-- n'est PAS forcément celui du compte.
+create or replace function public.account_for_entity(p_entity_id text)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.id from public.profiles p where p.entity_id = p_entity_id limit 1
+$$;
+
+grant execute on function public.account_for_entity(text) to authenticated;
+
+-- Le nom d'utilisateur affiché sur un compte. `profiles` n'est modifiable que
+-- par un administrateur ; la réception, qui gère pourtant les fiches, passe donc
+-- par ici.
+create or replace function public.admin_set_username(
+  p_user_id  text,
+  p_username text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_staff() then
+    raise exception 'NOT_ALLOWED';
+  end if;
+
+  update public.profiles
+     set username = nullif(trim(p_username), '')
+   where id = p_user_id;
+end;
+$$;
+
+grant execute on function public.admin_set_username(text, text) to authenticated;
+
+
 -- ---------------------------------------------------------------------------
 --  Réinitialisation du mot de passe de quelqu'un d'autre, par le personnel.
 -- ---------------------------------------------------------------------------
@@ -399,17 +483,26 @@ create table if not exists public.schools (
 -- Écran : Classes. Actions : créer / modifier / supprimer.
 create table if not exists public.class_categories (
   id    text primary key,
-  name  text not null default ''
+  name  text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 create table if not exists public.modules (
   id    text primary key,
-  name  text not null default ''
+  name  text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 create table if not exists public.class_groups (          -- collection `groups`
   id    text primary key,
-  name  text not null default ''
+  name  text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 create table if not exists public.salles (
@@ -417,7 +510,10 @@ create table if not exists public.salles (
   -- Deux salles ne peuvent pas porter le même nom : l'écran Emploi du temps
   -- choisit une salle par son nom, et deux « Salle 3 » rendraient ce choix
   -- indécidable. L'unicité ignore la casse et les espaces de bord.
-  name  text not null default ''
+  name  text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 create unique index if not exists idx_salles_name_unique
   on public.salles (lower(btrim(name)));
@@ -430,7 +526,10 @@ create table if not exists public.classes (
   cours_level     text check (cours_level in ('maternelle','primaire','moyen','lycee')),
   year            text,
   category_id     text references public.class_categories (id) on delete set null,
-  formation_level text check (formation_level in ('A1','A2','B1','B2','C1','C2'))
+  formation_level text check (formation_level in ('A1','A2','B1','B2','C1','C2')),
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- --- Enseignants -------------------------------------------------------------
@@ -452,7 +551,10 @@ create table if not exists public.teachers (
   is_passager    boolean,                      -- intervenant sans compte de connexion
   -- création de la fiche : c'est ce qui met les derniers arrivés en tête de la
   -- liste des enseignants, sans dépendre de l'ordre de lecture de la table.
-  created_at     text
+  created_at     text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Règlement d'un enseignant : ce qu'il a touché, et tout ce qui a été déduit.
@@ -492,7 +594,10 @@ create table if not exists public.teacher_payments (
   board          jsonb,
   -- Le mouvement de caisse écrit par ce règlement : annuler l'un annule l'autre.
   cash_id        text,
-  paid_at        text not null default ''
+  paid_at        text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Avance versée à un enseignant, déduite une seule fois du règlement suivant.
@@ -503,7 +608,10 @@ create table if not exists public.teacher_acomptes (
   description text not null default '',
   date        text not null default '',
   paid        boolean not null default false,
-  payment_id  text references public.teacher_payments (id) on delete set null
+  payment_id  text references public.teacher_payments (id) on delete set null,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Frais avancés par l'école pour un enseignant, déduits une seule fois.
@@ -516,7 +624,10 @@ create table if not exists public.teacher_expenses (
   date        text not null default '',
   paid        boolean not null default false,
   payment_id  text references public.teacher_payments (id) on delete set null,
-  created_at  text
+  created_at  text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- --- Scolarités d'enfants portées sur le salaire de leur père -----------------
@@ -546,7 +657,10 @@ create table if not exists public.teacher_child_debts (
   date            text not null default '',
   paid            boolean not null default false,
   payment_id      text references public.teacher_payments (id) on delete set null,
-  created_at      text
+  created_at      text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 create index if not exists teacher_child_debts_open_key
@@ -557,12 +671,34 @@ create table if not exists public.teacher_absences (
   teacher_id  text not null references public.teachers (id) on delete cascade,
   cost        numeric not null default 0,
   description text not null default '',
-  date        text not null default ''
+  date        text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
--- --- Travailleurs (réception / sécurité / ménage) ----------------------------
--- Écran : Travailleurs. Actions : créer (avec ou sans compte), modifier,
--- supprimer, badger, geler les journées ouvertes, payer les journées.
+-- --- Métiers du personnel -----------------------------------------------------
+-- Écran : Travailleurs. L'école nomme elle-même ses métiers ; les trois
+-- d'origine gardent leur identifiant historique.
+create table if not exists public.worker_roles (
+  id         text primary key,
+  name       text not null default '',
+  created_at text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
+);
+
+insert into public.worker_roles (id, name, created_at) values
+  ('reception', 'Réception',         '2020-01-01T00:00:00.000Z'),
+  ('security',  'Agent de sécurité', '2020-01-01T00:00:01.000Z'),
+  ('menage',    'Ménage',            '2020-01-01T00:00:02.000Z')
+on conflict (id) do nothing;
+
+-- --- Travailleurs -------------------------------------------------------------
+-- Écran : Travailleurs. Actions : créer (avec ou sans compte de connexion),
+-- modifier, supprimer, attribuer les droits d'accès, badger, geler les
+-- journées ouvertes, verser un acompte, retenir une absence, régler la paie.
 create table if not exists public.reception_staff (
   id           text primary key,
   first_name   text not null default '',
@@ -572,9 +708,20 @@ create table if not exists public.reception_staff (
   payment_type text not null default 'monthly' check (payment_type in ('daily','monthly','half_day','hourly')),
   start_date   text not null default '',
   salary       numeric not null default 0,
-  role         text check (role in ('reception','security','menage')),
+  role         text,                            -- un identifiant de worker_roles
   rfid         text,                            -- badge du pointage
-  hourly_rate  numeric                          -- contrat horaire : prix d'une heure
+  hourly_rate  numeric,                         -- contrat horaire : prix d'une heure
+  has_account  boolean not null default false,  -- peut-il se connecter ?
+  username     text,
+  -- Les écrans de SA barre latérale. NULL = fiche antérieure aux droits (elle
+  -- garde l'ancien menu de la réception) ; tableau vide = aucun écran.
+  nav_keys     text[],
+  -- Les boutons qu'il voit, sous la forme « écran:action ».
+  action_keys  text[],
+  created_at   text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Une journée travaillée (pointage entrée / sortie).
@@ -588,7 +735,68 @@ create table if not exists public.worker_shifts (
   frozen     boolean not null default false,    -- journée close sans sortie
   paid       boolean not null default false,
   payment_id text,
-  created_at text not null default ''
+  created_at text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
+);
+
+-- Une avance sur salaire versée à un travailleur. Elle sort de la caisse le jour
+-- où elle est versée, puis elle est RETENUE sur son prochain règlement — une
+-- fois, et une seule.
+--
+-- Ces lignes vivaient autrefois dans `teacher_acomptes`, dont la clé étrangère
+-- exige pourtant un ENSEIGNANT : la base refusait la ligne, et l'avance n'était
+-- jamais enregistrée. D'où leur propre table, avec la bonne clé étrangère.
+create table if not exists public.worker_acomptes (
+  id          text primary key,
+  worker_id   text not null references public.reception_staff (id) on delete cascade,
+  amount      numeric not null default 0,
+  description text not null default '',
+  date        text not null default '',
+  paid        boolean not null default false,  -- déjà retenu sur un règlement
+  payment_id  text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
+);
+
+-- Une absence retenue sur la paie d'un travailleur. Contrairement à l'acompte,
+-- elle ne sort AUCUN argent : elle dit ce qui sera déduit le jour de la paie.
+create table if not exists public.worker_absences (
+  id          text primary key,
+  worker_id   text not null references public.reception_staff (id) on delete cascade,
+  cost        numeric not null default 0,
+  description text not null default '',
+  date        text not null default '',
+  paid        boolean not null default false,
+  payment_id  text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
+);
+
+-- Un règlement versé à un travailleur : ce qu'il solde, ce qui en a été retenu,
+-- et ce qui est sorti de la caisse. La question « ce mois est-il payé ? » se
+-- lisait autrefois dans le LIBELLÉ des mouvements de caisse.
+create table if not exists public.worker_payments (
+  id          text primary key,
+  worker_id   text not null references public.reception_staff (id) on delete cascade,
+  kind        text not null default 'monthly',
+  period_keys text[] not null default '{}',   -- « 08/2026 », « 2026-08-14 », …
+  shift_ids   text[],                         -- contrat horaire : journées réglées
+  gross       numeric not null default 0,
+  acomptes    numeric not null default 0,
+  absences    numeric not null default 0,
+  net         numeric not null default 0,
+  amount      numeric not null default 0,     -- ce qui est réellement sorti
+  date        text not null default '',       -- YYYY-MM-DD, corrigeable
+  description text,
+  cash_id     text,
+  created_at  text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- --- Emplois du temps ---------------------------------------------------------
@@ -619,7 +827,10 @@ create table if not exists public.schedule_sessions (
   group_ids    jsonb,
   salle_ids    jsonb,
   open_price   numeric,
-  archived_at  text                              -- emploi SUPPRIMÉ : archivé, jamais effacé
+  archived_at  text                              -- emploi SUPPRIMÉ : archivé, jamais effacé,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Supprimer un emploi du temps l'ARCHIVE : `archived_at` porte le jour où la
@@ -644,7 +855,10 @@ create table if not exists public.subscriptions (
   monthly_price      numeric,                    -- prix du pack mensuel
   school_month_share numeric,                    -- part que l'école garde sur le mois
   teacher_per_seance numeric,                    -- part enseignant pour UNE séance
-  archived_at        text                        -- archivé avec son emploi du temps
+  archived_at        text                        -- archivé avec son emploi du temps,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Périodes gratuites : la présence est écrite, le solde n'est pas débité.
@@ -659,7 +873,10 @@ create table if not exists public.free_periods (
   class_ids    jsonb not null default '[]'::jsonb,
   pay_teachers boolean not null default true,    -- l'enseignant est payé quand même
   active       boolean not null default true,
-  created_at   text
+  created_at   text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Facturation automatique des absences, module par module.
@@ -704,7 +921,10 @@ create table if not exists public.students (
   subscription_ids       jsonb not null default '[]'::jsonb,
   subscription_dates     jsonb,                 -- dates + point d'entrée par abonnement
   subscription_discounts jsonb,                 -- remises par abonnement
-  registration_due       numeric                -- frais d'inscription encore dus
+  registration_due       numeric                -- frais d'inscription encore dus,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 create index if not exists students_rfid_key
@@ -748,7 +968,10 @@ create table if not exists public.enrollments (
   month_seances     integer,
   balance           numeric not null default 0,
   created_at        text not null default '',
-  unique (student_id, subscription_id)
+  unique (student_id, subscription_id),
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Mouvement d'argent d'un élève : achat de séances, recharge de solde, ou
@@ -775,7 +998,13 @@ create table if not exists public.payments (
                               ('cash','teacher_salary','teacher_debt','school_cash')),
   charge_id          text,                      -- le FRAIS réglé (student_charges)
   date               text not null default '',
-  description        text
+  description        text,
+  -- La cloche du tableau de bord : un encaissement saisi par un TRAVAILLEUR y
+  -- reste jusqu'à ce que la direction le marque comme lu.
+  alert_read         boolean not null default false,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- `paid_from` distingue trois provenances qui ne se lisent pas de la même façon
@@ -842,7 +1071,10 @@ create table if not exists public.student_charges (
   paid_amount       numeric not null default 0,    -- ce qui a DÉJÀ été versé dessus
   paid              boolean not null default false,
   payment_id        text,                          -- le dernier versement qui l'a soldé
-  created_at        text
+  created_at        text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 comment on table public.student_charges is
@@ -862,7 +1094,10 @@ create table if not exists public.attendance_records (
   free_period_id   text,
   pre_start        boolean,                     -- séance avant la date de début
   waived_amount    numeric,                     -- prix NON facturé
-  no_charge        boolean                      -- ne consomme rien, n'avance pas le mois
+  no_charge        boolean                      -- ne consomme rien, n'avance pas le mois,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 create index if not exists attendance_day_key
@@ -879,7 +1114,10 @@ create table if not exists public.absence_penalties (
   period_end      text not null default '',
   amount          numeric not null default 0,
   remaining_after integer not null default 0,
-  created_at      text not null default ''
+  created_at      text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Part enseignant due sur la présence d'un élève, tant qu'elle n'est pas réglée.
@@ -893,7 +1131,10 @@ create table if not exists public.unpaid_teacher_sessions (
   paid       boolean not null default false,
   -- LE RÈGLEMENT QUI L'A SOLDÉE. Annuler ce règlement rend la part à nouveau
   -- due : sans ce lien, une annulation ne saurait pas quoi rouvrir.
-  payment_id text references public.teacher_payments (id) on delete set null
+  payment_id text references public.teacher_payments (id) on delete set null,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- --- Contenus ------------------------------------------------------------------
@@ -904,7 +1145,10 @@ create table if not exists public.subjects (
   description text not null default '',
   image       text,
   session_id  text not null default '',
-  date        text not null default ''
+  date        text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Écran : Annonces. Actions : publier, cibler des groupes, inclure les parents.
@@ -916,14 +1160,20 @@ create table if not exists public.announcements (
   end_date         text not null default '',
   date             text not null default '',
   target_group_ids jsonb,
-  include_parents  boolean
+  include_parents  boolean,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- --- Finances --------------------------------------------------------------------
 -- Écran : Dépenses. Actions : créer une catégorie, enregistrer une dépense.
 create table if not exists public.expense_categories (
   id   text primary key,
-  name text not null default ''
+  name text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 create table if not exists public.expenses (
@@ -931,7 +1181,10 @@ create table if not exists public.expenses (
   name        text not null default '',
   category_id text references public.expense_categories (id) on delete set null,
   amount      numeric not null default 0,
-  date        text not null default ''
+  date        text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Écran : Caisse. Actions : entrée, sortie ; alimentée automatiquement par les
@@ -941,7 +1194,10 @@ create table if not exists public.cash_transactions (
   type        text not null check (type in ('deposit','withdraw','expense','student_payment','teacher_payment','acompte','student_debt')),
   amount      numeric not null default 0,       -- signé
   date        text not null default '',
-  description text not null default ''
+  description text not null default '',
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- --- Parents ---------------------------------------------------------------------
@@ -953,7 +1209,10 @@ create table if not exists public.parents (
   last_name  text not null default '',
   phone      text not null default '',
   email      text not null default '',
-  child_ids  jsonb not null default '[]'::jsonb
+  child_ids  jsonb not null default '[]'::jsonb,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 alter table public.students
@@ -969,7 +1228,10 @@ create table if not exists public.notifications (
   description text not null default '',
   date        text not null default '',
   read        boolean not null default false,
-  auto        boolean not null default false
+  auto        boolean not null default false,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- --- Travaux et séances libres -----------------------------------------------------
@@ -981,7 +1243,10 @@ create table if not exists public.coursework (
   dates             jsonb not null default '[]'::jsonb,
   price_per_session numeric not null default 0,
   total             numeric not null default 0,
-  teacher_id        text references public.teachers (id) on delete set null
+  teacher_id        text references public.teachers (id) on delete set null,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Une séance libre se vend comme un mois : `price` est ce que la personne verse,
@@ -1001,7 +1266,10 @@ create table if not exists public.independent_sessions (
   start_time    text,
   end_time      text,
   created_at    text,
-  teacher_paid  boolean not null default false
+  teacher_paid  boolean not null default false,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
 -- Séance libre vendue à un GROUPE d'élèves : personne n'est nommé, on saisit
@@ -1022,9 +1290,28 @@ create table if not exists public.group_seances (
   school_per_student numeric not null default 0,
   cash_in_id         text,
   cash_out_id        text,
-  created_at         text
+  created_at         text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
 );
 
+
+-- =============================================================================
+--  QUI A FAIT L'OPÉRATION
+--
+--  Chaque table ci-dessous se termine par les trois mêmes colonnes :
+--
+--      created_by         l'identifiant de la FICHE qui a écrit la ligne
+--      created_by_name    son nom, RECOPIÉ au moment de l'écriture
+--      created_by_role    son rôle au moment de l'écriture
+--
+--  Le nom est recopié plutôt que relu plus tard : un travailleur qui quitte
+--  l'école, et dont la fiche disparaît, laisse quand même un historique
+--  lisible. C'est ce qui permet à la direction de voir, sur son tableau de
+--  bord, les encaissements saisis par les travailleurs, et de lire l'historique
+--  de travail de chacun.
+-- =============================================================================
 
 -- =============================================================================
 --  4. INDEX
@@ -1052,6 +1339,14 @@ create index if not exists idx_payments_charge           on public.payments (cha
 create index if not exists idx_texpenses_teacher        on public.teacher_expenses (teacher_id, paid);
 create index if not exists idx_tpayments_teacher        on public.teacher_payments (teacher_id);
 create index if not exists idx_shifts_worker            on public.worker_shifts (worker_id, paid);
+create index if not exists idx_worker_payments_worker   on public.worker_payments (worker_id, date desc);
+create index if not exists idx_worker_acomptes_open     on public.worker_acomptes (worker_id, paid);
+create index if not exists idx_worker_absences_open     on public.worker_absences (worker_id, paid);
+create index if not exists idx_payments_alert           on public.payments (alert_read, date desc);
+create index if not exists idx_payments_author          on public.payments (created_by);
+create index if not exists idx_attendance_author        on public.attendance_records (created_by);
+create index if not exists idx_cash_author              on public.cash_transactions (created_by);
+create index if not exists idx_charges_author           on public.student_charges (created_by);
 create index if not exists idx_notifications_parent     on public.notifications (parent_id, read);
 create index if not exists idx_independent_session      on public.independent_sessions (session_id);
 create index if not exists idx_group_seances_teacher     on public.group_seances (teacher_id);
@@ -1078,7 +1373,9 @@ declare
     'schools','class_categories','modules','class_groups','salles','classes',
     'teachers','teacher_payments','teacher_acomptes','teacher_expenses','teacher_absences',
     'teacher_child_debts',
-    'reception_staff','worker_shifts','schedule_sessions','subscriptions','free_periods',
+    'worker_roles','reception_staff','worker_shifts',
+    'worker_acomptes','worker_absences','worker_payments',
+    'schedule_sessions','subscriptions','free_periods',
     'module_absence_rules','students','payments','student_charges','absence_penalties',
     'announcements','expense_categories','expenses',
     'cash_transactions','parents','notifications','coursework','group_seances'

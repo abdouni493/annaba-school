@@ -12,7 +12,9 @@ import { Trash2, Edit, Plus, Filter, Tag, Calendar } from "lucide-react";
 import type { Expense, ExpenseCategory } from "@/lib/types";
 import { formatDA } from "@/lib/utils";
 
+import { useCan } from "@/lib/usePermissions";
 export function ExpensesPage() {
+  const can = useCan("expenses");
   const { expenses, categories, push, deleteFrom, updateItem } = useData();
 
   // Filters
@@ -127,9 +129,11 @@ export function ExpensesPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <PageHeader emoji="💸" title="Dépenses" subtitle="Suivi des frais de fonctionnement de l'établissement" />
-        <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Nouvelle Dépense
-        </Button>
+        {can("create") && (
+          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Nouvelle Dépense
+          </Button>
+        )}
       </div>
 
       {/* Filter panel */}
@@ -176,12 +180,16 @@ export function ExpensesPage() {
                       <h4 className="text-sm font-bold text-ink mt-1.5">{exp.name}</h4>
                     </div>
                     <div className="flex gap-1">
-                      <button onClick={() => openEdit(exp)} className="p-1 rounded-lg hover:bg-primary-50 text-muted hover:text-ink">
-                        <Edit className="h-4 w-4" />
-                      </button>
-                      <button onClick={() => handleDelete(exp.id)} className="p-1 rounded-lg hover:bg-danger/10 text-danger">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {can("edit") && (
+                        <button onClick={() => openEdit(exp)} className="p-1 rounded-lg hover:bg-primary-50 text-muted hover:text-ink">
+                          <Edit className="h-4 w-4" />
+                        </button>
+                      )}
+                      {can("delete") && (
+                        <button onClick={() => handleDelete(exp.id)} className="p-1 rounded-lg hover:bg-danger/10 text-danger">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

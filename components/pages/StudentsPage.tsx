@@ -56,6 +56,8 @@ import {
 import { useSettings } from "@/lib/store/settings";
 import { printHtmlDocument } from "@/lib/print";
 import { buildStudentPaymentsReport } from "@/lib/reports/studentPayments";
+import { paymentReceiptHtml } from "@/lib/reports/documents";
+import { useCan } from "@/lib/usePermissions";
 import { speakMessage, speechCaseForScan } from "@/lib/speech";
 import { useToast } from "@/lib/store/toast";
 import {
@@ -98,6 +100,7 @@ import {
 
 export function StudentsPage() {
   const db = useData();
+  const can = useCan("students");
   const {
     school,
     students,
@@ -428,6 +431,25 @@ export function StudentsPage() {
     const res = await deleteStudentPayment(p.id);
     setPayBusy(false);
     if (!res.ok) alert("Le paiement n'a pas pu être supprimé.");
+  };
+
+  /**
+   * RÉIMPRIMER LE REÇU D'UN VERSEMENT.
+   *
+   * La famille repart avec un papier au moment de l'encaissement, mais elle le
+   * perd, ou l'école en veut un double pour son classeur. Le reçu se rejoue
+   * donc depuis la ligne elle-même, sur le MÊME modèle que celui du guichet.
+   */
+  const printPaymentReceipt = (p: Payment) => {
+    try {
+      printHtmlDocument(paymentReceiptHtml(db, { payment: p, language }));
+    } catch {
+      addToast({
+        type: "danger",
+        title: "Impression impossible",
+        message: "Ce versement ne porte sur aucun élève connu.",
+      });
+    }
   };
 
   const openSoldManager = (stu: Student) => {
@@ -1518,19 +1540,25 @@ export function StudentsPage() {
               </span>
             )}
           </Button>
-          <Button
-            onClick={() => setSituationOpen(true)}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <Search className="h-4 w-4" /> Situation d&apos;un élève
-          </Button>
-          <Button onClick={() => setIsScanOpen(true)} variant="secondary" className="flex items-center gap-2">
-            <Scan className="h-4 w-4" /> Scanner RFID
-          </Button>
-          <Button onClick={() => setIsCreateOpen(true)} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" /> Nouvel Étudiant
-          </Button>
+          {can("situation") && (
+            <Button
+              onClick={() => setSituationOpen(true)}
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <Search className="h-4 w-4" /> Situation d&apos;un élève
+            </Button>
+          )}
+          {can("scan") && (
+            <Button onClick={() => setIsScanOpen(true)} variant="secondary" className="flex items-center gap-2">
+              <Scan className="h-4 w-4" /> Scanner RFID
+            </Button>
+          )}
+          {can("create") && (
+            <Button onClick={() => setIsCreateOpen(true)} className="flex items-center gap-2">
+              <Plus className="h-4 w-4" /> Nouvel Étudiant
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1739,6 +1767,7 @@ export function StudentsPage() {
                     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
                       {/* ONE money action: the soldes of every emploi du temps
                           are consulted, alerted on and recharged from here. */}
+                      {can("pay") && (
                       <div>
                         <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
                           Paiement
@@ -1766,11 +1795,13 @@ export function StudentsPage() {
                           </span>
                         </button>
                       </div>
+                      )}
 
                       {/* LA DETTE QUI N'EST PAS DE LA SCOLARITÉ — un livre, une
                           tenue, une sortie, un transport, ou ce que l'école a
                           avancé de sa caisse. On la crée ici, et on l'encaisse
                           au même endroit. */}
+                      {can("charges") && (
                       <div>
                         <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
                           Dettes &amp; frais divers
@@ -1795,6 +1826,7 @@ export function StudentsPage() {
                           </button>
                         </div>
                       </div>
+                      )}
 
                       {/* Fiche */}
                       <div>
@@ -1802,35 +1834,44 @@ export function StudentsPage() {
                           Fiche élève
                         </span>
                         <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                          <button
-                            onClick={() => openDetails(stu)}
-                            className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                          >
-                            <Eye className="h-3.5 w-3.5" /> Détails
-                          </button>
-                          <button
-                            onClick={() => openEdit(stu)}
-                            className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                          >
-                            <Edit className="h-3.5 w-3.5" /> Modifier
-                          </button>
-                          <button
-                            onClick={() => handlePrintStudent(stu)}
-                            className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                          >
-                            <Printer className="h-3.5 w-3.5" /> Imprimer fiche
-                          </button>
-                          <button
-                            onClick={() => openPrintPayments(stu)}
-                            className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                          >
-                            <Printer className="h-3.5 w-3.5" /> Paiements
-                          </button>
+                          {can("view") && (
+                            <button
+                              onClick={() => openDetails(stu)}
+                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
+                            >
+                              <Eye className="h-3.5 w-3.5" /> Détails
+                            </button>
+                          )}
+                          {can("edit") && (
+                            <button
+                              onClick={() => openEdit(stu)}
+                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
+                            >
+                              <Edit className="h-3.5 w-3.5" /> Modifier
+                            </button>
+                          )}
+                          {can("print_file") && (
+                            <button
+                              onClick={() => handlePrintStudent(stu)}
+                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
+                            >
+                              <Printer className="h-3.5 w-3.5" /> Imprimer fiche
+                            </button>
+                          )}
+                          {can("print_payments") && (
+                            <button
+                              onClick={() => openPrintPayments(stu)}
+                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
+                            >
+                              <Printer className="h-3.5 w-3.5" /> Paiements
+                            </button>
+                          )}
                         </div>
                       </div>
 
                       {/* Envoi WhatsApp — l'action de relance la plus fréquente
                           sur une fiche en dette. */}
+                      {can("whatsapp") && (
                       <div>
                         <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
                           Contact
@@ -1870,13 +1911,16 @@ export function StudentsPage() {
                           })()}
                         </div>
                       </div>
+                      )}
 
-                      <button
-                        onClick={() => handleDelete(stu.id)}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-danger py-2 text-[11px] font-bold hover:bg-danger/80"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" /> Supprimer l&apos;élève
-                      </button>
+                      {can("delete") && (
+                        <button
+                          onClick={() => handleDelete(stu.id)}
+                          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-danger py-2 text-[11px] font-bold hover:bg-danger/80"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Supprimer l&apos;élève
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2539,33 +2583,51 @@ export function StudentsPage() {
                                   <strong className="font-bold text-success">
                                     +{formatDA(p.amountPaid)}
                                   </strong>
+                                  {/* Le reçu se réimprime des mois plus tard :
+                                      la famille l'a perdu, ou l'école en veut
+                                      un double pour son classeur. C'est le
+                                      papier de l'école, celui-là même qui sort
+                                      au moment de l'encaissement. */}
+                                  {can("print_receipt") && (
+                                    <button
+                                      onClick={() => printPaymentReceipt(p)}
+                                      title="Imprimer le reçu de ce paiement"
+                                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-primary hover:bg-primary-50"
+                                    >
+                                      <Printer className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
                                   {/* Un règlement de dette a soldé des restes
                                       répartis sur plusieurs achats : il ne se
                                       supprime pas, il se re-encaisse. */}
-                                  <button
-                                    disabled={isDebt}
-                                    onClick={() => openPayEdit(p)}
-                                    title={
-                                      isDebt
-                                        ? "Un règlement de dette ne se modifie pas"
-                                        : "Modifier ce paiement"
-                                    }
-                                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-primary hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-30"
-                                  >
-                                    <Edit className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    disabled={payBusy || isDebt}
-                                    onClick={() => removePayment(p)}
-                                    title={
-                                      isDebt
-                                        ? "Un règlement de dette ne se supprime pas"
-                                        : "Supprimer ce paiement"
-                                    }
-                                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-30"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
+                                  {can("edit_payment") && (
+                                    <button
+                                      disabled={isDebt}
+                                      onClick={() => openPayEdit(p)}
+                                      title={
+                                        isDebt
+                                          ? "Un règlement de dette ne se modifie pas"
+                                          : "Modifier ce paiement"
+                                      }
+                                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-primary hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-30"
+                                    >
+                                      <Edit className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                  {can("delete_payment") && (
+                                    <button
+                                      disabled={payBusy || isDebt}
+                                      onClick={() => removePayment(p)}
+                                      title={
+                                        isDebt
+                                          ? "Un règlement de dette ne se supprime pas"
+                                          : "Supprimer ce paiement"
+                                      }
+                                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-line text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-30"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
                                 </div>
                               </div>
 

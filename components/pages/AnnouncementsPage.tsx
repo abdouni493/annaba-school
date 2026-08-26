@@ -12,6 +12,7 @@ import { Trash2, Edit, Plus, Megaphone, Calendar, Search, Filter, X, Users, Chec
 import type { Announcement, Audience } from "@/lib/types";
 import { formatDateFr } from "@/lib/helpers";
 
+import { useCan } from "@/lib/usePermissions";
 const AUDIENCE_LABELS: Record<Audience, string> = {
   all: "Tous",
   students: "Élèves",
@@ -20,6 +21,7 @@ const AUDIENCE_LABELS: Record<Audience, string> = {
 };
 
 export function AnnouncementsPage() {
+  const can = useCan("announcements");
   const { announcements, groups, sessions, subscriptions, students, push, deleteFrom, updateItem } = useData();
 
   // Modals
@@ -275,9 +277,11 @@ export function AnnouncementsPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <PageHeader emoji="📢" title="Annonces" subtitle="Publier des annonces ciblées par groupe, rôle ou école entière" />
-        <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Nouvelle Annonce
-        </Button>
+        {can("create") && (
+          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Nouvelle Annonce
+          </Button>
+        )}
       </div>
 
       {/* Filters */}
@@ -369,12 +373,16 @@ export function AnnouncementsPage() {
                         <h4 className="text-sm font-bold text-ink truncate">{ann.title}</h4>
                       </div>
                       <div className="flex gap-1 shrink-0">
-                        <button onClick={() => openEdit(ann)} className="p-1 rounded-lg hover:bg-primary-50 text-muted hover:text-ink">
-                          <Edit className="h-4 w-4" />
-                        </button>
-                        <button onClick={() => handleDelete(ann.id)} className="p-1 rounded-lg hover:bg-danger/10 text-danger">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {can("edit") && (
+                          <button onClick={() => openEdit(ann)} className="p-1 rounded-lg hover:bg-primary-50 text-muted hover:text-ink">
+                            <Edit className="h-4 w-4" />
+                          </button>
+                        )}
+                        {can("delete") && (
+                          <button onClick={() => handleDelete(ann.id)} className="p-1 rounded-lg hover:bg-danger/10 text-danger">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
                     <p className="text-xs text-muted mt-2.5 line-clamp-3">{ann.description}</p>

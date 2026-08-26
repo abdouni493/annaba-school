@@ -73,6 +73,71 @@ export async function createRoleUser(payload: CreateUserPayload): Promise<{ id: 
   return { id: String(data) };
 }
 
+/**
+ * OUVRIR UN COMPTE À UNE FICHE QUI EXISTE DÉJÀ.
+ *
+ * Un travailleur créé sans accès porte son propre identifiant. Le jour où
+ * l'administration lui ouvre un compte, `createRoleUser` en rendrait un TOUT
+ * NEUF : il faudrait déplacer sa fiche, ses pointages, ses acomptes et ses
+ * règlements dessous. La fiche reste donc où elle est, et c'est le profil du
+ * compte qui pointe vers elle — ce que l'application lit pour retrouver les
+ * droits d'un connecté.
+ *
+ * Renvoie l'identifiant du COMPTE, qui n'est pas celui de la fiche.
+ */
+export async function createAccountForEntity(
+  entityId: string,
+  payload: CreateUserPayload & { username?: string },
+): Promise<{ id: string }> {
+  if (!payload.role || !payload.email?.trim()) {
+    throw new Error("Le rôle et l'email sont obligatoires.");
+  }
+  if (!payload.password || payload.password.length < 6) {
+    throw new Error("Le mot de passe doit contenir au moins 6 caractères.");
+  }
+
+  const email = payload.email.trim().toLowerCase();
+  const { data, error } = await supabase().rpc("admin_create_user_for", {
+    p_entity_id: entityId,
+    p_email: email,
+    p_password: payload.password,
+    p_role: payload.role,
+    p_full_name: displayName(payload),
+    p_username: payload.username?.trim() || email,
+  });
+  if (error) throw new Error(friendlyError(error));
+  if (!data) throw new Error("La création du compte n'a rien renvoyé.");
+
+  return { id: String(data) };
+}
+
+/**
+ * LE COMPTE QUI PILOTE UNE FICHE, quand il en existe un.
+ *
+ * C'est lui qu'il faut viser pour changer un mot de passe ou un email :
+ * l'identifiant de la fiche n'est pas forcément celui du compte, et ne l'est
+ * jamais quand l'accès a été ouvert après coup.
+ */
+export async function accountIdForEntity(entityId: string): Promise<string | null> {
+  const { data, error } = await supabase().rpc("account_for_entity", {
+    p_entity_id: entityId,
+  });
+  if (error) {
+    console.warn("[accounts] lookup", error.message);
+    return null;
+  }
+  return data ? String(data) : null;
+}
+
+/** Le nom d'utilisateur affiché sur un compte. */
+export async function updateUsername(id: string, username: string): Promise<void> {
+  const { error } = await supabase().rpc("admin_set_username", {
+    p_user_id: id,
+    p_username: username.trim(),
+  });
+  if (error) throw new Error(friendlyError(error));
+}
+
 /** Admin/reception resets someone else's password. */
 export async function resetUserPassword(id: string, password: string): Promise<void> {
   if (!password || password.length < 6) {

@@ -21,12 +21,16 @@ import { StudentPages } from "@/components/pages/StudentPages";
 import { TeacherPages } from "@/components/pages/TeacherPages";
 import { ParentPages } from "@/components/pages/ParentPages";
 import { ModulePlaceholder } from "@/components/ModulePlaceholder";
+import { AccessDenied } from "@/components/layout/AccessDenied";
+import { useAccessRights } from "@/lib/usePermissions";
+import { canSeePage } from "@/lib/permissions";
 
 /** Client-side role+slug dispatch for every module route. Kept separate from
  *  the route file so the page itself can stay a server component and export
  *  `generateStaticParams` (prerendered shells -> instant sidebar navigation). */
 export function ModuleDispatcher({ slug }: { slug: string[] }) {
   const { user } = useSession();
+  const rights = useAccessRights();
   const pageSlug = slug[0];
 
   const role = user?.role || "admin";
@@ -47,6 +51,16 @@ export function ModuleDispatcher({ slug }: { slug: string[] }) {
   }
 
   // 4. Admin / Reception Portal Routing
+  //
+  // Un travailleur n'ouvre que les écrans qu'on lui a cochés. La barre latérale
+  // ne lui montre déjà pas les autres, mais une adresse tapée à la main, un
+  // signet ou un lien reçu contourneraient le menu : le garde-fou est ici, sur
+  // la route elle-même.
+  const guardKey = pageSlug === "administration" ? "workers" : pageSlug;
+  if (guardKey && !canSeePage(rights, guardKey)) {
+    return <AccessDenied />;
+  }
+
   switch (pageSlug) {
     case "classes":
       return <ClassesPage />;

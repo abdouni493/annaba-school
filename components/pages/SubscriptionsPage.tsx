@@ -55,7 +55,9 @@ import type {
   ScheduleSession,
 } from "@/lib/types";
 
+import { useCan } from "@/lib/usePermissions";
 export function SubscriptionsPage() {
+  const can = useCan("subscriptions");
   const db = useData();
   const {
     school,
@@ -727,9 +729,11 @@ export function SubscriptionsPage() {
   const tariffsTab = (
     <div>
       <div className="mb-4 flex items-center justify-end">
-        <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Nouvel Abonnement
-        </Button>
+        {can("edit_price") && (
+<Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Nouvel Abonnement
+          </Button>
+        )}
       </div>
 
       {/* -----------------------------------------------------------------
@@ -1020,24 +1024,30 @@ export function SubscriptionsPage() {
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setActiveMenuId(null)} />
                           <div className="absolute right-0 mt-1 w-36 bg-surface border border-line rounded-xl shadow-lg z-20 overflow-hidden">
-                            <button
-                              onClick={() => openDetails(sub)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
-                            >
-                              <Eye className="h-4 w-4" /> Détails
-                            </button>
-                            <button
-                              onClick={() => openEdit(sub)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
-                            >
-                              <Edit className="h-4 w-4" /> Modifier
-                            </button>
-                            <button
-                              onClick={() => handleDelete(sub)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-danger hover:bg-danger/10 text-left"
-                            >
-                              <Trash2 className="h-4 w-4" /> Supprimer
-                            </button>
+                            {can("view") && (
+<button
+                                onClick={() => openDetails(sub)}
+                                className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
+                              >
+                                <Eye className="h-4 w-4" /> Détails
+                              </button>
+                            )}
+                            {can("edit_price") && (
+<button
+                                onClick={() => openEdit(sub)}
+                                className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
+                              >
+                                <Edit className="h-4 w-4" /> Modifier
+                              </button>
+                            )}
+                            {can("archive") && (
+<button
+                                onClick={() => handleDelete(sub)}
+                                className="flex items-center gap-2 w-full px-4 py-2 text-sm text-danger hover:bg-danger/10 text-left"
+                              >
+                                <Trash2 className="h-4 w-4" /> Supprimer
+                              </button>
+                            )}
                           </div>
                         </>
                       )}

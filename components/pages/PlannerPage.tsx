@@ -58,6 +58,7 @@ import {
 } from "@/lib/printTemplates";
 import { useSettings } from "@/lib/store/settings";
 
+import { useCan } from "@/lib/usePermissions";
 const PRINT_LABELS = {
   fr: {
     docTitle: "Emploi du Temps — Fiche de Séance",
@@ -112,6 +113,7 @@ const WEEKDAYS: { key: Day; label: string }[] = [
 ];
 
 export function PlannerPage() {
+  const can = useCan("planner");
   const db = useData();
   const {
     school,
@@ -1802,16 +1804,20 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <PageHeader emoji="📅" title="Emploi du Temps" subtitle="Visualisation du calendrier hebdomadaire et planification" />
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
-          <Button
-            variant="outline"
-            onClick={() => { resetOpenForm(); setIsOpenSeanceModalOpen(true); }}
-            className="flex items-center gap-2 border-primary/30 text-primary hover:bg-primary-50"
-          >
-            <Sparkles className="h-4 w-4" /> Créneau Séance Libre
-          </Button>
-          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" /> Créer un emploi du temps
-          </Button>
+          {can("create_open") && (
+            <Button
+              variant="outline"
+              onClick={() => { resetOpenForm(); setIsOpenSeanceModalOpen(true); }}
+              className="flex items-center gap-2 border-primary/30 text-primary hover:bg-primary-50"
+            >
+              <Sparkles className="h-4 w-4" /> Créneau Séance Libre
+            </Button>
+          )}
+          {can("create") && (
+            <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+              <Plus className="h-4 w-4" /> Créer un emploi du temps
+            </Button>
+          )}
         </div>
       </div>
 
@@ -2129,34 +2135,42 @@ ${enrolled > 0 ? `${enrolled} élève(s) en seront désinscrits à la date du jo
                         </Badge>
 
                         <div className="flex gap-1.5">
-                          <button
-                            onClick={() => openDetails(s)}
-                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-ink/80 transition-colors"
-                            title="Consulter les détails"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handlePrintSession(s)}
-                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-ink/80 transition-colors"
-                            title="Imprimer cet horaire"
-                          >
-                            <Printer className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => (s.isOpen ? openEditOpenSeance(s) : openEdit(s))}
-                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-primary transition-colors"
-                            title="Modifier"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(s.id)}
-                            className="p-1.5 rounded-lg hover:bg-danger/10 text-danger transition-colors"
-                            title="Supprimer"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {can("view") && (
+<button
+                              onClick={() => openDetails(s)}
+                              className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-ink/80 transition-colors"
+                              title="Consulter les détails"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                          )}
+                          {can("print") && (
+<button
+                              onClick={() => handlePrintSession(s)}
+                              className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-ink/80 transition-colors"
+                              title="Imprimer cet horaire"
+                            >
+                              <Printer className="h-4 w-4" />
+                            </button>
+                          )}
+                          {can("edit") && (
+<button
+                              onClick={() => (s.isOpen ? openEditOpenSeance(s) : openEdit(s))}
+                              className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-primary transition-colors"
+                              title="Modifier"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </button>
+                          )}
+                          {can("delete") && (
+<button
+                              onClick={() => handleDelete(s.id)}
+                              className="p-1.5 rounded-lg hover:bg-danger/10 text-danger transition-colors"
+                              title="Supprimer"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     </CardBody>

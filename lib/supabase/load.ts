@@ -15,6 +15,26 @@ import type { School } from "@/lib/types";
 /** PostgREST caps a response at 1000 rows; big tables are read page by page. */
 const PAGE = 1000;
 
+/**
+ * LA TABLE N'EXISTE PAS ENCORE.
+ *
+ * Chaque mise à jour de l'application est livrée avec un script SQL que
+ * l'école exécute elle-même. Entre le déploiement du code et l'exécution du
+ * script, une table peut manquer — et une lecture qui échoue faisait tomber
+ * TOUT le chargement : plus un élève, plus un emploi du temps, plus rien.
+ *
+ * Une table absente rend donc une liste vide, et le journal dit laquelle. Une
+ * lecture refusée pour toute autre raison (droits, réseau) continue en revanche
+ * de remonter : elle ne doit surtout pas passer pour « aucune donnée ».
+ */
+function isMissingTable(error: { code?: string; message?: string }): boolean {
+  return (
+    error.code === "42P01" ||           // Postgres : relation inexistante
+    error.code === "PGRST205" ||        // PostgREST : table absente du schéma
+    /does not exist|schema cache/i.test(error.message ?? "")
+  );
+}
+
 async function readAll(spec: (typeof TABLES)[CollectionKey]): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   for (let from = 0; ; from += PAGE) {
@@ -22,7 +42,16 @@ async function readAll(spec: (typeof TABLES)[CollectionKey]): Promise<Record<str
       .from(spec.table)
       .select("*")
       .range(from, from + PAGE - 1);
-    if (error) throw new Error(`${spec.table}: ${error.message}`);
+    if (error) {
+      if (isMissingTable(error)) {
+        console.warn(
+          `[supabase] ${spec.table} est absente de la base — le script SQL de mise à jour ` +
+            `n'a pas encore été exécuté. Cet écran restera vide en attendant.`,
+        );
+        return out;
+      }
+      throw new Error(`${spec.table}: ${error.message}`);
+    }
     const rows = (data ?? []) as Record<string, unknown>[];
     out.push(...rows.map((r) => fromRow(spec, r)));
     if (rows.length < PAGE) return out;

@@ -12,7 +12,9 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Trash2, Eye, Plus, CheckSquare, Square, FileText, Upload, Image as ImageIcon } from "lucide-react";
 import type { Subject } from "@/lib/types";
 
+import { useCan } from "@/lib/usePermissions";
 export function SubjectsPage() {
+  const can = useCan("subjects");
   const { subjects, sessions, modules, groups, classes, push, deleteFrom } = useData();
 
   // Modals
@@ -107,14 +109,16 @@ export function SubjectsPage() {
         <PageHeader emoji="📚" title="Sujets & Exercices" subtitle="Partager des fiches d'exercices et devoirs" />
 
         <div className="flex items-center gap-2">
-          {selectedIds.length > 0 && (
+          {can("bulk_delete") && selectedIds.length > 0 && (
             <Button variant="danger" onClick={handleBulkDelete} className="flex items-center gap-2">
               <Trash2 className="h-4 w-4" /> Supprimer ({selectedIds.length})
             </Button>
           )}
-          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" /> Nouveau Sujet
-          </Button>
+          {can("create") && (
+            <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+              <Plus className="h-4 w-4" /> Nouveau Sujet
+            </Button>
+          )}
         </div>
       </div>
 
@@ -186,19 +190,23 @@ export function SubjectsPage() {
                         {getSessionLabel(sbj.sessionId)}
                       </Badge>
                       <div className="flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setSelectedSubject(sbj);
-                            setIsDetailsOpen(true);
-                          }}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleDeleteSingle(sbj.id)} className="text-danger">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {can("view") && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setSelectedSubject(sbj);
+                              setIsDetailsOpen(true);
+                            }}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {can("delete") && (
+                          <Button size="sm" variant="ghost" onClick={() => handleDeleteSingle(sbj.id)} className="text-danger">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardBody>

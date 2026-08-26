@@ -39,6 +39,7 @@ import { GroupSeanceSection } from "@/components/independent/GroupSeanceSection"
 import { useSettings } from "@/lib/store/settings";
 import { formatDA, money } from "@/lib/utils";
 
+import { useCan } from "@/lib/usePermissions";
 /** Everything the séance libre receipt needs, captured at creation time. */
 interface CasualReceiptData {
   personName: string;
@@ -83,6 +84,7 @@ const DAY_LABELS: Record<string, string> = {
 };
 
 export function IndependentPage() {
+  const can = useCan("independent");
   const db = useData();
   const {
     independent,
@@ -454,9 +456,11 @@ export function IndependentPage() {
           title="Séances Libres"
           subtitle="Enregistrer les séances ponctuelles des élèves inscrits et des passagers"
         />
-        <Button onClick={openCreate} className="flex items-center gap-2 self-start sm:self-center">
-          <Plus className="h-4 w-4" /> Nouvelle Séance Libre
-        </Button>
+        {can("create") && (
+<Button onClick={openCreate} className="flex items-center gap-2 self-start sm:self-center">
+            <Plus className="h-4 w-4" /> Nouvelle Séance Libre
+          </Button>
+        )}
       </div>
 
       {/* Séances libres vendues à un GROUPE entier — on saisit le nombre
@@ -582,33 +586,41 @@ export function IndependentPage() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 my-2 flex-1 items-center">
-                        <button
-                          onClick={() => { setSelectedCasual(ind); setIsDetailsOpen(true); setActiveMenuId(null); }}
-                          className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
-                        >
-                          <Eye className="h-3.5 w-3.5" /> Détails
-                        </button>
-                        <button
-                          onClick={() => openEdit(ind)}
-                          className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
-                        >
-                          <Edit className="h-3.5 w-3.5" /> Modifier
-                        </button>
-                        <button
-                          onClick={() => { reprint(ind); setActiveMenuId(null); }}
-                          className="col-span-2 flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
-                        >
-                          <Printer className="h-3.5 w-3.5" /> Réimprimer le reçu
-                        </button>
+                        {can("view") && (
+<button
+                            onClick={() => { setSelectedCasual(ind); setIsDetailsOpen(true); setActiveMenuId(null); }}
+                            className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Détails
+                          </button>
+                        )}
+                        {can("edit") && (
+<button
+                            onClick={() => openEdit(ind)}
+                            className="flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
+                          >
+                            <Edit className="h-3.5 w-3.5" /> Modifier
+                          </button>
+                        )}
+                        {can("print") && (
+<button
+                            onClick={() => { reprint(ind); setActiveMenuId(null); }}
+                            className="col-span-2 flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-xl bg-canvas border border-line text-ink hover:bg-primary-50 transition-colors"
+                          >
+                            <Printer className="h-3.5 w-3.5" /> Réimprimer le reçu
+                          </button>
+                        )}
                       </div>
 
                       <div className="border-t border-line pt-2">
-                        <button
-                          onClick={() => handleDelete(ind.id)}
-                          className="flex items-center justify-center gap-1.5 w-full py-2 px-3 text-xs font-bold rounded-xl bg-danger text-white hover:bg-danger/90 transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" /> Supprimer
-                        </button>
+                        {can("delete") && (
+<button
+                            onClick={() => handleDelete(ind.id)}
+                            className="flex items-center justify-center gap-1.5 w-full py-2 px-3 text-xs font-bold rounded-xl bg-danger text-white hover:bg-danger/90 transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> Supprimer
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -746,22 +758,30 @@ export function IndependentPage() {
                       })()}
                       <td className="p-3">
                         <div className="flex justify-end gap-1">
-                          <button
-                            onClick={() => { setSelectedCasual(ind); setIsDetailsOpen(true); }}
-                            className="p-1.5 rounded-lg hover:bg-primary-50 text-ink"
-                            title="Détails"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                          </button>
-                          <button onClick={() => reprint(ind)} className="p-1.5 rounded-lg hover:bg-primary-50 text-ink" title="Réimprimer">
-                            <Printer className="h-3.5 w-3.5" />
-                          </button>
-                          <button onClick={() => openEdit(ind)} className="p-1.5 rounded-lg hover:bg-primary-50 text-primary" title="Modifier">
-                            <Edit className="h-3.5 w-3.5" />
-                          </button>
-                          <button onClick={() => handleDelete(ind.id)} className="p-1.5 rounded-lg hover:bg-danger/10 text-danger" title="Supprimer">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {can("view") && (
+<button
+                              onClick={() => { setSelectedCasual(ind); setIsDetailsOpen(true); }}
+                              className="p-1.5 rounded-lg hover:bg-primary-50 text-ink"
+                              title="Détails"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {can("print") && (
+<button onClick={() => reprint(ind)} className="p-1.5 rounded-lg hover:bg-primary-50 text-ink" title="Réimprimer">
+                              <Printer className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {can("edit") && (
+<button onClick={() => openEdit(ind)} className="p-1.5 rounded-lg hover:bg-primary-50 text-primary" title="Modifier">
+                              <Edit className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {can("delete") && (
+<button onClick={() => handleDelete(ind.id)} className="p-1.5 rounded-lg hover:bg-danger/10 text-danger" title="Supprimer">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

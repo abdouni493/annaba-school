@@ -40,7 +40,9 @@ import {
 } from "@/lib/helpers";
 import { formatDA } from "@/lib/utils";
 
+import { useCan } from "@/lib/usePermissions";
 export function CashPage() {
+  const can = useCan("cash");
   const db = useData();
   const {
     cash,
@@ -447,18 +449,22 @@ export function CashPage() {
         <PageHeader emoji="🏦" title="Caisse" subtitle="Suivi des flux de trésorerie en temps réel" />
 
         <div className="flex items-center gap-2">
-          <Button
-            onClick={() => { resetForm(); setIsDepositOpen(true); }}
-            className="bg-success hover:bg-success/90 shadow-md hover:shadow-lg transition-all duration-300 flex items-center gap-2 py-2.5 rounded-xl text-xs font-bold text-white border-none"
-          >
-            <Plus className="h-4 w-4" /> Dépôt Caisse
-          </Button>
-          <Button
-            onClick={() => { resetForm(); setIsWithdrawOpen(true); }}
-            className="bg-danger hover:bg-danger/90 shadow-md hover:shadow-lg transition-all duration-300 flex items-center gap-2 py-2.5 rounded-xl text-xs font-bold text-white border-none"
-          >
-            <ArrowDownLeft className="h-4 w-4" /> Retrait Caisse
-          </Button>
+          {can("deposit") && (
+<Button
+              onClick={() => { resetForm(); setIsDepositOpen(true); }}
+              className="bg-success hover:bg-success/90 shadow-md hover:shadow-lg transition-all duration-300 flex items-center gap-2 py-2.5 rounded-xl text-xs font-bold text-white border-none"
+            >
+              <Plus className="h-4 w-4" /> Dépôt Caisse
+            </Button>
+          )}
+          {can("withdraw") && (
+<Button
+              onClick={() => { resetForm(); setIsWithdrawOpen(true); }}
+              className="bg-danger hover:bg-danger/90 shadow-md hover:shadow-lg transition-all duration-300 flex items-center gap-2 py-2.5 rounded-xl text-xs font-bold text-white border-none"
+            >
+              <ArrowDownLeft className="h-4 w-4" /> Retrait Caisse
+            </Button>
+          )}
         </div>
       </div>
 
@@ -918,20 +924,24 @@ export function CashPage() {
                     </td>
                     <td className="p-4 text-center pr-6">
                       <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => openEdit(tx)}
-                          className="p-1.5 rounded-lg hover:bg-primary-50 text-muted hover:text-primary transition-colors"
-                          title="Modifier"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(tx.id)}
-                          className="p-1.5 rounded-lg hover:bg-danger/10 text-muted hover:text-danger transition-colors"
-                          title="Supprimer"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {can("edit") && (
+<button
+                            onClick={() => openEdit(tx)}
+                            className="p-1.5 rounded-lg hover:bg-primary-50 text-muted hover:text-primary transition-colors"
+                            title="Modifier"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </button>
+                        )}
+                        {can("delete") && (
+<button
+                            onClick={() => handleDelete(tx.id)}
+                            className="p-1.5 rounded-lg hover:bg-danger/10 text-muted hover:text-danger transition-colors"
+                            title="Supprimer"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

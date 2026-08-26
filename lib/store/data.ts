@@ -67,6 +67,10 @@ import type {
   TeacherPaymentDeduction,
   TeacherPaymentMonth,
   UnpaidTeacherSession,
+  WorkerAbsence,
+  WorkerAcompte,
+  WorkerJobRole,
+  WorkerPayment,
   WorkerShift,
 } from "@/lib/types";
 
@@ -81,7 +85,15 @@ export interface Database {
   teachers: Teacher[];
   teacherPayments: TeacherPayment[];
   reception: ReceptionStaff[];
+  /** les métiers que l'école a nommés elle-même (réception, chauffeur, …) */
+  workerRoles: WorkerJobRole[];
   workerShifts: WorkerShift[];
+  /** les avances sur salaire versées aux travailleurs */
+  workerAcomptes: WorkerAcompte[];
+  /** les absences retenues sur la paie des travailleurs */
+  workerAbsences: WorkerAbsence[];
+  /** les règlements versés aux travailleurs */
+  workerPayments: WorkerPayment[];
   sessions: ScheduleSession[];
   subscriptions: Subscription[];
   freePeriods: FreePeriod[];
@@ -120,6 +132,57 @@ export interface Database {
   independent: IndependentSession[];
   /** séances libres vendues à un GROUPE d'élèves, sans nommer personne */
   groupSeances: GroupSeance[];
+}
+
+// =============================================================================
+//  QUI TRAVAILLE EN CE MOMENT — la signature posée sur chaque opération
+// =============================================================================
+
+/**
+ * Le compte connecté, retenu ici plutôt que lu depuis `useSession` : les
+ * actions du magasin sont des fonctions ordinaires, pas des composants, et
+ * doivent pouvoir signer une ligne SANS attendre un rendu React.
+ *
+ * `SessionProvider` le pose à la connexion et l'efface à la déconnexion.
+ */
+export interface Actor {
+  id: string;
+  name: string;
+  role: string;
+}
+
+let currentActor: Actor | null = null;
+
+/** Appelé par `SessionProvider` — jamais par un écran. */
+export function setCurrentActor(actor: Actor | null): void {
+  currentActor = actor;
+}
+
+export function getCurrentActor(): Actor | null {
+  return currentActor;
+}
+
+/** La signature à recopier sur une ligne qu'on vient de créer. */
+export function authorStamp(): {
+  createdBy?: string;
+  createdByName?: string;
+  createdByRole?: string;
+} {
+  if (!currentActor) return {};
+  return {
+    createdBy: currentActor.id,
+    createdByName: currentActor.name,
+    createdByRole: currentActor.role,
+  };
+}
+
+/**
+ * Signe une ligne sans jamais écraser une signature déjà posée : une ligne
+ * relue puis réécrite garde SON auteur, pas celui qui l'a touchée ensuite.
+ */
+export function signed<T extends object>(item: T): T {
+  const has = (item as Record<string, unknown>).createdBy;
+  return has ? item : ({ ...authorStamp(), ...item } as T);
 }
 
 /** Ids are generated locally now (demo mode); the prefix is kept so the ~100
@@ -559,13 +622,55 @@ interface DataActions {
   scanWorkerCard: (code: string) => Promise<WorkerScanResult>;
   /** Freezes days started without a clock-out once the day is over. */
   freezeOpenWorkerShifts: () => Promise<{ ok: boolean; frozen?: number }>;
-  /** Settles the selected worked days; they never reappear as unpaid. */
-  payWorkerShifts: (
-    workerId: string,
-    shiftIds: string[],
-    amount: number,
-    description?: string,
-  ) => Promise<{ ok: boolean; days?: number; minutes?: number; messageKey?: string }>;
+  /**
+   * LE RÈGLEMENT D'UN TRAVAILLEUR — mois, journées, demi-journées ou heures.
+   *
+   * Une seule action pour les quatre contrats : elle écrit LA ligne de
+   * règlement (`workerPayments`), sort l'argent de la caisse, et solde du même
+   * mouvement tout ce qui a été retenu :
+   *
+   *  - les journées pointées choisies passent à « payée » (contrat horaire) ;
+   *  - les acomptes et les absences retenus sont marqués payés, avec le numéro
+   *    du règlement — ils ne reviennent JAMAIS sur le suivant.
+   *
+   * `amount` est ce qui sort réellement de la caisse : le net calculé, sauf
+   * quand l'administration l'a corrigé à la main.
+   */
+  payWorker: (args: {
+    workerId: string;
+    /** ce que ce règlement solde : « 08/2026 », « 2026-08-14 », ou rien */
+    periodKeys?: string[];
+    /** contrat horaire : les journées pointées à régler */
+    shiftIds?: string[];
+    /** ce que les périodes valent avant retenues */
+    gross: number;
+    /** les acomptes retenus */
+    acompteIds?: string[];
+    /** les absences retenues */
+    absenceIds?: string[];
+    /** ce qui sort de la caisse */
+    amount: number;
+    /** le jour du versement (YYYY-MM-DD) — aujourd'hui quand absent */
+    date?: string;
+    description?: string;
+  }) => Promise<{
+    ok: boolean;
+    paymentId?: string;
+    net?: number;
+    days?: number;
+    minutes?: number;
+    messageKey?: string;
+  }>;
+  /** Corrige un règlement déjà versé : le montant, la date, la description. */
+  updateWorkerPayment: (
+    id: string,
+    fields: { amount?: number; date?: string; description?: string },
+  ) => Promise<{ ok: boolean }>;
+  /**
+   * Annule un règlement : l'argent revient en caisse, et tout ce qu'il avait
+   * soldé — journées, acomptes, absences — redevient dû.
+   */
+  deleteWorkerPayment: (id: string) => Promise<{ ok: boolean }>;
   /**
    * Settles the selected teacher timings ("YYYY-MM-DD|sessionId" keys).
    *
@@ -1236,6 +1341,7 @@ export const useData = create<DataStore>((set, get) => ({
     const remaining = consumes ? Math.max(0, before - 1) : Math.max(0, before);
 
     const record: AttendanceRecord = {
+      ...authorStamp(),
       id: uid("att"),
       studentId: student.id,
       sessionId: matched.id,
@@ -1431,6 +1537,7 @@ export const useData = create<DataStore>((set, get) => ({
     const remaining = consumes ? Math.max(0, before - 1) : Math.max(0, before);
 
     const record: AttendanceRecord = {
+      ...authorStamp(),
       id: uid("att"),
       studentId,
       sessionId,
@@ -1636,6 +1743,7 @@ export const useData = create<DataStore>((set, get) => ({
         : new Date(`${date}T${startTimeOnDate(session, date)}:00`).toISOString();
 
     const record: AttendanceRecord = {
+      ...authorStamp(),
       id: existing?.id ?? uid("att"),
       studentId,
       sessionId,
@@ -1749,6 +1857,7 @@ export const useData = create<DataStore>((set, get) => ({
       enrollment.consumedSeances + Math.max(0, Math.floor((enrollment.balance ?? 0) / unit));
 
     const payment: Payment = {
+      ...authorStamp(),
       id: uid("pay"),
       studentId,
       enrollmentId,
@@ -1787,6 +1896,7 @@ export const useData = create<DataStore>((set, get) => ({
         ? []
         : [
             {
+              ...authorStamp(),
               id: uid("csh"),
               type: "student_payment" as const,
               amount: credit,
@@ -1799,6 +1909,7 @@ export const useData = create<DataStore>((set, get) => ({
             ...(source === "school_cash"
               ? [
                   {
+                    ...authorStamp(),
                     id: uid("csh"),
                     type: "student_debt" as const,
                     amount: -credit,
@@ -1880,6 +1991,7 @@ export const useData = create<DataStore>((set, get) => ({
     }
 
     const charge: StudentCharge = {
+      ...authorStamp(),
       id: id ?? uid("chg"),
       studentId,
       name: label,
@@ -1964,6 +2076,7 @@ export const useData = create<DataStore>((set, get) => ({
       if (take <= 0) continue;
 
       const payment: Payment = {
+      ...authorStamp(),
         id: uid("pay"),
         studentId,
         chargeId: charge.id,
@@ -1983,6 +2096,7 @@ export const useData = create<DataStore>((set, get) => ({
       };
       payments.push(payment);
       cashRows.push({
+        ...authorStamp(),
         id: uid("csh"),
         type: "student_payment",
         amount: take,
@@ -2149,6 +2263,7 @@ export const useData = create<DataStore>((set, get) => ({
       }
       const studentLabel = `${student.firstName} ${student.lastName}`.trim();
       const receipt: Payment = {
+      ...authorStamp(),
         id: uid("pay"),
         studentId,
         seancesPurchased: 0,
@@ -2203,6 +2318,7 @@ export const useData = create<DataStore>((set, get) => ({
         cash: [
           ...state.cash,
           {
+            ...authorStamp(),
             id: uid("csh"),
             type: "student_payment" as const,
             amount: settled,
@@ -2210,6 +2326,7 @@ export const useData = create<DataStore>((set, get) => ({
             description: `Dette de ${studentLabel} réglée par l'école`,
           },
           {
+            ...authorStamp(),
             id: uid("csh"),
             type: "student_debt" as const,
             amount: -settled,
@@ -2943,39 +3060,165 @@ export const useData = create<DataStore>((set, get) => ({
     return { ok: true, frozen: doomed.length };
   },
 
-  payWorkerShifts: async (workerId, shiftIds, amount, description) => {
+  payWorker: async ({
+    workerId,
+    periodKeys = [],
+    shiftIds = [],
+    gross,
+    acompteIds = [],
+    absenceIds = [],
+    amount,
+    date,
+    description,
+  }) => {
     const db = get();
     const worker = db.reception.find((w) => w.id === workerId);
     if (!worker) return { ok: false, messageKey: "worker.notFound" };
 
-    const payable = db.workerShifts.filter(
-      (s) => s.workerId === workerId && !s.paid && !s.frozen && !!s.endAt && shiftIds.includes(s.id),
+    // Les journées pointées : uniquement celles qui sont réellement réglables —
+    // complètes, non gelées, pas déjà payées.
+    const shiftSet = new Set(shiftIds);
+    const shifts = db.workerShifts.filter(
+      (x) => x.workerId === workerId && shiftSet.has(x.id) && !x.paid && !x.frozen && !!x.endAt,
     );
-    if (payable.length === 0) return { ok: false, messageKey: "worker.nothingDue" };
+    const minutes = shifts.reduce((sum, x) => sum + x.minutes, 0);
+
+    // Les retenues : elles ne sont plus EFFACÉES, elles sont marquées payées —
+    // l'historique du travailleur garde donc trace de chaque avance consentie.
+    const acompteSet = new Set(acompteIds);
+    const takenAcomptes = db.workerAcomptes.filter(
+      (a) => a.workerId === workerId && acompteSet.has(a.id) && !a.paid,
+    );
+    const absenceSet = new Set(absenceIds);
+    const takenAbsences = db.workerAbsences.filter(
+      (a) => a.workerId === workerId && absenceSet.has(a.id) && !a.paid,
+    );
+
+    const acomptesTotal = money(takenAcomptes.reduce((sum, a) => sum + a.amount, 0));
+    const absencesTotal = money(takenAbsences.reduce((sum, a) => sum + a.cost, 0));
+    const net = money(gross - acomptesTotal - absencesTotal);
+    const paid = money(Math.max(0, amount));
+
+    if (
+      periodKeys.length === 0 &&
+      shifts.length === 0 &&
+      takenAcomptes.length === 0 &&
+      takenAbsences.length === 0 &&
+      paid <= 0
+    ) {
+      return { ok: false, messageKey: "worker.nothingDue" };
+    }
 
     const paymentId = uid("wpy");
-    const ids = new Set(payable.map((s) => s.id));
-    const minutes = payable.reduce((s, x) => s + x.minutes, 0);
+    const cashId = uid("csh");
+    const day = date?.slice(0, 10) || dateKey(new Date());
+    const isoDate = `${day}T${new Date().toISOString().substring(11)}`;
+    const label =
+      description?.trim() || `Rémunération ${worker.firstName} ${worker.lastName}`.trim();
+
+    const payment: WorkerPayment = {
+      ...authorStamp(),
+      id: paymentId,
+      workerId,
+      kind: worker.paymentType,
+      periodKeys,
+      shiftIds: shifts.map((x) => x.id),
+      gross: money(gross),
+      acomptes: acomptesTotal,
+      absences: absencesTotal,
+      net,
+      amount: paid,
+      date: day,
+      description: description?.trim() || undefined,
+      cashId,
+      createdAt: new Date().toISOString(),
+    };
+
+    const shiftDone = new Set(shifts.map((x) => x.id));
+    const acompteDone = new Set(takenAcomptes.map((a) => a.id));
+    const absenceDone = new Set(takenAbsences.map((a) => a.id));
 
     set((state) => ({
-      workerShifts: state.workerShifts.map((s) =>
-        ids.has(s.id) ? { ...s, paid: true, paymentId } : s,
+      workerPayments: [...state.workerPayments, payment],
+      workerShifts: state.workerShifts.map((x) =>
+        shiftDone.has(x.id) ? { ...x, paid: true, paymentId } : x,
       ),
-      cash: [
-        ...state.cash,
-        {
-          id: uid("csh"),
-          type: "teacher_payment",
-          amount: -Math.max(amount, 0),
-          date: new Date().toISOString(),
-          description:
-            (description?.trim() || `Règlement heures ${worker.firstName} ${worker.lastName}`) +
-            ` (${payable.length} jour(s), ${(minutes / 60).toFixed(2)} h)`,
-        },
-      ],
+      workerAcomptes: state.workerAcomptes.map((a) =>
+        acompteDone.has(a.id) ? { ...a, paid: true, paymentId } : a,
+      ),
+      workerAbsences: state.workerAbsences.map((a) =>
+        absenceDone.has(a.id) ? { ...a, paid: true, paymentId } : a,
+      ),
+      cash:
+        paid > 0
+          ? [
+              ...state.cash,
+              {
+                ...authorStamp(),
+                id: cashId,
+                type: "teacher_payment" as const,
+                amount: -paid,
+                date: isoDate,
+                description: label,
+              },
+            ]
+          : state.cash,
     }));
 
-    return { ok: true, days: payable.length, minutes };
+    return { ok: true, paymentId, net, days: shifts.length, minutes };
+  },
+
+  updateWorkerPayment: async (id, fields) => {
+    const db = get();
+    const row = db.workerPayments.find((p) => p.id === id);
+    if (!row) return { ok: false };
+
+    const amount = fields.amount === undefined ? row.amount : money(Math.max(0, fields.amount));
+    const day = fields.date?.slice(0, 10) || row.date;
+    const description =
+      fields.description === undefined ? row.description : fields.description.trim() || undefined;
+
+    set((state) => ({
+      workerPayments: state.workerPayments.map((p) =>
+        p.id === id ? { ...p, amount, date: day, description } : p,
+      ),
+      // Le mouvement de caisse suit le règlement : le solde reste juste, et le
+      // journal ne raconte pas une autre histoire que la fiche.
+      cash: state.cash.map((c) =>
+        c.id === row.cashId
+          ? {
+              ...c,
+              amount: -amount,
+              date: `${day}T${c.date.substring(11) || "12:00:00.000Z"}`,
+              description: description || c.description,
+            }
+          : c,
+      ),
+    }));
+    return { ok: true };
+  },
+
+  deleteWorkerPayment: async (id) => {
+    const db = get();
+    const row = db.workerPayments.find((p) => p.id === id);
+    if (!row) return { ok: false };
+
+    set((state) => ({
+      workerPayments: state.workerPayments.filter((p) => p.id !== id),
+      cash: state.cash.filter((c) => c.id !== row.cashId),
+      // Tout ce que le règlement avait soldé redevient dû, exactement comme
+      // avant qu'il ne soit versé.
+      workerShifts: state.workerShifts.map((x) =>
+        x.paymentId === id ? { ...x, paid: false, paymentId: undefined } : x,
+      ),
+      workerAcomptes: state.workerAcomptes.map((a) =>
+        a.paymentId === id ? { ...a, paid: false, paymentId: undefined } : a,
+      ),
+      workerAbsences: state.workerAbsences.map((a) =>
+        a.paymentId === id ? { ...a, paid: false, paymentId: undefined } : a,
+      ),
+    }));
+    return { ok: true };
   },
 
   payTeacherSessions: async ({
@@ -3363,6 +3606,7 @@ export const useData = create<DataStore>((set, get) => ({
         };
 
     const payment: Payment = {
+      ...authorStamp(),
       id: uid("pay"),
       studentId,
       enrollmentId,
@@ -3416,6 +3660,7 @@ export const useData = create<DataStore>((set, get) => ({
         ? [
             ...state.cash,
             {
+              ...authorStamp(),
               id: uid("csh"),
               type: "student_payment" as const,
               amount: paid,
@@ -3483,6 +3728,7 @@ export const useData = create<DataStore>((set, get) => ({
 
     const now = new Date().toISOString();
     const receipt: Payment = {
+      ...authorStamp(),
       id: uid("pay"),
       studentId,
       seancesPurchased: 0,
@@ -3504,6 +3750,7 @@ export const useData = create<DataStore>((set, get) => ({
       cash: [
         ...state.cash,
         {
+          ...authorStamp(),
           id: uid("csh"),
           type: "student_payment" as const,
           amount: settled,
@@ -3542,6 +3789,7 @@ export const useData = create<DataStore>((set, get) => ({
 
     const now = new Date().toISOString();
     const receipt: Payment = {
+      ...authorStamp(),
       id: uid("pay"),
       studentId,
       seancesPurchased: 0,
@@ -3563,6 +3811,7 @@ export const useData = create<DataStore>((set, get) => ({
       cash: [
         ...state.cash,
         {
+          ...authorStamp(),
           id: uid("csh"),
           type: "student_payment" as const,
           amount: settled,
@@ -3765,6 +4014,7 @@ export const useData = create<DataStore>((set, get) => ({
     const cashInId = existing?.cashInId ?? uid("csh");
     const cashOutId = existing?.cashOutId ?? uid("csh");
     const cashIn: CashTransaction = {
+      ...authorStamp(),
       id: cashInId,
       type: "student_payment",
       amount: totals.total,
@@ -3772,6 +4022,7 @@ export const useData = create<DataStore>((set, get) => ({
       description: `Séance libre de groupe : ${label} — ${totals.students} élève(s) × ${formatDA(totals.pricePerStudent)}`,
     };
     const cashOut: CashTransaction = {
+      ...authorStamp(),
       id: cashOutId,
       type: "teacher_payment",
       amount: -totals.teacherTotal,
@@ -3780,6 +4031,7 @@ export const useData = create<DataStore>((set, get) => ({
     };
 
     const row: GroupSeance = {
+      ...authorStamp(),
       ...input,
       title: label,
       studentsCount: totals.students,
@@ -3911,8 +4163,16 @@ export const useData = create<DataStore>((set, get) => ({
   },
 
   // ---- Plain collection mutations -------------------------------------------
+  /**
+   * Ajoute une ligne à une collection, SIGNÉE du compte qui la crée.
+   *
+   * La signature est posée ici, au seul point de passage commun à tous les
+   * écrans : un bouton n'a rien à savoir de la traçabilité, et aucune création
+   * ne peut l'oublier. Un objet qui porte déjà un auteur garde le sien.
+   */
   push: (key, item) => {
-    set((state) => ({ [key]: [...(state[key] as unknown[]), item] }) as Partial<DataStore>);
+    const row = signed(item as object) as typeof item;
+    set((state) => ({ [key]: [...(state[key] as unknown[]), row] }) as Partial<DataStore>);
   },
 
   updateItem: (key, id, updatedFields) => {
@@ -3946,6 +4206,25 @@ export const useData = create<DataStore>((set, get) => ({
             : s,
         );
       }
+      // Un travailleur effacé emporte ses pointages, ses acomptes, ses absences
+      // et ses règlements : c'est ce que font les `on delete cascade` en base.
+      // Sans cela le magasin garderait des lignes que la base vient de
+      // supprimer, et la synchronisation les réécrirait au mouvement suivant —
+      // sur un travailleur qui n'existe plus.
+      if (key === "reception") {
+        patch.workerShifts = state.workerShifts.filter((x) => x.workerId !== id);
+        patch.workerAcomptes = state.workerAcomptes.filter((x) => x.workerId !== id);
+        patch.workerAbsences = state.workerAbsences.filter((x) => x.workerId !== id);
+        patch.workerPayments = state.workerPayments.filter((x) => x.workerId !== id);
+      }
+      // Un métier supprimé laisse ses fiches SANS métier — leur paie et leur
+      // historique ne bougent pas, mais elles ne doivent pas continuer de
+      // pointer un métier qui n'existe plus.
+      if (key === "workerRoles") {
+        patch.reception = state.reception.map((w) =>
+          w.role === id ? { ...w, role: undefined } : w,
+        );
+      }
       return patch as Partial<DataStore>;
     });
   },
@@ -3960,6 +4239,8 @@ export const useData = create<DataStore>((set, get) => ({
     }
     const signedAmount = type === "withdraw" ? -Math.abs(amount) : Math.abs(amount);
     const item: CashTransaction = {
+      ...authorStamp(),
+      ...authorStamp(),
       id: uid("csh"),
       type,
       amount: signedAmount,

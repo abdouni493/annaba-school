@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useSession } from "@/lib/store/session";
-import { useData } from "@/lib/store/data";
+import { setCurrentActor, useData } from "@/lib/store/data";
 import { pauseSync, resumeSync, startSync, stopSync } from "@/lib/supabase/sync";
 
 /**
@@ -24,6 +24,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     fetchSchool();
     initSession();
   }, [initSession, fetchSchool]);
+
+  /**
+   * QUI SIGNE LES OPÉRATIONS.
+   *
+   * Le magasin pose son nom sur chaque ligne créée, mais ses actions sont des
+   * fonctions ordinaires : elles ne peuvent pas lire un hook. Le compte connecté
+   * leur est donc DÉPOSÉ ici, dès qu'il est connu, et retiré à la déconnexion.
+   *
+   * La signature porte l'identifiant de la FICHE (`entityId`), pas celui du
+   * compte : c'est la fiche que l'historique doit désigner. Les deux ne
+   * diffèrent que pour un travailleur à qui l'accès a été ouvert APRÈS sa
+   * création — son compte est né plus tard, sa fiche existait déjà, et c'est
+   * sous elle que vivent ses pointages, ses acomptes et ses règlements.
+   */
+  useEffect(() => {
+    setCurrentActor(
+      user ? { id: user.entityId ?? user.id, name: user.name, role: user.role } : null,
+    );
+  }, [user]);
 
   useEffect(() => {
     if (!hydrated) return;

@@ -13,7 +13,7 @@ clair (par défaut) / sombre et FR/AR (RTL).
 ## Stack
 
 - **Next.js 16** (App Router) — pages dans `app/`, contenu des modules dans `components/pages/`
-- **Supabase** — PostgreSQL (35 tables métier), Auth (email + mot de passe), Storage (logo, images)
+- **Supabase** — PostgreSQL (39 tables métier), Auth (email + mot de passe), Storage (logo, images)
 - **Zustand** — le store `lib/store/data.ts` porte les règles métier et sert de cache de la base
 - **Tailwind v4**, **framer-motion**, **lucide-react**
 
@@ -27,7 +27,7 @@ Le script est idempotent (relançable sans risque) et crée :
 | Section | Contenu |
 | ------- | ------- |
 | 1–2 | extensions, `profiles`, et les fonctions de comptes (`admin_exists`, `bootstrap_admin`, `admin_create_user`, `admin_set_password`, `admin_set_email`, `admin_delete_user`) |
-| 3–4 | les 35 tables métier, leurs clés étrangères et leurs index |
+| 3–4 | les 39 tables métier, leurs clés étrangères et leurs index |
 | 5 | la RLS : lecture pour tout compte connecté, écriture pour le personnel, présences pour les enseignants, sa propre fiche pour chacun |
 | 6 | les buckets Storage `logos` et `subjects` |
 | 7–8 | la ligne unique de configuration de l'école, et les droits PostgREST |
@@ -91,6 +91,21 @@ Aucune donnée de démonstration n'est insérée.
 >    qu'une avance d'avant aujourd'hui devient encaissable au guichet au lieu d'être seulement
 >    signalée. La reprise est rejouable — relancer le script ne crée jamais deux fois la même
 >    créance. Aucun calcul de scolarité, aucune paie et aucun solde de caisse ne bouge.
+> 12. **`supabase/update-2026-08-27-enseignants-du-dernier-au-plus-ancien.sql`** — ajoute
+>    `teachers.created_at`, pour que la liste des enseignants se lise **du dernier arrivé au plus
+>    ancien** au lieu de suivre l'ordre physique des lignes. Les fiches déjà en base reçoivent une
+>    date dans l'ordre où la table les rend aujourd'hui.
+> 13. **`supabase/update-2026-08-27-travailleurs-metiers-droits-et-tracabilite.sql`** — crée la
+>    table **`worker_roles`** (les **métiers**, que l'école nomme elle-même au lieu des trois
+>    valeurs figées dans le code), ajoute à `reception_staff` son **compte de connexion**
+>    (`has_account`, `username`) et ses **droits d'accès** (`nav_keys`, `action_keys`), crée
+>    **`worker_acomptes`**, **`worker_absences`** et **`worker_payments`** (les acomptes et les
+>    absences des travailleurs, qui n'ont **jamais pu être écrits** tant qu'ils visaient les
+>    tables des enseignants, et les règlements, qui se devinaient jusqu'ici dans les **libellés de
+>    la caisse**), ajoute `payments.alert_read` (la **cloche du tableau de bord**) et pose sur
+>    toutes les tables les trois colonnes **`created_by` / `created_by_name` / `created_by_role`**
+>    — qui a fait l'opération. Les fiches déjà en base gardent l'ancien menu de la réception : la
+>    mise à jour ne verrouille personne du jour au lendemain.
 >
 > Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
 > erreur.
@@ -1001,6 +1016,114 @@ Le tableau de bord porte, sur chaque créneau de la grille et dans le tableau de
 confondus — à ne pas confondre avec la recette du jour, qui ne compte que les séances pointées
 aujourd'hui.
 
+## Les travailleurs — métiers, comptes, droits, et qui a fait quoi
+
+L'écran **Travailleurs** gère le personnel qui n'enseigne pas : la réception, la sécurité, le
+ménage — et tout autre métier que l'école emploie.
+
+### Le métier se crée dans le formulaire
+
+Il n'y avait que trois métiers, écrits dans le code et imposés par une contrainte de la base. Le
+chauffeur, le cuisinier et le surveillant n'existaient pas. Les métiers sont désormais des lignes
+de `worker_roles` : on les **ajoute et on les retire depuis le formulaire de création**, sans
+quitter l'écran. Supprimer un métier laisse les fiches qui le portaient **sans métier** — leur
+paie et leur historique ne bougent pas.
+
+### Le compte de connexion s'active, il ne se devine plus
+
+Un travailleur avait un compte dès qu'un email avait été tapé sur sa fiche. On répond maintenant
+**oui ou non**, et l'email, le nom d'utilisateur et le mot de passe ne sont demandés que si la
+réponse est oui. Retirer l'accès supprime le compte ; la fiche, les pointages et l'historique
+restent intacts.
+
+Un accès ouvert **après coup** ne déplace pas la fiche : elle garde son identifiant, et c'est le
+profil du compte qui pointe vers elle (`profiles.entity_id`). Ses pointages, ses acomptes et ses
+règlements restent donc là où ils sont.
+
+### Aucun droit n'est donné d'office
+
+Un travailleur créé aujourd'hui **ne voit rien** : sa barre latérale ne porte que « Déconnexion ».
+C'est le bouton **Droits d'accès** de sa carte qui ouvre ses écrans et ses boutons, un par un :
+
+- à gauche, **tous les écrans de l'application**, dans l'ordre de la barre latérale ;
+- à droite, **les boutons de l'écran sélectionné**, nommés comme ils s'affichent au comptoir.
+
+Cocher un écran n'ouvre aucun bouton : un travailleur peut consulter les élèves sans pouvoir en
+créer un. Cocher un bouton sur un écran resté fermé l'ouvre du même geste, sans quoi le droit
+serait accordé et invisible.
+
+Le filtre s'applique à trois endroits, pas seulement au menu : la **barre latérale** ne montre que
+les écrans cochés, chaque **écran** ne montre que ses boutons cochés, et la **route elle-même**
+refuse une adresse tapée à la main. Les fiches antérieures à cette mise à jour (`nav_keys` absent)
+gardent l'ancien menu de la réception : personne n'est verrouillé du jour au lendemain.
+
+### Acomptes, absences et paie
+
+| Geste | Ce qui se passe |
+| ----- | --------------- |
+| **Acompte** — date, description, montant | Sort de la caisse le jour même, puis **retenu une fois** sur le prochain règlement |
+| **Absence** — date, description, coût | Ne sort **aucun** argent : le coût sera **retenu une fois** sur le prochain règlement |
+| **Payer** | Coche ce qui est dû, coche ce qu'on retient, et verse |
+
+L'écran de règlement pose la question dans l'ordre où elle se pose au comptoir : les **mois** non
+payés (contrat mensuel), les **journées** non payées (journalier, demi-journée) ou les **journées
+pointées** avec leurs heures réelles (contrat horaire) ; puis les **acomptes** et les **absences**
+qui n'ont pas encore été déduits ; puis le net, **modifiable à la main**. La date du versement se
+corrige (on règle parfois pour la veille) et la description est facultative.
+
+« Ce mois est-il payé ? » se répondait autrefois en cherchant le nom de famille et « 08/2026 »
+dans la **description** d'un mouvement de caisse. Deux homonymes, un libellé corrigé à la main, et
+un mois payé repassait pour impayé. Un règlement est maintenant une ligne de `worker_payments` qui
+nomme ce qu'elle solde. Les règlements d'AVANT la mise à jour continuent d'être relus dans les
+libellés, pour qu'aucun mois déjà payé ne redevienne dû.
+
+Acomptes et absences ne sont plus **effacés** au règlement : ils sont marqués payés, avec le
+numéro du règlement qui les a pris. L'historique du travailleur garde donc trace de chaque avance
+consentie. Supprimer un règlement rend l'argent à la caisse et **remet tout ce qu'il avait soldé**
+— journées, acomptes, absences — en attente.
+
+### La fiche, et l'historique de travail
+
+La fiche se lit en deux parties : **qui il est** (identité, métier, contrat, badge, compte, date de
+début de travail, ce qu'on lui doit), puis **ce qui s'est passé** — ses règlements, ses acomptes et
+ses absences dans un seul journal daté, chacun avec ses trois boutons : modifier, supprimer,
+imprimer. Le papier imprimé est celui de l'école, le même que le reçu d'un élève.
+
+Un travailleur **qui a un compte** porte en plus un bouton **Historique de travail** : ce qu'il a
+fait depuis son compte, jour par jour, à la minute près — les présences qu'il a pointées, les
+paiements d'élèves qu'il a encaissés, les frais qu'il a portés, les élèves qu'il a inscrits, les
+mouvements de caisse qu'il a saisis.
+
+## Qui a fait l'opération
+
+Chaque ligne que quelqu'un crée porte désormais trois colonnes : `created_by` (l'identifiant de sa
+**fiche**), `created_by_name` (son nom, **recopié** au moment de l'écriture) et `created_by_role`.
+
+Le nom est recopié plutôt que relu plus tard : un travailleur qui quitte l'école, et dont la fiche
+disparaît, laisse quand même un historique lisible. La signature est posée au seul point de
+passage commun à tous les écrans — un bouton n'a rien à savoir de la traçabilité, et aucune
+création ne peut l'oublier.
+
+### La cloche du tableau de bord
+
+Un travailleur ouvre la feuille de présence d'un groupe, pointe les élèves et encaisse au passage.
+L'argent entre bien en caisse, mais la direction ne le voyait qu'en dépouillant la caisse le soir.
+
+Le tableau de bord de **l'administration seule** porte donc un bouton **« Paiements des
+travailleurs »**, avec le nombre d'encaissements non lus. Chacun montre l'élève, le montant,
+l'emploi du temps, **le travailleur qui l'a saisi** et l'heure. Deux boutons par ligne :
+**imprimer** le reçu — celui de l'école, le même qu'au guichet — et **marquer lu**. Imprimer
+propose ensuite de retirer la ligne de la liste : c'est le geste normal, il est proposé, jamais
+imposé.
+
+Ce que l'administration saisit elle-même ne remonte jamais : elle le sait déjà.
+
+### Réimprimer le reçu d'un paiement
+
+Dans la fiche d'un élève, onglet **Paiements**, chaque versement porte un bouton d'impression. La
+famille perd son reçu, l'école en veut un double : il se rejoue depuis la ligne elle-même, sur le
+même modèle qu'au guichet.
+
 ## Structure
 
 | Domaine                          | Fichiers                                                              |
@@ -1019,6 +1142,10 @@ aujourd'hui.
 | Séances libres de groupe         | `components/independent/GroupSeanceSection.tsx`, `lib/reports/groupSeance.ts` |
 | Feuille de présence (partagée)   | `components/attendance/PresenceSheet.tsx`                              |
 | Caisse & historique des paiements| `components/pages/CashPage.tsx`                                        |
+| Travailleurs (métiers, paie)     | `components/pages/AdministrationPage.tsx`, `components/workers/`, `lib/workers.ts` |
+| Droits d'accès (catalogue)       | `lib/permissions.ts`, `lib/usePermissions.ts`, `components/workers/WorkerPermissionsModal.tsx` |
+| Papiers des travailleurs         | `lib/reports/workerDocuments.ts`                                       |
+| Cloche des paiements travailleurs| `components/dashboard/WorkerPaymentsAlert.tsx`                          |
 
 L'application n'affiche **aucun favicon** : l'onglet du navigateur reste sans icône. Le logo
 téléversé dans **Paramètres** ne sert que dans l'application et sur les documents imprimés.

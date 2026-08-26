@@ -25,7 +25,9 @@ import { isSendablePhone } from "@/lib/whatsapp/phone";
 import { studentDebt, totalRemainingSeances } from "@/lib/helpers";
 import { formatDA } from "@/lib/utils";
 
+import { useCan } from "@/lib/usePermissions";
 export function ParentsPage() {
+  const can = useCan("parents");
   const db = useData();
   const { parents, students, push, deleteFrom, updateItem } = db;
 
@@ -292,9 +294,11 @@ export function ParentsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <PageHeader emoji="👨‍👩-👧" title="Parents" subtitle="Gérer les comptes des tuteurs d'élèves" />
-        <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Nouveau Parent
-        </Button>
+        {can("create") && (
+          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Nouveau Parent
+          </Button>
+        )}
       </div>
 
       {/* Search panel */}
@@ -342,12 +346,15 @@ export function ParentsPage() {
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setActiveMenuId(null)} />
                           <div className="absolute right-0 mt-1 w-44 bg-surface border border-line rounded-xl shadow-lg z-20 overflow-hidden">
-                            <button
-                              onClick={() => openDetails(p)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
-                            >
-                              <Eye className="h-4 w-4" /> Voir Détails
-                            </button>
+                            {can("view") && (
+                              <button
+                                onClick={() => openDetails(p)}
+                                className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
+                              >
+                                <Eye className="h-4 w-4" /> Voir Détails
+                              </button>
+                            )}
+                            {can("message") && (
                             <button
                               onClick={() => openWhatsApp(p)}
                               disabled={!isSendablePhone(p.phone)}
@@ -360,24 +367,31 @@ export function ParentsPage() {
                             >
                               <MessageCircle className="h-4 w-4" /> Message WhatsApp
                             </button>
-                            <button
-                              onClick={() => openMessage(p)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-primary hover:bg-primary-50 text-left"
-                            >
-                              <Send className="h-4 w-4" /> Notification App
-                            </button>
-                            <button
-                              onClick={() => openEdit(p)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
-                            >
-                              <Edit className="h-4 w-4" /> Modifier
-                            </button>
-                            <button
-                              onClick={() => handleDelete(p.id)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-danger hover:bg-danger/10 text-left"
-                            >
-                              <Trash2 className="h-4 w-4" /> Supprimer
-                            </button>
+                            )}
+                            {can("message") && (
+                              <button
+                                onClick={() => openMessage(p)}
+                                className="flex items-center gap-2 w-full px-4 py-2 text-sm text-primary hover:bg-primary-50 text-left"
+                              >
+                                <Send className="h-4 w-4" /> Notification App
+                              </button>
+                            )}
+                            {can("edit") && (
+                              <button
+                                onClick={() => openEdit(p)}
+                                className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left"
+                              >
+                                <Edit className="h-4 w-4" /> Modifier
+                              </button>
+                            )}
+                            {can("delete") && (
+                              <button
+                                onClick={() => handleDelete(p.id)}
+                                className="flex items-center gap-2 w-full px-4 py-2 text-sm text-danger hover:bg-danger/10 text-left"
+                              >
+                                <Trash2 className="h-4 w-4" /> Supprimer
+                              </button>
+                            )}
                           </div>
                         </>
                       )}

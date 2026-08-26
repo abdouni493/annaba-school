@@ -17,6 +17,7 @@ import {
   totalRemainingSeances,
 } from "@/lib/helpers";
 
+import { useCan } from "@/lib/usePermissions";
 /** Year options per school level. Kindergarten uses sections, the others the
  *  Algerian AP/AM/AS scale. */
 function yearOptionsFor(level: CoursLevel): string[] {
@@ -37,6 +38,7 @@ function yearOptionsFor(level: CoursLevel): string[] {
 type LevelFilter = "all" | CoursLevel | "formation";
 
 export function ClassesPage() {
+  const can = useCan("classes");
   const db = useData();
   const { classes, classCategories, students, subscriptions, sessions, push, deleteFrom, updateItem } = db;
 
@@ -349,9 +351,11 @@ export function ClassesPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <PageHeader emoji="🏫" title="Classes" subtitle="Gérer les classes et formations" />
-        <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Nouvelle Classe
-        </Button>
+        {can("create") && (
+          <Button onClick={() => { resetForm(); setIsCreateOpen(true); }} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Nouvelle Classe
+          </Button>
+        )}
       </div>
 
       {/* Filter by level */}
@@ -404,15 +408,21 @@ export function ClassesPage() {
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setActiveMenuId(null)} />
                           <div className="absolute right-0 mt-1 w-36 bg-surface border border-line rounded-xl shadow-lg z-20 overflow-hidden">
-                            <button onClick={() => openDetails(cls)} className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left">
-                              <Eye className="h-4 w-4" /> Détails
-                            </button>
-                            <button onClick={() => openEdit(cls)} className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left">
-                              <Edit className="h-4 w-4" /> Modifier
-                            </button>
-                            <button onClick={() => handleDelete(cls.id)} className="flex items-center gap-2 w-full px-4 py-2 text-sm text-danger hover:bg-danger/10 text-left">
-                              <Trash2 className="h-4 w-4" /> Supprimer
-                            </button>
+                            {can("view") && (
+                              <button onClick={() => openDetails(cls)} className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left">
+                                <Eye className="h-4 w-4" /> Détails
+                              </button>
+                            )}
+                            {can("edit") && (
+                              <button onClick={() => openEdit(cls)} className="flex items-center gap-2 w-full px-4 py-2 text-sm text-ink hover:bg-primary-50 text-left">
+                                <Edit className="h-4 w-4" /> Modifier
+                              </button>
+                            )}
+                            {can("delete") && (
+                              <button onClick={() => handleDelete(cls.id)} className="flex items-center gap-2 w-full px-4 py-2 text-sm text-danger hover:bg-danger/10 text-left">
+                                <Trash2 className="h-4 w-4" /> Supprimer
+                              </button>
+                            )}
                           </div>
                         </>
                       )}

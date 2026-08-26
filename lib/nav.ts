@@ -1,4 +1,5 @@
 import type { Role } from "@/lib/store/session";
+import { PERMISSION_PAGES, canSeePage, type AccessRights } from "@/lib/permissions";
 
 export interface NavItem {
   /** i18n key under `nav.*` */
@@ -9,11 +10,35 @@ export interface NavItem {
   action?: "logout";
 }
 
-const logout: NavItem = { key: "logout", emoji: "🚪", href: "/login", action: "logout" };
+/** La déconnexion : une action, pas un écran. Elle est toujours affichée. */
+export const LOGOUT_ITEM: NavItem = {
+  key: "logout",
+  emoji: "🚪",
+  href: "/login",
+  action: "logout",
+};
+
+const logout = LOGOUT_ITEM;
 
 /** Landing route after login, per role. */
 export function roleHome(role: Role): string {
   return role === "student" || role === "parent" ? "/home" : "/dashboard";
+}
+
+/**
+ * OÙ ATTERRIT-ON APRÈS S'ÊTRE CONNECTÉ ?
+ *
+ * Sur le tableau de bord, sauf pour un travailleur à qui on ne l'a pas ouvert :
+ * il arriverait alors sur un écran qu'il n'a pas le droit de lire. On l'emmène
+ * au premier écran de SA barre latérale — et à la page de connexion s'il n'en a
+ * aucun, ce qui est le seul cas où il n'a rien à faire dans l'application.
+ */
+export function landingRoute(role: Role, rights: AccessRights): string {
+  const home = roleHome(role);
+  if (canSeePage(rights, home.replace(/^\//, ""))) return home;
+
+  const first = PERMISSION_PAGES.find((p) => rights.pages.includes(p.key));
+  return first?.href ?? home;
 }
 
 /** Resolve a route href to its nav metadata (emoji + i18n key), looking

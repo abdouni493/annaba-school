@@ -2,6 +2,27 @@ import type { Role } from "@/lib/store/session";
 
 export type { Role };
 
+/**
+ * QUI A FAIT L'OPÉRATION.
+ *
+ * Chaque ligne que quelqu'un crée dans l'application — un encaissement, une
+ * présence, un frais, une dépense, une fiche — porte désormais le compte qui
+ * l'a écrite. Le nom est recopié à l'instant de l'écriture plutôt que relu plus
+ * tard : un travailleur qui quitte l'école, et dont la fiche disparaît, laisse
+ * quand même un historique lisible.
+ *
+ * Absent = la ligne est antérieure à cette traçabilité (ou vient d'un
+ * traitement automatique de l'application, comme la facturation des absences).
+ */
+export interface Authored {
+  /** identifiant du compte qui a créé la ligne */
+  createdBy?: string;
+  /** son nom au moment de l'écriture */
+  createdByName?: string;
+  /** son rôle au moment de l'écriture ("admin", "reception", …) */
+  createdByRole?: string;
+}
+
 export type Day =
   | "sunday"
   | "monday"
@@ -76,7 +97,7 @@ export type ClassType = "cours" | "formation";
 export type CoursLevel = "maternelle" | "primaire" | "moyen" | "lycee";
 export type FormationLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 
-export interface SchoolClass {
+export interface SchoolClass extends Authored {
   id: string;
   type: ClassType;
   name: string;
@@ -93,19 +114,19 @@ export interface SchoolClass {
 
 /** Optional grouping for kindergarten classes (e.g. "Petite / Moyenne / Grande
  *  section"). Created inline from the class creation screen. */
-export interface ClassCategory {
+export interface ClassCategory extends Authored {
   id: string;
   name: string;
 }
-export interface Module {
+export interface Module extends Authored {
   id: string;
   name: string;
 }
-export interface Group {
+export interface Group extends Authored {
   id: string;
   name: string;
 }
-export interface Salle {
+export interface Salle extends Authored {
   id: string;
   name: string;
 }
@@ -119,7 +140,7 @@ export interface Salle {
  *    séance earns him that emploi's `teacherPerSeance` and nothing else.
  */
 export type TeacherPaymentType = "monthly" | "percentage" | "per_group";
-export interface Teacher {
+export interface Teacher extends Authored {
   id: string;
   firstName: string;
   lastName: string;
@@ -138,7 +159,7 @@ export interface Teacher {
 }
 
 /** One settlement written for a teacher (fixed amount or percentage-based). */
-export interface TeacherPayment {
+export interface TeacherPayment extends Authored {
   id: string;
   teacherId: string;
   /** what he actually took home: gross − dépenses − acomptes − frais des enfants */
@@ -372,7 +393,7 @@ export interface TeacherPaymentDeduction {
  * (`Student.studentCase === "teacher_child"`): what he owed, and on which
  * emplois du temps, at the moment the salary was paid.
  */
-export interface TeacherChildCharge {
+export interface TeacherChildCharge extends Authored {
   studentId: string;
   studentName: string;
   registrationNumber?: string;
@@ -397,7 +418,7 @@ export interface TeacherChildCharge {
  *    attente. Le prochain règlement du père le lit, le retient sur son net et
  *    le passe à `paid` : il ne peut donc être retenu qu'UNE fois.
  */
-export interface TeacherChildDebt {
+export interface TeacherChildDebt extends Authored {
   id: string;
   /** l'enseignant père sur qui la somme est portée */
   teacherId: string;
@@ -431,9 +452,29 @@ export interface TeacherPaymentDetail {
 }
 
 export type ReceptionPaymentType = "daily" | "monthly" | "half_day" | "hourly";
-/** Réception / Agent de sécurité / Ménage — Ménage never gets a login. */
-export type WorkerRole = "reception" | "security" | "menage";
-export interface ReceptionStaff {
+
+/**
+ * UN MÉTIER DE TRAVAILLEUR, tel que l'école le nomme elle-même.
+ *
+ * Les trois métiers d'origine — réception, agent de sécurité, ménage — n'étaient
+ * pas les seuls que l'école emploie : il y a le chauffeur, le cuisinier, le
+ * surveillant, le comptable. Ils se créent et se suppriment désormais depuis
+ * l'écran de création d'un travailleur, sans passer par le code.
+ *
+ * Les trois métiers d'origine gardent leur identifiant historique
+ * (`reception`, `security`, `menage`) : les fiches déjà en base continuent donc
+ * de pointer le bon métier.
+ */
+export interface WorkerJobRole extends Authored {
+  id: string;
+  name: string;
+  createdAt?: string;
+}
+
+/** L'identifiant d'un `WorkerJobRole`. C'était une énumération figée. */
+export type WorkerRole = string;
+
+export interface ReceptionStaff extends Authored {
   id: string;
   firstName: string;
   lastName: string;
@@ -442,15 +483,44 @@ export interface ReceptionStaff {
   paymentType: ReceptionPaymentType;
   startDate: string;
   salary: number;
+  /** le métier — l'identifiant d'un `WorkerJobRole` */
   role?: WorkerRole;
   /** badge used by the worker check-in scanner */
   rfid?: string;
   /** paymentType === "hourly": price of one worked hour */
   hourlyRate?: number;
+  /**
+   * CE TRAVAILLEUR PEUT-IL SE CONNECTER ?
+   *
+   * Un travailleur n'a pas de compte par défaut : il est une fiche, un salaire
+   * et un badge. L'administration l'active explicitement, saisit un email, un
+   * nom d'utilisateur et un mot de passe, et le compte existe alors vraiment
+   * dans la table d'authentification.
+   */
+  hasAccount?: boolean;
+  /** le nom d'utilisateur affiché sur son compte */
+  username?: string;
+  /**
+   * LES ÉCRANS QU'IL VOIT DANS SA BARRE LATÉRALE (clés de `PERMISSION_PAGES`).
+   *
+   * Un travailleur créé aujourd'hui arrive avec une liste VIDE : il ne voit
+   * rien tant que l'administration n'a pas coché ses écrans depuis « Droits
+   * d'accès ». Absent (et non vide) veut dire « fiche antérieure aux droits » :
+   * elle garde l'ancien menu de la réception, pour ne verrouiller personne du
+   * jour au lendemain.
+   */
+  navKeys?: string[];
+  /**
+   * LES BOUTONS QU'IL VOIT SUR CES ÉCRANS, sous la forme « écran:action »
+   * (« students:create », « cash:withdraw » …). Une action absente de la liste
+   * n'est simplement pas affichée.
+   */
+  actionKeys?: string[];
+  createdAt?: string;
 }
 
 /** One worked day of an hourly worker (clock-in / clock-out). */
-export interface WorkerShift {
+export interface WorkerShift extends Authored {
   id: string;
   workerId: string;
   workDate: string; // YYYY-MM-DD
@@ -464,13 +534,96 @@ export interface WorkerShift {
   createdAt: string;
 }
 
+/**
+ * UN RÈGLEMENT VERSÉ À UN TRAVAILLEUR.
+ *
+ * L'écran des travailleurs devinait autrefois ce qui avait déjà été payé en
+ * relisant la DESCRIPTION des mouvements de caisse (« le libellé contient le
+ * nom de famille et « 08/2026 » »). Deux homonymes, un nom mal tapé, une
+ * description modifiée à la main, et un mois payé repassait pour impayé.
+ *
+ * Un règlement est désormais une ligne à part entière : elle nomme les périodes
+ * qu'elle solde (`periodKeys`), ce qu'elles valaient (`gross`), les acomptes et
+ * les absences qui en ont été retranchés, le net calculé, et le montant
+ * RÉELLEMENT versé — que l'administration peut corriger à la main.
+ */
+export interface WorkerPayment extends Authored {
+  id: string;
+  workerId: string;
+  /** le type de contrat au moment du règlement */
+  kind: ReceptionPaymentType;
+  /**
+   * CE QUE CE RÈGLEMENT SOLDE : « 08/2026 » pour un mois, « 2026-08-14 » pour
+   * une journée, l'identifiant d'une journée pointée pour un contrat horaire.
+   */
+  periodKeys: string[];
+  /** contrat horaire : les journées pointées qui viennent d'être réglées */
+  shiftIds?: string[];
+  /** ce que les périodes valent, avant retenues */
+  gross: number;
+  /** les acomptes retenus sur ce règlement */
+  acomptes: number;
+  /** les absences retenues sur ce règlement */
+  absences: number;
+  /** gross − acomptes − absences */
+  net: number;
+  /** ce qui a été réellement versé (le net, sauf correction manuelle) */
+  amount: number;
+  /** le jour du versement (YYYY-MM-DD) — corrigeable */
+  date: string;
+  /** facultative */
+  description?: string;
+  /** le mouvement de caisse qui porte la sortie */
+  cashId?: string;
+  createdAt?: string;
+}
+
+/**
+ * UNE AVANCE SUR SALAIRE VERSÉE À UN TRAVAILLEUR.
+ *
+ * Elle sort de la caisse le jour où elle est versée, puis elle est RETENUE sur
+ * son prochain règlement — une fois, et une seule : `paid` porte le règlement
+ * qui l'a prise, et elle ne revient jamais sur le suivant.
+ *
+ * Les acomptes des travailleurs vivaient autrefois dans la table des acomptes
+ * d'ENSEIGNANTS, dont la clé étrangère exige pourtant un enseignant : la base
+ * refusait la ligne, et l'avance n'était jamais enregistrée. Ils ont désormais
+ * leur table.
+ */
+export interface WorkerAcompte extends Authored {
+  id: string;
+  workerId: string;
+  amount: number;
+  description: string;
+  date: string; // YYYY-MM-DD
+  /** déjà retenu sur un règlement — il ne revient pas sur le suivant */
+  paid?: boolean;
+  paymentId?: string;
+}
+
+/**
+ * UNE ABSENCE RETENUE SUR LA PAIE D'UN TRAVAILLEUR.
+ *
+ * Contrairement à l'acompte, elle ne sort AUCUN argent : elle dit ce qui sera
+ * déduit le jour de la paie, et se solde comme lui, une fois et une seule.
+ */
+export interface WorkerAbsence extends Authored {
+  id: string;
+  workerId: string;
+  cost: number;
+  description: string;
+  date: string; // YYYY-MM-DD
+  paid?: boolean;
+  paymentId?: string;
+}
+
 /** The hours ONE day of an emploi du temps runs on. */
 export interface DayTime {
   startTime: string; // HH:mm
   endTime: string; // HH:mm
 }
 
-export interface ScheduleSession {
+export interface ScheduleSession extends Authored {
   id: string;
   classId: string;
   moduleId: string;
@@ -553,7 +706,7 @@ export interface ScheduleSession {
  */
 export type SubscriptionPlan = "seance" | "month";
 
-export interface Subscription {
+export interface Subscription extends Authored {
   id: string;
   /** the schedule this subscription is priced against */
   sessionId: string;
@@ -635,7 +788,7 @@ export interface SubscriptionDiscount {
  * is NEVER taken off the student's balance — it is stored on the presence
  * (`waivedAmount`) so the school can see what the period cost it.
  */
-export interface FreePeriod {
+export interface FreePeriod extends Authored {
   id: string;
   /** short label shown on the card, e.g. "Semaine portes ouvertes" */
   name: string;
@@ -696,7 +849,7 @@ export interface CaseReduction {
   teacherValue: number;
 }
 
-export interface Student {
+export interface Student extends Authored {
   id: string;
   /** sequential registration number printed on the card and searchable from
    *  every roster ("00001", "00002" …). Assigned once, at creation. */
@@ -775,7 +928,7 @@ export interface Student {
  * SÉANCES — not in money. Buying séances raises `paidSeances`; attending one
  * raises `consumedSeances`. What is left is simply the difference.
  */
-export interface Enrollment {
+export interface Enrollment extends Authored {
   id: string;
   studentId: string;
   /** -> Subscription, which carries the price of one séance */
@@ -829,7 +982,7 @@ export type PaymentSource = "cash" | "teacher_salary" | "teacher_debt" | "school
  * One cash movement of a student: either a purchase of séances (with its
  * remise and the part left unpaid) or a settlement of an earlier debt.
  */
-export interface Payment {
+export interface Payment extends Authored {
   id: string;
   studentId: string;
   enrollmentId?: string;
@@ -872,6 +1025,15 @@ export interface Payment {
   chargeId?: string;
   date: string;
   description?: string;
+  /**
+   * L'ALERTE DU TABLEAU DE BORD A-T-ELLE ÉTÉ LUE ?
+   *
+   * Un encaissement saisi par un TRAVAILLEUR remonte à la direction : il
+   * apparaît dans la cloche du tableau de bord jusqu'à ce que l'administration
+   * le marque comme lu (ou l'imprime, ce qui propose de le retirer). Les
+   * versements saisis par l'administration elle-même ne remontent jamais.
+   */
+  alertRead?: boolean;
 }
 
 /**
@@ -902,7 +1064,7 @@ export type StudentChargeOrigin = "manual" | "school_advance";
  * dans le rouge, les restes d'anciens paiements et les frais d'inscription)
  * bloque sa part.
  */
-export interface StudentCharge {
+export interface StudentCharge extends Authored {
   id: string;
   studentId: string;
   /** ce que la réception a tapé : « Livre de maths », « Tenue de sport »… */
@@ -940,7 +1102,7 @@ export interface StudentCredential {
 /** One automatic weekly-absence charge: a module the student was absent on for
  *  a full 7-day window. It costs ONE séance off that inscription — the same
  *  currency attendance is counted in. */
-export interface AbsencePenalty {
+export interface AbsencePenalty extends Authored {
   id: string;
   studentId: string;
   subscriptionId?: string;
@@ -962,7 +1124,7 @@ export interface AbsencePenalty {
  * off his solde.
  */
 export type AttendanceStatus = "present" | "late" | "absent" | "cancelled";
-export interface AttendanceRecord {
+export interface AttendanceRecord extends Authored {
   id: string;
   studentId: string;
   sessionId: string;
@@ -989,7 +1151,7 @@ export interface AttendanceRecord {
   noCharge?: boolean;
 }
 
-export interface UnpaidTeacherSession {
+export interface UnpaidTeacherSession extends Authored {
   id: string;
   teacherId: string;
   sessionId: string;
@@ -1001,7 +1163,7 @@ export interface UnpaidTeacherSession {
   paymentId?: string;
 }
 
-export interface TeacherAcompte {
+export interface TeacherAcompte extends Authored {
   id: string;
   teacherId: string;
   amount: number;
@@ -1017,7 +1179,7 @@ export interface TeacherAcompte {
  * frais …). It is deducted from his next settlement, exactly once: reception
  * types a name, an amount, an optional description and a date.
  */
-export interface TeacherExpense {
+export interface TeacherExpense extends Authored {
   id: string;
   teacherId: string;
   name: string;
@@ -1029,7 +1191,7 @@ export interface TeacherExpense {
   paymentId?: string;
   createdAt?: string;
 }
-export interface TeacherAbsence {
+export interface TeacherAbsence extends Authored {
   id: string;
   teacherId: string;
   cost: number;
@@ -1037,7 +1199,7 @@ export interface TeacherAbsence {
   date: string;
 }
 
-export interface Subject {
+export interface Subject extends Authored {
   id: string;
   title: string;
   description: string;
@@ -1047,7 +1209,7 @@ export interface Subject {
 }
 
 export type Audience = "students" | "teachers" | "parents" | "all";
-export interface Announcement {
+export interface Announcement extends Authored {
   id: string;
   title: string;
   description: string;
@@ -1060,11 +1222,11 @@ export interface Announcement {
   includeParents?: boolean;
 }
 
-export interface ExpenseCategory {
+export interface ExpenseCategory extends Authored {
   id: string;
   name: string;
 }
-export interface Expense {
+export interface Expense extends Authored {
   id: string;
   name: string;
   /** absent = dépense non classée; the column is a foreign key, so it is left
@@ -1084,7 +1246,7 @@ export type CashTxType =
   /** the school covered a student's debt from its own money: the outflow that
    *  balances the `student_payment` booked on that student */
   | "student_debt";
-export interface CashTransaction {
+export interface CashTransaction extends Authored {
   id: string;
   type: CashTxType;
   amount: number; // signed
@@ -1092,7 +1254,7 @@ export interface CashTransaction {
   description: string;
 }
 
-export interface Parent {
+export interface Parent extends Authored {
   id: string;
   firstName: string;
   lastName: string;
@@ -1101,7 +1263,7 @@ export interface Parent {
   childIds: string[];
 }
 
-export interface Notification {
+export interface Notification extends Authored {
   id: string;
   parentId: string;
   title: string;
@@ -1112,7 +1274,7 @@ export interface Notification {
 }
 
 export type CourseworkType = "single" | "period";
-export interface Coursework {
+export interface Coursework extends Authored {
   id: string;
   name: string;
   type: CourseworkType;
@@ -1122,7 +1284,7 @@ export interface Coursework {
   teacherId: string;
 }
 
-export interface IndependentSession {
+export interface IndependentSession extends Authored {
   id: string;
   studentId?: string;
   passagerName?: string;
@@ -1172,7 +1334,7 @@ export interface IndependentSession {
  * deleting the row moves those two movements with it. The teacher's fiche de
  * paie prints the séance WITHOUT ever showing the school's share.
  */
-export interface GroupSeance {
+export interface GroupSeance extends Authored {
   id: string;
   teacherId: string;
   /** what the séance is called on every document */

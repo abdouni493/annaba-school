@@ -1,11 +1,14 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { NAV_BY_ROLE, type NavItem } from "@/lib/nav";
+import { LOGOUT_ITEM, NAV_BY_ROLE, type NavItem } from "@/lib/nav";
 import { useSession } from "@/lib/store/session";
 import { useData } from "@/lib/store/data";
 import { useTranslation } from "@/lib/i18n/useTranslation";
+import { PERMISSION_PAGES } from "@/lib/permissions";
+import { useAccessRights } from "@/lib/usePermissions";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string) {
@@ -21,7 +24,27 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const school = useData((s) => s.school);
 
   const role = user?.role ?? "admin";
-  const items = NAV_BY_ROLE[role];
+  const rights = useAccessRights();
+
+  /**
+   * CE QUE CE COMPTE VOIT DANS SA BARRE LATÉRALE.
+   *
+   * Un travailleur ne reçoit plus « le menu de la réception » : il reçoit les
+   * écrans que l'administration a cochés pour lui, dans l'ordre du catalogue
+   * (`PERMISSION_PAGES`), qui est celui de l'application entière. Tout le reste
+   * — administration, enseignant, élève, parent — garde son menu de rôle.
+   *
+   * La déconnexion est une action, pas un écran : elle reste toujours là.
+   */
+  const items = useMemo<NavItem[]>(() => {
+    if (rights.unrestricted) return NAV_BY_ROLE[role];
+
+    const allowed = PERMISSION_PAGES.filter((p) => rights.pages.includes(p.key)).map((p) => {
+      const known = NAV_BY_ROLE.admin.find((i) => i.href === p.href);
+      return known ?? { key: p.key, emoji: p.emoji, href: p.href };
+    });
+    return [...allowed, LOGOUT_ITEM];
+  }, [rights, role]);
 
   const handleClick = (item: NavItem) => {
     if (item.action === "logout") {

@@ -32,6 +32,7 @@ import {
   Activity,
 } from "lucide-react";
 
+import { useCan } from "@/lib/usePermissions";
 /* ------------------------------------------------------------------ */
 /* Palette & shared helpers                                            */
 /* ------------------------------------------------------------------ */
@@ -658,6 +659,7 @@ function DetailRow({ icon, label, value }: { icon: ReactNode; label: string; val
 /* ------------------------------------------------------------------ */
 
 export function AnalyticsPage() {
+  const can = useCan("analytics");
   const { classes, students, subscriptions, sessions, teachers, attendance, school } = useData();
 
   const todayIso = new Date().toISOString().split("T")[0];
@@ -754,7 +756,7 @@ export function AnalyticsPage() {
         title="Analytique"
         subtitle="Suivi de l'affluence des élèves par classe et par enseignant"
         actions={
-          hasGenerated ? (
+          hasGenerated && can("print") ? (
             <Button variant="secondary" onClick={handlePrintAll} className="flex items-center gap-2">
               <Printer className="h-4 w-4" /> Imprimer la vue
             </Button>
