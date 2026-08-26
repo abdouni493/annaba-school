@@ -857,8 +857,73 @@ export interface Payment {
   type: PaymentType;
   /** where the money came from — "cash" (the family) when absent */
   paidFrom?: PaymentSource;
+  /**
+   * LE FRAIS QUE CE VERSEMENT RÈGLE (`StudentCharge`), quand c'en est un.
+   *
+   * Un règlement de frais ne touche AUCUN emploi du temps : il ne porte donc
+   * ni `subscriptionId` ni `monthCode`, et son `rest` reste à 0 — ce qui
+   * demeure dû se lit sur le frais lui-même. C'est ce qui l'empêche d'être
+   * confondu avec une scolarité impayée et de retenir la part d'un enseignant
+   * qui n'a rien à voir avec un livre ou une tenue.
+   */
+  chargeId?: string;
   date: string;
   description?: string;
+}
+
+/**
+ * D'OÙ VIENT UN FRAIS porté au compte d'un élève :
+ *  - `manual` : la réception l'a saisi elle-même (livre, tenue, sortie,
+ *    transport, dégât matériel…) ;
+ *  - `school_advance` : l'école a réglé une dette de scolarité DE SA PROPRE
+ *    CAISSE pour débloquer la part de l'enseignant. L'argent est sorti sans
+ *    jamais entrer : la famille le doit désormais à l'école, et c'est ce frais
+ *    qui le dit.
+ */
+export type StudentChargeOrigin = "manual" | "school_advance";
+
+/**
+ * UNE DETTE DE L'ÉLÈVE QUI N'EST PAS DE LA SCOLARITÉ.
+ *
+ * La réception tape un nom, un montant, une description facultative et une
+ * date ; le frais s'inscrit au compte de l'élève et l'y suit jusqu'à ce qu'il
+ * soit réglé — sur sa fiche, dans son historique, et sur la feuille de présence
+ * du groupe, où il devient une alerte encaissable sur place.
+ *
+ * Il se règle en UNE ou PLUSIEURS FOIS : `paidAmount` cumule ce qui a déjà été
+ * versé, et `amount − paidAmount` est ce qui reste dû. Un versement partiel
+ * laisse donc le frais ouvert, exactement comme au comptoir.
+ *
+ * CE QU'IL NE FAIT PAS : retenir la paie d'un enseignant. Un livre impayé ne
+ * regarde pas l'enseignant de mathématiques — seule la scolarité (les soldes
+ * dans le rouge, les restes d'anciens paiements et les frais d'inscription)
+ * bloque sa part.
+ */
+export interface StudentCharge {
+  id: string;
+  studentId: string;
+  /** ce que la réception a tapé : « Livre de maths », « Tenue de sport »… */
+  name: string;
+  /** ce que le frais coûte, en entier */
+  amount: number;
+  description?: string;
+  /** le jour où le frais est né (YYYY-MM-DD) */
+  date: string;
+  /** `manual` quand absent — les fiches déjà en base sont des saisies */
+  origin?: StudentChargeOrigin;
+  /** avance de l'école : le versement qui l'a fait naître */
+  sourcePaymentId?: string;
+  /** l'emploi du temps concerné, quand le frais en désigne un (avances) */
+  subscriptionId?: string;
+  /** le mois de cet emploi, même remarque */
+  monthCode?: string;
+  /** ce qui a DÉJÀ été versé dessus, tous versements confondus */
+  paidAmount?: number;
+  /** entièrement réglé — `paidAmount` a rejoint `amount` */
+  paid?: boolean;
+  /** le dernier versement qui l'a soldé */
+  paymentId?: string;
+  createdAt?: string;
 }
 
 /** Portal password kept so the payment receipt can print the student's login.

@@ -49,6 +49,7 @@ import type {
   ScheduleSession,
   SchoolClass,
   Student,
+  StudentCharge,
   StudentCredential,
   Subject,
   Subscription,
@@ -91,6 +92,14 @@ export interface Database {
   enrollments: Enrollment[];
   /** séance purchases and debt settlements */
   payments: Payment[];
+  /**
+   * LES FRAIS PORTÉS AU COMPTE DES ÉLÈVES — tout ce qu'un élève doit à l'école
+   * SANS que ce soit de la scolarité : un livre, une tenue, une sortie, ou la
+   * dette que l'école a avancée de sa caisse pour débloquer la part d'un
+   * enseignant. Ils s'affichent en alerte partout où l'élève apparaît et se
+   * règlent en une ou plusieurs fois.
+   */
+  studentCharges: StudentCharge[];
   attendance: AttendanceRecord[];
   absencePenalties: AbsencePenalty[];
   unpaidTeacher: UnpaidTeacherSession[];
@@ -182,6 +191,22 @@ function addDays(key: string, n: number): string {
   const [y, m, d] = key.split("-").map(Number);
   const date = new Date(y, m - 1, d + n);
   return date.toLocaleDateString("fr-CA");
+}
+
+/**
+ * L'HORODATAGE D'UN MOUVEMENT SAISI POUR UN AUTRE JOUR.
+ *
+ * La réception encaisse parfois pour la veille. Le jour choisi doit alors être
+ * celui du versement, du reçu et de la caisse — mais l'HEURE reste celle de la
+ * saisie, sinon deux règlements du même jour se retrouveraient à la même
+ * seconde et l'historique ne saurait plus lequel est venu en premier.
+ *
+ * Sans date, c'est maintenant : le comportement de toujours.
+ */
+function isoOn(date?: string): string {
+  const now = new Date().toISOString();
+  if (!date) return now;
+  return date.length === 10 ? `${date}T${now.substring(11)}` : new Date(date).toISOString();
 }
 
 /** Whole days between two YYYY-MM-DD keys (b - a). */
@@ -343,7 +368,63 @@ interface DataActions {
      *    paid for it, so the balance stays exact and the history says so.
      */
     source?: PaymentSource;
+    /**
+     * LE JOUR OÙ L'ARGENT EST ENTRÉ (YYYY-MM-DD), quand ce n'est pas
+     * aujourd'hui. La réception encaisse parfois pour la veille — le versement,
+     * son reçu et le mouvement de caisse portent alors CETTE date, et non celle
+     * de la saisie. Absent = maintenant, le comportement de toujours.
+     */
+    date?: string;
   }) => Promise<{ ok: boolean; paymentId?: string; balance?: number; monthCode?: string }>;
+  /**
+   * UN FRAIS PORTÉ AU COMPTE D'UN ÉLÈVE — la dette qui n'est pas de la
+   * scolarité : un livre, une tenue, une sortie, un transport, un dégât.
+   *
+   * La réception tape un nom, un montant, une description facultative et une
+   * date. Le frais s'inscrit sur la fiche de l'élève, apparaît en alerte sur la
+   * feuille de présence de ses groupes, et y reste jusqu'à ce qu'il soit réglé.
+   *
+   * Passer un `id` déjà connu MODIFIE le frais au lieu d'en créer un second :
+   * c'est ainsi qu'une faute de frappe se corrige.
+   *
+   * Un frais NE RETIENT PAS la paie d'un enseignant : seule la scolarité le
+   * fait. Un livre impayé ne regarde pas le professeur de mathématiques.
+   */
+  saveStudentCharge: (charge: {
+    id?: string;
+    studentId: string;
+    name: string;
+    amount: number;
+    description?: string;
+    date?: string;
+  }) => Promise<{ ok: boolean; id?: string; messageKey?: string }>;
+  /** Efface un frais et TOUS ses règlements — la caisse est reculée d'autant. */
+  deleteStudentCharge: (id: string) => Promise<{ ok: boolean }>;
+  /**
+   * LA FAMILLE RÈGLE UN OU PLUSIEURS FRAIS, au guichet.
+   *
+   * Chaque ligne dit COMBIEN on verse sur CE frais-là — jamais plus que ce
+   * qu'il reste dû. Un montant partiel est le cas normal : le frais demeure
+   * ouvert pour la différence, et l'alerte le dit encore.
+   *
+   * Chaque ligne écrit son propre versement (`payments`, type `debt_payment`,
+   * `chargeId` renseigné) et sa propre entrée en caisse : l'historique de
+   * l'élève lit alors « Frais — Livre de maths » comme n'importe quel autre
+   * mouvement, et un reçu peut être imprimé.
+   */
+  payStudentCharges: (args: {
+    studentId: string;
+    lines: { chargeId: string; amount: number }[];
+    /** le jour de l'encaissement (YYYY-MM-DD) — aujourd'hui quand absent */
+    date?: string;
+    description?: string;
+  }) => Promise<{
+    ok: boolean;
+    paid?: number;
+    rest?: number;
+    paymentIds?: string[];
+    messageKey?: string;
+  }>;
   /**
    * L'ÉCOLE COUVRE LA DETTE D'UN ÉLÈVE, de sa propre caisse.
    *
@@ -1628,7 +1709,7 @@ export const useData = create<DataStore>((set, get) => ({
    * that emploi's own months — by default the month the student is walking
    * through right now on it.
    */
-  addSold: async ({ studentId, subscriptionId, amount, monthCode, description, source }) => {
+  addSold: async ({ studentId, subscriptionId, amount, monthCode, description, source, date }) => {
     const db = get();
     const student = db.students.find((s) => s.id === studentId);
     const sub = db.subscriptions.find((s) => s.id === subscriptionId);
@@ -1638,7 +1719,8 @@ export const useData = create<DataStore>((set, get) => ({
     if (credit <= 0) return { ok: false };
 
     const code = monthCode || currentCycleCode(db, studentId, subscriptionId);
-    const now = new Date().toISOString();
+    // Le jour du versement : celui que la réception a choisi, sinon maintenant.
+    const now = isoOn(date);
     const today = dateKey(new Date());
     const existing = db.enrollments.find(
       (e) => e.studentId === studentId && e.subscriptionId === subscriptionId,
@@ -1759,6 +1841,182 @@ export const useData = create<DataStore>((set, get) => ({
   },
 
   /**
+   * UN FRAIS PORTÉ AU COMPTE D'UN ÉLÈVE, ou la correction d'un frais existant.
+   *
+   * Trois champs suffisent — un nom, un montant, une date — et la description
+   * reste facultative parce que la plupart du temps le nom dit tout.
+   *
+   * Corriger un frais NE TOUCHE PAS ce qui a déjà été versé dessus : baisser le
+   * montant sous ce qui est encaissé le solde simplement, et l'alerte s'éteint.
+   */
+  saveStudentCharge: async ({ id, studentId, name, amount, description, date }) => {
+    const db = get();
+    if (!db.students.some((s) => s.id === studentId)) {
+      return { ok: false, messageKey: "student.notFound" };
+    }
+    const label = (name ?? "").trim();
+    if (!label) return { ok: false, messageKey: "charge.nameRequired" };
+    const due = positiveMoney(amount || 0);
+    if (due <= 0) return { ok: false, messageKey: "charge.amountRequired" };
+
+    const day = date || dateKey(new Date());
+    const note = description?.trim() || undefined;
+    const existing = id ? db.studentCharges.find((c) => c.id === id) : undefined;
+
+    if (existing) {
+      const alreadyPaid = positiveMoney(existing.paidAmount ?? 0);
+      const patched: StudentCharge = {
+        ...existing,
+        name: label,
+        amount: due,
+        description: note,
+        date: day,
+        paid: alreadyPaid >= due,
+      };
+      set((state) => ({
+        studentCharges: state.studentCharges.map((c) => (c.id === existing.id ? patched : c)),
+      }));
+      return { ok: true, id: existing.id };
+    }
+
+    const charge: StudentCharge = {
+      id: id ?? uid("chg"),
+      studentId,
+      name: label,
+      amount: due,
+      description: note,
+      date: day,
+      origin: "manual",
+      paidAmount: 0,
+      paid: false,
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({ studentCharges: [...state.studentCharges, charge] }));
+    return { ok: true, id: charge.id };
+  },
+
+  /**
+   * EFFACE UN FRAIS ET TOUT CE QU'IL A ENCAISSÉ.
+   *
+   * Un frais saisi par erreur ne se « solde » pas : il n'a jamais existé. Ses
+   * règlements partent avec lui et la caisse est reculée d'autant, sinon la
+   * recette du jour compterait de l'argent qui n'aurait pas dû entrer.
+   */
+  deleteStudentCharge: async (id) => {
+    const db = get();
+    const charge = db.studentCharges.find((c) => c.id === id);
+    if (!charge) return { ok: false };
+
+    const settlements = db.payments.filter((p) => p.chargeId === id);
+    // Le mouvement de caisse écrit à côté porte le MÊME horodatage et le même
+    // montant : c'est ce qui l'identifie, comme pour la suppression d'un
+    // versement de scolarité.
+    const cashIds = new Set<string>();
+    for (const pay of settlements) {
+      const row = db.cash.find(
+        (c) =>
+          c.type === "student_payment" &&
+          c.date === pay.date &&
+          c.amount === pay.amountPaid &&
+          !cashIds.has(c.id),
+      );
+      if (row) cashIds.add(row.id);
+    }
+
+    set((state) => ({
+      studentCharges: state.studentCharges.filter((c) => c.id !== id),
+      payments: state.payments.filter((p) => p.chargeId !== id),
+      cash: cashIds.size > 0 ? state.cash.filter((c) => !cashIds.has(c.id)) : state.cash,
+    }));
+    return { ok: true };
+  },
+
+  /**
+   * LA FAMILLE RÈGLE SES FRAIS, en une fois ou en plusieurs.
+   *
+   * Ligne par ligne : on ne verse jamais plus que ce qu'un frais doit encore,
+   * et ce qui n'est pas versé RESTE DÛ — le frais demeure ouvert et continue
+   * d'alerter. Chaque ligne laisse sa trace dans l'historique de l'élève et son
+   * entrée en caisse, si bien qu'un reçu peut toujours être réimprimé.
+   */
+  payStudentCharges: async ({ studentId, lines, date, description }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    if (!student) return { ok: false, messageKey: "student.notFound" };
+
+    const now = isoOn(date);
+    const studentLabel = `${student.firstName} ${student.lastName}`.trim();
+    const note = description?.trim();
+
+    const payments: Payment[] = [];
+    const cashRows: CashTransaction[] = [];
+    const patched = new Map<string, StudentCharge>();
+    let paid = 0;
+
+    for (const line of lines ?? []) {
+      const charge = db.studentCharges.find((c) => c.id === line.chargeId);
+      if (!charge || charge.studentId !== studentId) continue;
+      const already = positiveMoney(charge.paidAmount ?? 0);
+      const left = positiveMoney(charge.amount - already);
+      // Encaisser au-delà du dû ferait de la monnaie que personne ne réclame :
+      // le versement est plafonné à ce qui reste.
+      const take = Math.min(positiveMoney(line.amount || 0), left);
+      if (take <= 0) continue;
+
+      const payment: Payment = {
+        id: uid("pay"),
+        studentId,
+        chargeId: charge.id,
+        seancesPurchased: 0,
+        unitPrice: 0,
+        grossTotal: take,
+        netTotal: take,
+        amountPaid: take,
+        // Ce qui reste dû vit sur le frais, jamais sur le versement : un `rest`
+        // ici serait lu comme une scolarité impayée et retiendrait la part d'un
+        // enseignant qui n'a rien à voir avec ce livre.
+        rest: 0,
+        type: "debt_payment",
+        paidFrom: "cash",
+        date: now,
+        description: note ? `${note} — ${charge.name}` : `Frais — ${charge.name}`,
+      };
+      payments.push(payment);
+      cashRows.push({
+        id: uid("csh"),
+        type: "student_payment",
+        amount: take,
+        date: now,
+        description: `Frais « ${charge.name} » — ${studentLabel}`,
+      });
+
+      const nextPaid = money(already + take);
+      patched.set(charge.id, {
+        ...charge,
+        paidAmount: nextPaid,
+        paid: nextPaid >= charge.amount,
+        paymentId: payment.id,
+      });
+      paid = money(paid + take);
+    }
+
+    if (payments.length === 0) return { ok: false, messageKey: "debt.nothingDue" };
+
+    set((state) => ({
+      payments: [...state.payments, ...payments],
+      cash: [...state.cash, ...cashRows],
+      studentCharges: state.studentCharges.map((c) => patched.get(c.id) ?? c),
+    }));
+
+    // Ce que l'élève doit ENCORE sur ses frais, l'encaissement fait.
+    const rest = get()
+      .studentCharges.filter((c) => c.studentId === studentId)
+      .reduce((t, c) => t + positiveMoney(c.amount - (c.paidAmount ?? 0)), 0);
+
+    return { ok: true, paid, rest: money(rest), paymentIds: payments.map((p) => p.id) };
+  },
+
+  /**
    * L'école avance ce qu'un élève doit, pour que l'enseignant soit payé
    * aujourd'hui. Voir la description de l'action sur l'interface : tout ce qui
    * retient la part de l'enseignant est couvert — les mois dans le rouge, les
@@ -1831,8 +2089,18 @@ export const useData = create<DataStore>((set, get) => ({
 
     // Mois par mois : chaque versement porte sa provenance et pose ses deux
     // mouvements de caisse, donc l'historique reste lisible ligne par ligne.
+    //
+    // ET CHAQUE AVANCE DEVIENT UN FRAIS AU COMPTE DE L'ÉLÈVE. L'école a sorti
+    // cet argent sans jamais l'encaisser : la scolarité, elle, est soldée — la
+    // part de l'enseignant se débloque — mais la FAMILLE doit maintenant cette
+    // somme à l'école. Sans ce frais, la dette disparaissait de toutes les
+    // fiches à la seconde où l'école la couvrait, et plus personne au guichet
+    // ne savait qu'il fallait la réclamer.
+    const advanceCharges: StudentCharge[] = [];
+    const stamp = new Date().toISOString();
+    const advanceDay = dateKey(new Date());
     for (const row of rows) {
-      await get().addSold({
+      const res = await get().addSold({
         studentId,
         subscriptionId: row.subscriptionId,
         amount: row.debt,
@@ -1840,6 +2108,26 @@ export const useData = create<DataStore>((set, get) => ({
         source: "school_cash",
         description: `${label} — ${row.label} (${row.code})`,
       });
+      advanceCharges.push({
+        id: uid("chg"),
+        studentId,
+        name: `${label} — ${row.label} (${row.code})`,
+        amount: row.debt,
+        description:
+          "Réglé par la caisse de l'école pour débloquer la part de l'enseignant : " +
+          "la famille doit cette somme à l'école.",
+        date: advanceDay,
+        origin: "school_advance",
+        sourcePaymentId: res.paymentId,
+        subscriptionId: row.subscriptionId,
+        monthCode: row.code,
+        paidAmount: 0,
+        paid: false,
+        createdAt: stamp,
+      });
+    }
+    if (advanceCharges.length > 0) {
+      set((state) => ({ studentCharges: [...state.studentCharges, ...advanceCharges] }));
     }
 
     // Les restes d'anciens paiements et les frais d'inscription se soldent en
@@ -1883,6 +2171,29 @@ export const useData = create<DataStore>((set, get) => ({
             cleared.has(p.id) ? { ...p, rest: cleared.get(p.id)! } : p,
           ),
           receipt,
+        ],
+        // La même règle que pour les mois : ce que l'école a avancé reste dû
+        // par la famille, et un frais le porte tant qu'il n'est pas remboursé.
+        studentCharges: [
+          ...state.studentCharges,
+          {
+            id: uid("chg"),
+            studentId,
+            name:
+              registration > 0
+                ? `${label} — restes et frais d'inscription`
+                : `${label} — restes d'anciens paiements`,
+            amount: settled,
+            description:
+              "Réglé par la caisse de l'école pour débloquer la part de l'enseignant : " +
+              "la famille doit cette somme à l'école.",
+            date: dateKey(new Date()),
+            origin: "school_advance" as const,
+            sourcePaymentId: receipt.id,
+            paidAmount: 0,
+            paid: false,
+            createdAt: now,
+          },
         ],
         students: state.students.map((st) =>
           st.id === studentId && registration > 0
@@ -3622,6 +3933,11 @@ export const useData = create<DataStore>((set, get) => ({
         patch.students = state.students.map((s) =>
           s.parentId === id ? { ...s, parentId: undefined } : s,
         );
+      }
+      // Un élève effacé emporte ses frais : c'est ce que fait la contrainte
+      // `on delete cascade` en base, et le magasin doit dire la même chose.
+      if (key === "students") {
+        patch.studentCharges = state.studentCharges.filter((c) => c.studentId !== id);
       }
       if (key === "subscriptions") {
         patch.students = state.students.map((s) =>

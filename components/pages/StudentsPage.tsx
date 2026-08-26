@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   MessageCircle,
   Repeat,
+  Receipt,
   Wallet,
 } from "lucide-react";
 import type {
@@ -71,6 +72,11 @@ import { StudentSituationModal } from "@/components/students/StudentSituationMod
 import { formatDA } from "@/lib/utils";
 import { SoldManagerModal } from "@/components/students/SoldManagerModal";
 import {
+  ChargeCard,
+  ChargeFormModal,
+  StudentChargesModal,
+} from "@/components/students/StudentCharges";
+import {
   cycleSizeOf,
   currentCycleIndex,
   enrollmentCycles,
@@ -78,6 +84,8 @@ import {
   soldFor,
   soldStatus,
   schoolAdvancedRows,
+  studentChargeDebt,
+  studentChargesOf,
   studentCaseLabel,
   studentCaseTone,
   studentMatches,
@@ -201,6 +209,14 @@ export function StudentsPage() {
 
   // Active overlay actions index
   const [overlayStudentId, setOverlayStudentId] = useState<string | null>(null);
+
+  /** « Dettes & frais » d'un élève : la liste, la saisie et l'encaissement. */
+  const [chargeStudent, setChargeStudent] = useState<{
+    student: Student;
+    tab: "list" | "pay";
+  } | null>(null);
+  /** la saisie seule, ouverte en un clic depuis la carte d'un élève */
+  const [chargeFormStudent, setChargeFormStudent] = useState<Student | null>(null);
 
   // Scanner state
   const [scanRfidInput, setScanRfidInput] = useState("");
@@ -362,8 +378,13 @@ export function StudentsPage() {
 
       if (!matchesSearch) return false;
 
-      if (filterType === "debt") return debtFor(s) > 0 || (s.registrationDue ?? 0) > 0;
-      if (filterType === "paid") return debtFor(s) === 0 && (s.registrationDue ?? 0) === 0;
+      // « En dette » se lit comme la famille l'entend : la scolarité ET les
+      // frais divers. Un élève qui ne doit qu'un livre reste un élève à qui il
+      // faut réclamer quelque chose.
+      if (filterType === "debt")
+        return debtFor(s) > 0 || (s.registrationDue ?? 0) > 0 || studentChargeDebt(db, s.id) > 0;
+      if (filterType === "paid")
+        return debtFor(s) === 0 && (s.registrationDue ?? 0) === 0 && studentChargeDebt(db, s.id) === 0;
       if (filterType === "free") return s.isFree;
       if (filterType === "soon") return isSoonToRunOut(s);
 
@@ -411,6 +432,17 @@ export function StudentsPage() {
 
   const openSoldManager = (stu: Student) => {
     setSoldStudent(stu);
+    setOverlayStudentId(null);
+  };
+
+  /** Les frais de l'élève — livres, tenues, sorties, avances de l'école. */
+  const openCharges = (stu: Student, tab: "list" | "pay" = "list") => {
+    setChargeStudent({ student: stu, tab });
+    setOverlayStudentId(null);
+  };
+
+  const openChargeForm = (stu: Student) => {
+    setChargeFormStudent(stu);
     setOverlayStudentId(null);
   };
 
@@ -1540,7 +1572,7 @@ export function StudentsPage() {
       {(() => {
         const advances = schoolAdvancedRows(db);
         if (advances.length === 0) return null;
-        const total = advances.reduce((s, r) => s + r.amount, 0);
+        const total = advances.reduce((s, r) => s + r.remaining, 0);
         return (
           <Card className="mb-6 border-2 border-danger/40">
             <CardBody>
@@ -1554,13 +1586,16 @@ export function StudentsPage() {
                       Dettes avancées par l&apos;école ({advances.length})
                     </h3>
                     <Badge tone="danger" className="font-mono text-[11px]">
-                      {formatDA(total)} sortis de la caisse
+                      {formatDA(total)} à récupérer
                     </Badge>
                   </div>
                   <p className="mt-0.5 text-xs text-muted">
                     L&apos;école a réglé à la place de ces familles pour ne pas faire attendre
                     l&apos;enseignant. Cet argent est sorti de la caisse sans jamais y entrer : il
-                    reste à récupérer auprès de l&apos;élève.
+                    reste à récupérer auprès de l&apos;élève. Chaque avance est portée à son compte
+                    comme un frais — <strong className="text-ink">« Rembourser »</strong>{" "}
+                    l&apos;encaisse, en totalité ou en partie, et la ligne disparaît d&apos;ici
+                    quand elle est soldée.
                   </p>
                   <div className="mt-2 space-y-1.5">
                     {advances.map((a) => (
@@ -1579,16 +1614,30 @@ export function StudentsPage() {
                             {a.phone ? ` · ${a.phone}` : ""}
                           </span>
                         </span>
-                        <span className="flex shrink-0 items-center gap-1.5">
+                        <span className="flex shrink-0 flex-wrap items-center gap-1.5">
                           <span className="text-[10px] text-muted">{formatDateFr(a.date)}</span>
                           <Badge tone="danger" className="font-mono text-[10px]">
-                            {formatDA(a.amount)}
+                            {formatDA(a.remaining)}
+                            {a.remaining < a.amount ? ` sur ${formatDA(a.amount)}` : ""}
                           </Badge>
                           {a.stillOwed > 0 && (
                             <Badge tone="warning" className="font-mono text-[10px]">
-                              doit encore {formatDA(a.stillOwed)}
+                              doit encore {formatDA(a.stillOwed)} de scolarité
                             </Badge>
                           )}
+                          {(() => {
+                            const stu = students.find((x) => x.id === a.studentId);
+                            if (!stu || !a.chargeId) return null;
+                            return (
+                              <button
+                                onClick={() => openCharges(stu, "pay")}
+                                title="Encaisser le remboursement de cette avance"
+                                className="flex h-7 items-center gap-1 rounded-lg bg-danger px-2 text-[10px] font-bold text-white hover:bg-danger/80"
+                              >
+                                <Wallet className="h-3 w-3" /> Rembourser
+                              </button>
+                            );
+                          })()}
                         </span>
                       </div>
                     ))}
@@ -1656,6 +1705,8 @@ export function StudentsPage() {
         {getFilteredStudents().map((stu) => {
           const isOverlaid = overlayStudentId === stu.id;
           const debt = debtFor(stu);
+          /** ses frais hors scolarité, avances de l'école comprises */
+          const chargeDue = studentChargeDebt(db, stu.id);
           const number = registrationNumberOf(db, stu);
           const caseLabel = studentCaseLabel(stu);
 
@@ -1663,7 +1714,9 @@ export function StudentsPage() {
             <Card
               key={stu.id}
               className={`relative overflow-visible ${
-                debt > 0 ? "border-2 border-danger/60 shadow-[0_0_0_3px_rgba(239,68,68,0.08)]" : ""
+                debt > 0 || chargeDue > 0
+                  ? "border-2 border-danger/60 shadow-[0_0_0_3px_rgba(239,68,68,0.08)]"
+                  : ""
               }`}
             >
               <CardBody className="flex flex-col justify-between h-64 relative">
@@ -1712,6 +1765,35 @@ export function StudentsPage() {
                             </span>
                           </span>
                         </button>
+                      </div>
+
+                      {/* LA DETTE QUI N'EST PAS DE LA SCOLARITÉ — un livre, une
+                          tenue, une sortie, un transport, ou ce que l'école a
+                          avancé de sa caisse. On la crée ici, et on l'encaisse
+                          au même endroit. */}
+                      <div>
+                        <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
+                          Dettes &amp; frais divers
+                        </span>
+                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                          <button
+                            onClick={() => openChargeForm(stu)}
+                            className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
+                          >
+                            <Plus className="h-3.5 w-3.5" /> Nouveau frais
+                          </button>
+                          <button
+                            onClick={() => openCharges(stu, chargeDue > 0 ? "pay" : "list")}
+                            className={`flex items-center justify-center gap-1.5 rounded-xl py-2 font-semibold ${
+                              chargeDue > 0
+                                ? "bg-danger text-white hover:bg-danger/80"
+                                : "bg-white/15 hover:bg-white/25"
+                            }`}
+                          >
+                            <Receipt className="h-3.5 w-3.5" />
+                            {chargeDue > 0 ? formatDA(chargeDue) : "Ses frais"}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Fiche */}
@@ -1868,6 +1950,29 @@ export function StudentsPage() {
                       )}
                     </button>
 
+                    {/* LES FRAIS : une alerte à part, parce qu'ils ne se
+                        règlent pas comme la scolarité et ne retiennent la paie
+                        de personne. Un clic ouvre directement l'encaissement. */}
+                    {chargeDue > 0 ? (
+                      <button
+                        onClick={() => openCharges(stu, "pay")}
+                        title="Régler ses frais : livres, tenues, sorties, avances de l'école…"
+                        className="flex w-full items-center justify-between rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-start transition-colors hover:bg-danger/20"
+                      >
+                        <span>
+                          <span className="block text-[9px] font-semibold uppercase tracking-wide text-muted">
+                            Dettes &amp; frais divers
+                          </span>
+                          <strong className="block text-sm text-danger">
+                            {formatDA(chargeDue)}
+                          </strong>
+                        </span>
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-danger">
+                          <Receipt className="h-3.5 w-3.5" /> Encaisser
+                        </span>
+                      </button>
+                    ) : null}
+
                     {stu.registrationDue && stu.registrationDue > 0 ? (
                       <div className="flex justify-between items-center bg-danger/10 p-1.5 rounded-lg">
                         <span className="text-danger text-[10px] font-bold">Frais d&apos;inscription dus: {formatDA(stu.registrationDue)}</span>
@@ -1950,6 +2055,12 @@ export function StudentsPage() {
                 {debtFor(selectedStudent) > 0 && (
                   <Badge tone="danger" className="text-sm px-3 py-1">
                     Dette: {formatDA(debtFor(selectedStudent))}
+                  </Badge>
+                )}
+                {studentChargeDebt(db, selectedStudent.id) > 0 && (
+                  <Badge tone="danger" className="gap-1 px-3 py-1 text-sm">
+                    <Receipt className="h-3.5 w-3.5" /> Frais :{" "}
+                    {formatDA(studentChargeDebt(db, selectedStudent.id))}
                   </Badge>
                 )}
               </div>
@@ -2284,6 +2395,69 @@ export function StudentsPage() {
                         {payList.length} paiement(s) · {formatDA(totalPaid)} versés
                       </span>
                     </div>
+
+                    {/* ---- LES DETTES & FRAIS DIVERS DE CET ÉLÈVE -------------
+                        Ils ne sont pas de la scolarité et ne se lisent donc pas
+                        dans la liste des versements de séances : livres, tenues,
+                        sorties, ou ce que l'école a avancé de sa caisse. Chacun
+                        montre ce qu'il a coûté, ce qui a été versé dessus, ce
+                        qu'il reste à payer et le détail de ses règlements. */}
+                    {(() => {
+                      const charges = studentChargesOf(db, selectedStudent.id);
+                      const due = studentChargeDebt(db, selectedStudent.id);
+                      return (
+                        <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+                              <Receipt className="h-3.5 w-3.5" /> Dettes &amp; frais divers (
+                              {charges.length})
+                              {due > 0 && (
+                                <Badge tone="danger" className="ml-1 font-mono text-[10px]">
+                                  {formatDA(due)} dus
+                                </Badge>
+                              )}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setIsDetailsOpen(false);
+                                  openChargeForm(selectedStudent);
+                                }}
+                                className="gap-1.5"
+                              >
+                                <Plus className="h-3.5 w-3.5" /> Nouveau frais
+                              </Button>
+                              {due > 0 && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    setIsDetailsOpen(false);
+                                    openCharges(selectedStudent, "pay");
+                                  }}
+                                  className="gap-1.5"
+                                >
+                                  <Wallet className="h-3.5 w-3.5" /> Encaisser
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          {charges.length === 0 ? (
+                            <p className="py-3 text-center text-[11px] italic text-muted">
+                              Aucun frais n&apos;a été porté au compte de cet élève.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {charges.map((c) => (
+                                <ChargeCard key={c.id} charge={c} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {payEdit && (
                       <div className="space-y-3 rounded-xl border border-primary/30 bg-primary-50/40 p-3">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
@@ -3102,6 +3276,22 @@ export function StudentsPage() {
           student={students.find((s) => s.id === soldStudent.id) ?? soldStudent}
           open
           onClose={() => setSoldStudent(null)}
+        />
+      )}
+
+      {/* Dettes & frais divers — créer, encaisser, relire */}
+      {chargeStudent && (
+        <StudentChargesModal
+          student={students.find((s) => s.id === chargeStudent.student.id) ?? chargeStudent.student}
+          initialTab={chargeStudent.tab}
+          onClose={() => setChargeStudent(null)}
+        />
+      )}
+
+      {chargeFormStudent && (
+        <ChargeFormModal
+          student={students.find((s) => s.id === chargeFormStudent.id) ?? chargeFormStudent}
+          onClose={() => setChargeFormStudent(null)}
         />
       )}
     </div>

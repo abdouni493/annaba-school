@@ -185,6 +185,97 @@ export function soldReceiptHtml(
 }
 
 // ---------------------------------------------------------------------------
+// Reçu de règlement de FRAIS — un livre, une tenue, une sortie, ou la dette que
+// l'école avait avancée. Il se lit comme le reçu de solde, à ceci près que la
+// dernière colonne ne dit pas un solde mais CE QUI RESTE DÛ sur ce frais-là :
+// la famille repart en sachant si elle a fini de payer.
+// ---------------------------------------------------------------------------
+export interface ChargeReceiptLine {
+  /** le nom du frais, tel que la réception l'a tapé */
+  label: string;
+  /** le jour où le frais est né */
+  date: string;
+  /** ce que le frais coûte en entier */
+  total: number;
+  /** ce qui vient d'être versé */
+  amount: number;
+  /** ce qu'il reste dû dessus, l'encaissement fait */
+  remaining: number;
+}
+
+export function chargeReceiptHtml(
+  db: Database,
+  opts: {
+    student: Student;
+    lines: ChargeReceiptLine[];
+    language: Language;
+    title?: string;
+    note?: string;
+    /** ce que l'élève doit ENCORE sur TOUS ses frais, celui-ci compris */
+    restAfter?: number;
+  },
+): string {
+  const { student, lines, language } = opts;
+  const paid = lines.reduce((s, l) => s + l.amount, 0);
+
+  const rows = lines
+    .map(
+      (l) => `<tr>
+        <td><strong>${esc(l.label)}</strong></td>
+        <td class="ctr">${esc(formatDateFr(l.date))}</td>
+        <td class="num">${da(l.total)}</td>
+        <td class="num"><strong>${da(l.amount)}</strong></td>
+        <td class="num"><span class="badge ${l.remaining > 0 ? "badge-danger" : "badge-success"}">${
+          l.remaining > 0 ? da(l.remaining) : "Soldé"
+        }</span></td>
+      </tr>`,
+    )
+    .join("");
+
+  const body = `
+    ${letterheadHtml(db.school)}
+    ${bannerHtml(
+      opts.title || "Reçu de règlement de frais",
+      `${esc(studentName(student))} — N° ${esc(registrationNumberOf(db, student))} — ${new Date().toLocaleDateString("fr-FR")}`,
+    )}
+    <div class="frame frame-success">
+      <h3>Frais réglés</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Frais</th>
+            <th class="ctr">Du</th>
+            <th class="num">Montant du frais</th>
+            <th class="num">Versé</th>
+            <th class="num">Reste dû</th>
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="5" class="ctr">—</td></tr>`}</tbody>
+      </table>
+      ${opts.note ? `<p style="margin-top:10px;font-size:0.85em;color:#5c567a">${esc(opts.note)}</p>` : ""}
+    </div>
+    <div class="summary-card">
+      <h3>Récapitulatif</h3>
+      <div class="summary-line"><span>Élève</span><strong>${esc(studentName(student))}</strong></div>
+      <div class="summary-line"><span>N° d'inscription</span><strong style="font-family:monospace">${esc(registrationNumberOf(db, student))}</strong></div>
+      ${
+        opts.restAfter !== undefined
+          ? `<div class="summary-line"><span>Frais restant dus après ce versement</span><strong>${da(opts.restAfter)}</strong></div>`
+          : ""
+      }
+      <div class="net-pay-box"><span>Total encaissé</span><span>${da(paid)}</span></div>
+    </div>
+    ${signaturesHtml("La Direction", "Le Payeur")}
+    ${metaFooterHtml(db.school.name, language)}
+  `;
+  return printDocument({
+    title: opts.title || "Reçu de règlement de frais",
+    lang: language,
+    bodyHtml: body,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Feuille de présence — the very table the sheet shows, minus its buttons.
 // ---------------------------------------------------------------------------
 export interface PresenceSheetRow {

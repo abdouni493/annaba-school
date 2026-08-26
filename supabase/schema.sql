@@ -14,7 +14,7 @@
 --         - public.admin_set_password(...)
 --       Toutes écrivent dans auth.users + auth.identities : les comptes créés
 --       se connectent directement avec email + mot de passe, sans confirmation.
---    3. Les 32 tables métier (une par collection de l'application)
+--    3. Les 35 tables métier (une par collection de l'application)
 --    4. Index
 --    5. RLS : lecture pour tout compte connecté, écriture pour le personnel
 --    6. Storage : buckets "logos" et "subjects"
@@ -770,6 +770,7 @@ create table if not exists public.payments (
   paid_from          text                       -- d'où vient l'argent (null = la famille)
                        check (paid_from is null or paid_from in
                               ('cash','teacher_salary','teacher_debt','school_cash')),
+  charge_id          text,                      -- le FRAIS réglé (student_charges)
   date               text not null default '',
   description        text
 );
@@ -793,6 +794,56 @@ create table if not exists public.payments (
 -- C'est elle qui permet de distinguer, sur la paie, un mois qu'un fils
 -- d'enseignant a réglé LUI-MÊME avant la paie de son père d'un mois retenu sur
 -- le salaire : le premier reste affiché avec son statut mais n'est plus retenu.
+
+-- --- Dettes & frais divers d'un élève ------------------------------------------
+-- Écrans : fiche élève (« Nouveau frais » / « Ses frais »), écran « Payer &
+--          recharger », feuille de présence d'un groupe.
+--
+-- TOUT CE QU'UN ÉLÈVE DOIT À L'ÉCOLE SANS QUE CE SOIT DE LA SCOLARITÉ : un
+-- livre, une tenue de sport, une sortie, un transport, un dégât matériel. La
+-- réception tape un nom, un montant, une description facultative et une date.
+--
+-- Le frais se règle EN UNE OU PLUSIEURS FOIS : `paid_amount` cumule ce qui a
+-- été versé, et `amount − paid_amount` est ce qui reste dû. Chaque versement
+-- écrit sa propre ligne dans `payments` (type `debt_payment`, `charge_id`
+-- renseigné) et sa propre entrée en caisse, si bien que l'historique de l'élève
+-- le lit comme n'importe quel autre mouvement et qu'un reçu se réimprime.
+--
+-- DEUX ORIGINES, ET LA DIFFÉRENCE COMPTE :
+--   * `manual`         — la réception l'a saisi ;
+--   * `school_advance` — l'école a réglé une dette de SCOLARITÉ de sa propre
+--                        caisse pour débloquer la part de l'enseignant. La
+--                        scolarité est soldée, la part se paie… mais l'argent
+--                        est sorti sans jamais entrer : la FAMILLE le doit
+--                        maintenant à l'école, et c'est cette ligne qui le dit.
+--                        Sans elle, la dette s'évaporait à la seconde où
+--                        l'école la couvrait.
+--
+-- CE QU'UN FRAIS NE FAIT PAS : retenir la paie d'un enseignant. Seule la
+-- scolarité (les soldes dans le rouge, les restes d'anciens paiements et les
+-- frais d'inscription) le fait. Un livre impayé ne regarde pas le professeur de
+-- mathématiques — c'est pourquoi les règlements de frais portent toujours
+-- `rest = 0` : leur reste vit ici, pas sur le versement.
+create table if not exists public.student_charges (
+  id                text primary key,
+  student_id        text not null references public.students (id) on delete cascade,
+  name              text not null default '',
+  amount            numeric not null default 0,
+  description       text,
+  date              text not null default '',      -- YYYY-MM-DD : le jour du frais
+  origin            text not null default 'manual'
+                      check (origin in ('manual','school_advance')),
+  source_payment_id text,                          -- avance : le versement d'origine
+  subscription_id   text,                          -- avance : l'emploi du temps couvert
+  month_code        text,                          -- avance : le mois couvert
+  paid_amount       numeric not null default 0,    -- ce qui a DÉJÀ été versé dessus
+  paid              boolean not null default false,
+  payment_id        text,                          -- le dernier versement qui l'a soldé
+  created_at        text
+);
+
+comment on table public.student_charges is
+  'Dettes d''un élève HORS scolarité : livres, tenues, sorties, dégâts, et les avances de l''école. Réglables en plusieurs fois ; ne retiennent jamais la paie d''un enseignant.';
 
 -- --- Présence ------------------------------------------------------------------
 -- Écrans : Présence (feuille partagée), scan RFID, fiche élève.
@@ -992,6 +1043,9 @@ create index if not exists idx_attendance_session       on public.attendance_rec
 create index if not exists idx_penalties_student        on public.absence_penalties (student_id);
 create index if not exists idx_unpaid_teacher           on public.unpaid_teacher_sessions (teacher_id, paid);
 create index if not exists idx_acomptes_teacher         on public.teacher_acomptes (teacher_id, paid);
+create index if not exists idx_student_charges_student   on public.student_charges (student_id, paid);
+create index if not exists idx_student_charges_origin    on public.student_charges (origin, paid);
+create index if not exists idx_payments_charge           on public.payments (charge_id);
 create index if not exists idx_texpenses_teacher        on public.teacher_expenses (teacher_id, paid);
 create index if not exists idx_tpayments_teacher        on public.teacher_payments (teacher_id);
 create index if not exists idx_shifts_worker            on public.worker_shifts (worker_id, paid);
@@ -1022,7 +1076,7 @@ declare
     'teachers','teacher_payments','teacher_acomptes','teacher_expenses','teacher_absences',
     'teacher_child_debts',
     'reception_staff','worker_shifts','schedule_sessions','subscriptions','free_periods',
-    'module_absence_rules','students','payments','absence_penalties',
+    'module_absence_rules','students','payments','student_charges','absence_penalties',
     'announcements','expense_categories','expenses',
     'cash_transactions','parents','notifications','coursework','group_seances'
   ];

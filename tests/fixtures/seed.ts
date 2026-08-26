@@ -943,6 +943,10 @@ function rawSeed(): Database {
       },
     ],
 
+    // Aucun frais au départ : les tests qui en ont besoin les créent eux-mêmes,
+    // par l'action du magasin, comme le fait la réception.
+    studentCharges: [],
+
     // -----------------------------------------------------------------------
     attendance: [
       {

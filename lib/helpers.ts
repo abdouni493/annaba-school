@@ -14,6 +14,7 @@ import type {
   School,
   SchoolClass,
   Student,
+  StudentCharge,
   Subscription,
   SubscriptionDiscount,
 } from "@/lib/types";
@@ -1394,6 +1395,70 @@ export function monthProposal(
   };
 }
 
+// ---- Frais portés au compte d'un élève -------------------------------------
+/**
+ * CE QU'UN FRAIS DOIT ENCORE : son montant, moins ce qui a déjà été versé
+ * dessus. Jamais un nombre négatif — trop-perçu ou pas, un frais réglé ne doit
+ * plus rien.
+ */
+export function chargeRemaining(charge: StudentCharge): number {
+  return positiveMoney(charge.amount - (charge.paidAmount ?? 0));
+}
+
+/** TOUS les frais d'un élève, du plus récent au plus ancien. */
+export function studentChargesOf(db: Database, studentId: string): StudentCharge[] {
+  return db.studentCharges
+    .filter((c) => c.studentId === studentId)
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+}
+
+/** Ceux qui doivent ENCORE quelque chose — ceux qui alertent. */
+export function studentOpenCharges(db: Database, studentId: string): StudentCharge[] {
+  return studentChargesOf(db, studentId).filter((c) => chargeRemaining(c) > 0);
+}
+
+/**
+ * CE QUE L'ÉLÈVE DOIT SUR SES FRAIS, tous frais confondus.
+ *
+ * À ne pas confondre avec `studentDebt`, qui est sa SCOLARITÉ : c'est elle, et
+ * elle seule, qui retient la part d'un enseignant. Un livre impayé alerte le
+ * guichet mais ne prive personne de sa paie.
+ */
+export function studentChargeDebt(db: Database, studentId: string): number {
+  return money(studentOpenCharges(db, studentId).reduce((t, c) => t + chargeRemaining(c), 0));
+}
+
+/** Les frais que l'école s'est avancée à elle-même et qui restent à récupérer. */
+export function studentAdvanceDebt(db: Database, studentId: string): number {
+  return money(
+    studentOpenCharges(db, studentId)
+      .filter((c) => c.origin === "school_advance")
+      .reduce((t, c) => t + chargeRemaining(c), 0),
+  );
+}
+
+/** Les versements qui ont réglé un frais donné, du plus récent au plus ancien. */
+export function chargePayments(db: Database, chargeId: string): Payment[] {
+  return db.payments
+    .filter((p) => p.chargeId === chargeId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/** Ce que TOUTE l'école attend encore sur les frais de ses élèves. */
+export function totalStudentChargeDebt(db: Database): number {
+  return money(db.students.reduce((t, st) => t + studentChargeDebt(db, st.id), 0));
+}
+
+/**
+ * TOUT CE QU'UN ÉLÈVE DOIT, scolarité ET frais réunis — le seul nombre à
+ * afficher quand on veut dire « il doit de l'argent ». Les deux dettes vivent
+ * séparément parce qu'elles n'ont pas les mêmes conséquences, mais au guichet
+ * la famille n'en voit qu'une.
+ */
+export function studentTotalDue(db: Database, studentId: string): number {
+  return money(studentDebt(db, studentId) + studentChargeDebt(db, studentId));
+}
+
 /** Une dette qu'un élève n'a pas payée : l'école l'a avancée de sa caisse. */
 export interface SchoolAdvanceRow {
   paymentId: string;
@@ -1408,6 +1473,13 @@ export interface SchoolAdvanceRow {
   date: string;
   /** ce que l'élève doit ENCORE, l'avance faite */
   stillOwed: number;
+  /**
+   * LE FRAIS QUI PORTE LE REMBOURSEMENT. L'avance n'est pas un souvenir : c'est
+   * une dette de la famille envers l'école, encaissable au guichet comme
+   * n'importe quel frais. `remaining` est ce qu'il en reste à récupérer.
+   */
+  chargeId?: string;
+  remaining: number;
 }
 
 /**
@@ -1429,6 +1501,12 @@ export function schoolAdvancedRows(db: Database): SchoolAdvanceRow[] {
     .map((p) => {
       const student = db.students.find((s) => s.id === p.studentId);
       const sub = db.subscriptions.find((s) => s.id === p.subscriptionId);
+      // Le frais né de cette avance, quand il existe : c'est lui qui dit ce
+      // qu'il reste à récupérer. Une avance d'avant cette mécanique n'en a pas
+      // — elle est alors entièrement à recouvrer, comme l'écran l'affichait.
+      const charge = db.studentCharges.find(
+        (c) => c.origin === "school_advance" && c.sourcePaymentId === p.id,
+      );
       return {
         paymentId: p.id,
         studentId: p.studentId,
@@ -1440,8 +1518,13 @@ export function schoolAdvancedRows(db: Database): SchoolAdvanceRow[] {
         amount: positiveMoney(p.amountPaid),
         date: p.date,
         stillOwed: student ? studentDebtSummary(db, p.studentId).total : 0,
+        chargeId: charge?.id,
+        remaining: charge ? chargeRemaining(charge) : positiveMoney(p.amountPaid),
       } satisfies SchoolAdvanceRow;
     })
+    // Une avance remboursée n'alerte plus : elle a quitté la liste des choses
+    // à réclamer le jour où la famille l'a rendue.
+    .filter((r) => r.remaining > 0)
     .sort((a, b) => b.date.localeCompare(a.date) || a.studentName.localeCompare(b.studentName));
 }
 

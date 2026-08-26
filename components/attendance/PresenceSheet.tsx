@@ -35,11 +35,18 @@ import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/SearchInput";
 import { formatDA, money } from "@/lib/utils";
 import { printHtmlDocument } from "@/lib/print";
+import { PrintAsk } from "@/components/ui/PrintAsk";
+import {
+  ChargeFormModal,
+  StudentChargesModal,
+} from "@/components/students/StudentCharges";
 import { presenceSheetHtml, soldReceiptHtml } from "@/lib/reports/documents";
 import {
+  AlertTriangle,
   Banknote,
   Check,
   CheckCheck,
+  Landmark,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -48,6 +55,7 @@ import {
   History,
   Pencil,
   Printer,
+  Receipt,
   RotateCcw,
   Search,
   Slash,
@@ -102,9 +110,13 @@ import {
   studentListPrice,
   studentMatches,
   studentMonthPrice,
+  studentAdvanceDebt,
+  studentChargeDebt,
+  studentDebtSummary,
   studentName,
   studentSoldDebtRows,
   teacherName,
+  todayIso,
 } from "@/lib/helpers";
 import type { Day } from "@/lib/types";
 
@@ -149,7 +161,17 @@ export function PresenceSheet({
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pay, setPay] = useState<PayTarget | null>(null);
-  const [drill, setDrill] = useState<{ student: Student; kind: "previous" | "other" } | null>(null);
+  const [drill, setDrill] = useState<{
+    student: Student;
+    /**
+     * `previous` : ses mois passés SUR CET EMPLOI ;
+     * `other`    : ses mois en dette sur les AUTRES emplois du temps ;
+     * `all`      : TOUT ce qu'il doit en scolarité, celui-ci compris — ce que
+     *              l'alerte du haut ouvre, parce qu'elle parle de la dette
+     *              entière et non d'une moitié.
+     */
+    kind: "previous" | "other" | "all";
+  } | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
   /** the student the desk is about to take off the group */
   const [leaving, setLeaving] = useState<Student | null>(null);
@@ -165,6 +187,10 @@ export function PresenceSheet({
   );
   /** l'enfant d'enseignant dont on règle la scolarité au guichet */
   const [childPay, setChildPay] = useState<Student | null>(null);
+  /** « Dettes & frais » d'un élève, ouvert depuis sa ligne — encaissement compris */
+  const [charges, setCharges] = useState<{ student: Student; tab: "list" | "pay" } | null>(null);
+  /** porter un NOUVEAU frais à un élève, sans quitter la feuille */
+  const [chargeForm, setChargeForm] = useState<Student | null>(null);
   /** la saisie des élèves de passage venus sur LA séance affichée */
   const [passagerOpen, setPassagerOpen] = useState(false);
   /** la séance libre d'un passager que l'on s'apprête à retirer */
@@ -210,6 +236,46 @@ export function PresenceSheet({
    * le tableau, donc chaque clic sur « présent » ou « absent » le déplace dans
    * la seconde — il n'y a rien à rafraîchir.
    */
+  /**
+   * QUI DOIT DE L'ARGENT DANS CE GROUPE — les trois dettes d'un élève, lues
+   * ensemble, parce que la réception les réclame dans la même phrase :
+   *
+   *   * la SCOLARITÉ : ses mois dans le rouge, sur cet emploi et sur les
+   *     autres, plus les restes d'anciens paiements et les frais d'inscription ;
+   *   * les FRAIS : un livre, une tenue, une sortie — tout ce qui a été porté à
+   *     son compte hors scolarité ;
+   *   * les AVANCES DE L'ÉCOLE : ce que la caisse a réglé À SA PLACE pour ne
+   *     pas faire attendre l'enseignant. Cet argent est sorti sans jamais
+   *     entrer : la famille le doit à l'école, et c'est ici qu'on le lui
+   *     rappelle, en face de son nom, le jour où elle est là.
+   *
+   * Les trois se règlent sur CET écran, sans jamais ouvrir la fiche de l'élève.
+   */
+  const alerts = useMemo(() => {
+    const rows = roster
+      .map((st) => {
+        const summary = studentDebtSummary(db, st.id);
+        const charges = studentChargeDebt(db, st.id);
+        const advances = studentAdvanceDebt(db, st.id);
+        return {
+          student: st,
+          school: summary.total,
+          charges,
+          advances,
+          total: summary.total + charges,
+        };
+      })
+      .filter((r) => r.total > 0)
+      .sort((a, b) => b.total - a.total);
+    return {
+      rows,
+      total: rows.reduce((t, r) => t + r.total, 0),
+      advances: rows.reduce((t, r) => t + r.advances, 0),
+      charges: rows.reduce((t, r) => t + r.charges, 0),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roster, db.payments, db.enrollments, db.attendance, db.studentCharges, db.students]);
+
   const dayTally = useMemo(() => {
     const tally = { total: roster.length, present: 0, absent: 0, cancelled: 0, pending: 0 };
     for (const st of roster) {
@@ -406,6 +472,7 @@ export function PresenceSheet({
       amount,
       monthCode: pay.monthCode,
       description: pay.description,
+      date: pay.date,
     });
     setBusyId(null);
     if (!res.ok) {
@@ -697,6 +764,96 @@ export function PresenceSheet({
         </p>
       )}
 
+      {/* ---- L'ALERTE DU GROUPE : QUI DOIT DE L'ARGENT ---------------------
+          Elle est en haut de la feuille parce que c'est le seul moment où la
+          famille est joignable : l'élève est là, devant le comptoir. Chaque
+          ligne se règle d'un clic, sans quitter l'écran ni ouvrir de fiche. */}
+      {alerts.rows.length > 0 && (
+        <section className="overflow-hidden rounded-2xl border-2 border-danger/40">
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-danger/10 p-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="rounded-xl bg-danger/15 p-2 text-danger">
+                <AlertTriangle className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <strong className="block text-xs text-ink">
+                  {alerts.rows.length} élève(s) de ce groupe doivent de l&apos;argent
+                </strong>
+                <span className="block text-[10px] text-muted">
+                  Scolarité, frais divers et dettes avancées par l&apos;école — encaissables ici
+                  même, à la date de votre choix, en totalité ou en partie.
+                </span>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              <Badge tone="danger" className="font-mono text-[11px]">
+                {formatDA(alerts.total)} au total
+              </Badge>
+              {alerts.charges > 0 && (
+                <Badge tone="warning" className="gap-1 font-mono text-[10px]">
+                  <Receipt className="h-3 w-3" /> {formatDA(alerts.charges)} de frais
+                </Badge>
+              )}
+              {alerts.advances > 0 && (
+                <Badge tone="warning" className="gap-1 font-mono text-[10px]">
+                  <Landmark className="h-3 w-3" /> {formatDA(alerts.advances)} avancés par
+                  l&apos;école
+                </Badge>
+              )}
+            </div>
+          </div>
+
+          <div className="max-h-56 space-y-1.5 overflow-y-auto p-2.5">
+            {alerts.rows.map((r) => (
+              <div
+                key={r.student.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/25 bg-danger/5 px-3 py-2"
+              >
+                <span className="min-w-0 text-xs">
+                  <span className="font-mono text-[10px] text-muted">
+                    {registrationNumberOf(db, r.student)}
+                  </span>{" "}
+                  <strong className="text-ink">{studentName(r.student)}</strong>
+                  {r.student.phone && (
+                    <span className="text-[10px] text-muted"> · {r.student.phone}</span>
+                  )}
+                  <span className="block text-[10px] text-muted">
+                    {r.school > 0 ? `Scolarité ${formatDA(r.school)}` : "Scolarité à jour"}
+                    {r.charges > 0 ? ` · Frais ${formatDA(r.charges)}` : ""}
+                    {r.advances > 0
+                      ? ` · dont ${formatDA(r.advances)} avancés par l'école`
+                      : ""}
+                  </span>
+                </span>
+                <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <Badge tone="danger" className="font-mono text-[10px]">
+                    {formatDA(r.total)}
+                  </Badge>
+                  {r.school > 0 && (
+                    <button
+                      onClick={() => setDrill({ student: r.student, kind: "all" })}
+                      title="Voir et régler ses mois en dette, emploi par emploi"
+                      className="flex h-7 items-center gap-1 rounded-lg border border-primary/40 bg-primary-50/70 px-2 text-[10px] font-bold text-primary hover:bg-primary hover:text-white"
+                    >
+                      <Wallet className="h-3 w-3" /> Régler la scolarité
+                    </button>
+                  )}
+                  {r.charges > 0 && (
+                    <button
+                      onClick={() => setCharges({ student: r.student, tab: "pay" })}
+                      title="Régler ses frais : livres, tenues, avances de l'école…"
+                      className="flex h-7 items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-2 text-[10px] font-bold text-danger hover:bg-danger hover:text-white"
+                    >
+                      <Receipt className="h-3 w-3" /> Régler les frais
+                    </button>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* ---- the table ----------------------------------------------------- */}
       <div className="overflow-x-auto rounded-2xl border border-line">
         <table className="w-full min-w-[1000px] text-xs">
@@ -713,6 +870,7 @@ export function PresenceSheet({
               <th className="px-2 py-2.5">Versé / Reste {monthCode}</th>
               <th className="px-2 py-2.5">Mois préc.</th>
               <th className="px-2 py-2.5">Autres dettes</th>
+              <th className="px-2 py-2.5">Frais &amp; avances</th>
               <th className="px-2 py-2.5 text-center">Pointage du jour</th>
               <th className="px-2 py-2.5 text-center">Groupe</th>
             </tr>
@@ -720,7 +878,7 @@ export function PresenceSheet({
           <tbody>
             {shown.length === 0 ? (
               <tr>
-                <td colSpan={slotCount + 8} className="px-3 py-10 text-center text-xs italic text-muted">
+                <td colSpan={slotCount + 9} className="px-3 py-10 text-center text-xs italic text-muted">
                   {roster.length === 0
                     ? notYetHere > 0
                       ? `Aucun élève sur ${monthCode} — les ${notYetHere} inscrit(s) de cet emploi sont arrivés plus tard.`
@@ -747,6 +905,8 @@ export function PresenceSheet({
                   onHistory={() => setHistory(st)}
                   onRemove={(record) => setRemoving({ student: st, record })}
                   onChildPay={() => setChildPay(st)}
+                  onCharges={(tab) => setCharges({ student: st, tab })}
+                  onNewCharge={() => setChargeForm(st)}
                 />
               ))
             )}
@@ -926,6 +1086,19 @@ export function PresenceSheet({
                   placeholder="Ex: 4000"
                 />
               </div>
+            </div>
+            {/* LE JOUR DU VERSEMENT — la veille se saisit encore aujourd'hui,
+                et c'est cette date que porteront le reçu, l'historique de
+                l'élève et le mouvement de caisse. */}
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Date du paiement
+              </label>
+              <Input
+                type="date"
+                value={pay.date ?? todayIso()}
+                onChange={(e) => setPay({ ...pay, date: e.target.value })}
+              />
             </div>
             {pay.suggestion > 0 && (
               <button
@@ -1122,6 +1295,22 @@ export function PresenceSheet({
           onClose={() => setChildPay(null)}
           onReceipt={setReceipt}
         />
+      )}
+
+      {/* ---- LES FRAIS D'UN ÉLÈVE, RÉGLÉS DEPUIS LA FEUILLE DU GROUPE ------
+          La même liste que sur sa fiche : on coche ce que la famille paie, on
+          corrige le montant, et ce qui n'est pas versé reste dû. */}
+      {charges && (
+        <StudentChargesModal
+          student={charges.student}
+          initialTab={charges.tab}
+          onClose={() => setCharges(null)}
+        />
+      )}
+
+      {/* ---- porter un nouveau frais, sans quitter la feuille ---------------- */}
+      {chargeForm && (
+        <ChargeFormModal student={chargeForm} onClose={() => setChargeForm(null)} />
       )}
 
       {/* ---- ajouter des élèves de passage à la séance du jour -------------- */}
@@ -2065,40 +2254,18 @@ interface PayTarget {
   /** what would clear the debt in one go */
   suggestion: number;
   description?: string;
+  /**
+   * LE JOUR DE L'ENCAISSEMENT. La réception règle parfois pour la veille — le
+   * versement, son reçu et la caisse portent alors cette date-là, et non celle
+   * de la saisie. Absent = aujourd'hui.
+   */
+  date?: string;
 }
 
-/** "Imprimer le reçu ?" — asked after every cash-in, never forced. */
-export function PrintAsk({
-  html,
-  onClose,
-  question = "Imprimer le reçu du paiement ?",
-}: {
-  html: string;
-  onClose: () => void;
-  question?: string;
-}) {
-  return (
-    <Modal open onClose={onClose} title="Impression">
-      <div className="space-y-4">
-        <p className="text-sm text-ink">{question}</p>
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
-            Non, merci
-          </Button>
-          <Button
-            onClick={() => {
-              printHtmlDocument(html);
-              onClose();
-            }}
-            className="gap-1.5"
-          >
-            <Printer className="h-4 w-4" /> Imprimer
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
+/** "Imprimer le reçu ?" — vit désormais dans `components/ui/PrintAsk`, et se
+ *  ré-exporte d'ici : les écrans qui l'importaient de la feuille de présence
+ *  n'ont rien à changer, et la feuille ne dépend plus d'eux. */
+export { PrintAsk };
 
 function StudentRow({
   student,
@@ -2116,6 +2283,8 @@ function StudentRow({
   onHistory,
   onRemove,
   onChildPay,
+  onCharges,
+  onNewCharge,
 }: {
   student: Student;
   session: ScheduleSession;
@@ -2127,13 +2296,17 @@ function StudentRow({
   busy: boolean;
   onWrite: (student: Student, status: AttendanceStatus | null) => void;
   onPay: (t: PayTarget) => void;
-  onDrill: (kind: "previous" | "other") => void;
+  onDrill: (kind: "previous" | "other" | "all") => void;
   onLeave: () => void;
   onHistory: () => void;
   /** retirer CE pointage-là — même s'il date d'un autre jour du mois */
   onRemove: (record: AttendanceRecord) => void;
   /** régler la scolarité d'un fils d'enseignant, au guichet */
   onChildPay: () => void;
+  /** ouvrir ses frais — la liste, ou directement l'encaissement */
+  onCharges: (tab: "list" | "pay") => void;
+  /** lui porter un nouveau frais sans quitter la feuille */
+  onNewCharge: () => void;
 }) {
   const db = useData();
   const sub = db.subscriptions.find((s) => s.id === subscriptionId)!;
@@ -2156,6 +2329,9 @@ function StudentRow({
   const otherDebt = studentSoldDebtRows(db, student.id)
     .filter((r) => r.subscriptionId !== subscriptionId)
     .reduce((s, r) => s + r.debt, 0);
+  /** ses frais : livres, tenues, sorties — et ce que l'école lui a avancé */
+  const chargeDebt = studentChargeDebt(db, student.id);
+  const advanceDebt = studentAdvanceDebt(db, student.id);
 
   const caseLabel = studentCaseLabel(student);
 
@@ -2323,6 +2499,55 @@ function StudentRow({
         ) : (
           <span className="text-sm" title="Aucune autre dette">
             ✅
+          </span>
+        )}
+      </td>
+
+      {/* FRAIS & AVANCES — ce qu'il doit hors scolarité : un livre, une tenue,
+          une sortie, ou la dette que l'école a réglée de sa caisse pour
+          débloquer la part de l'enseignant. Un clic l'encaisse, en totalité ou
+          en partie, à la date choisie. */}
+      <td className="px-2 py-2">
+        <div className="flex flex-wrap items-center gap-1">
+          {chargeDebt > 0 ? (
+            <button
+              onClick={() => onCharges("pay")}
+              title={
+                advanceDebt > 0
+                  ? `${formatDA(chargeDebt)} de frais, dont ${formatDA(
+                      advanceDebt,
+                    )} avancés par l'école — cliquer pour encaisser`
+                  : `${formatDA(chargeDebt)} de frais — cliquer pour encaisser`
+              }
+              className="flex items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] font-bold text-danger hover:bg-danger hover:text-white"
+            >
+              {advanceDebt > 0 ? (
+                <Landmark className="h-3 w-3" />
+              ) : (
+                <AlertTriangle className="h-3 w-3" />
+              )}
+              {formatDA(chargeDebt)}
+            </button>
+          ) : (
+            <button
+              onClick={() => onCharges("list")}
+              title="Aucun frais dû — voir son historique de frais"
+              className="text-sm"
+            >
+              ✅
+            </button>
+          )}
+          <button
+            onClick={onNewCharge}
+            title="Porter un nouveau frais à cet élève (livre, tenue, sortie…)"
+            className="flex h-6 w-6 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:bg-primary-50 hover:text-ink"
+          >
+            <Receipt className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {advanceDebt > 0 && (
+          <span className="mt-0.5 block text-[9px] font-semibold text-warning">
+            dont {formatDA(advanceDebt)} avancés par l&apos;école
           </span>
         )}
       </td>
@@ -2801,7 +3026,7 @@ function DebtDrill({
   onPay,
 }: {
   student: Student;
-  kind: "previous" | "other";
+  kind: "previous" | "other" | "all";
   subscriptionId: string;
   monthIndex: number;
   onClose: () => void;
@@ -2824,14 +3049,28 @@ function DebtDrill({
             size: c.size,
           }))
       : studentSoldDebtRows(db, student.id)
-          .filter((r) => r.subscriptionId !== subscriptionId)
+          // « all » ne cache rien : le mois du groupe ouvert compte comme les
+          // autres, sinon l'alerte annoncerait une somme qu'on ne pourrait pas
+          // solder depuis l'écran qu'elle ouvre.
+          .filter((r) => kind === "all" || r.subscriptionId !== subscriptionId)
           .map((r) => ({ ...r, done: 0, size: 0 }));
+
+  // Les restes d'anciens paiements et les frais d'inscription ne relèvent
+  // d'aucun mois : ils se rappellent à part, sous la liste.
+  const summary = studentDebtSummary(db, student.id);
+  const loose = kind === "all" ? summary.rests + summary.registrationDue : 0;
 
   return (
     <Modal
       open
       onClose={onClose}
-      title={kind === "previous" ? "Dettes des mois précédents" : "Dettes sur les autres emplois du temps"}
+      title={
+        kind === "previous"
+          ? "Dettes des mois précédents"
+          : kind === "all"
+            ? "Toute la scolarité qu'il doit"
+            : "Dettes sur les autres emplois du temps"
+      }
     >
       <div className="space-y-3">
         <div className="rounded-xl bg-primary-50/60 p-3">
@@ -2878,6 +3117,17 @@ function DebtDrill({
               </div>
             ))}
           </div>
+        )}
+        {loose > 0 && (
+          <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] text-warning">
+            S&apos;ajoutent <strong>{formatDA(loose)}</strong> qui ne relèvent d&apos;aucun mois :
+            {summary.rests > 0 ? ` ${formatDA(summary.rests)} de restes d'anciens paiements` : ""}
+            {summary.rests > 0 && summary.registrationDue > 0 ? " et" : ""}
+            {summary.registrationDue > 0
+              ? ` ${formatDA(summary.registrationDue)} de frais d'inscription`
+              : ""}
+            . Ils se règlent depuis la fiche de l&apos;élève.
+          </p>
         )}
         <div className="flex justify-end border-t border-line pt-3">
           <Button variant="outline" onClick={onClose}>

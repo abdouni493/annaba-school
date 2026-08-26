@@ -13,7 +13,7 @@ clair (par défaut) / sombre et FR/AR (RTL).
 ## Stack
 
 - **Next.js 16** (App Router) — pages dans `app/`, contenu des modules dans `components/pages/`
-- **Supabase** — PostgreSQL (33 tables métier), Auth (email + mot de passe), Storage (logo, images)
+- **Supabase** — PostgreSQL (35 tables métier), Auth (email + mot de passe), Storage (logo, images)
 - **Zustand** — le store `lib/store/data.ts` porte les règles métier et sert de cache de la base
 - **Tailwind v4**, **framer-motion**, **lucide-react**
 
@@ -27,7 +27,7 @@ Le script est idempotent (relançable sans risque) et crée :
 | Section | Contenu |
 | ------- | ------- |
 | 1–2 | extensions, `profiles`, et les fonctions de comptes (`admin_exists`, `bootstrap_admin`, `admin_create_user`, `admin_set_password`, `admin_set_email`, `admin_delete_user`) |
-| 3–4 | les 34 tables métier, leurs clés étrangères et leurs index |
+| 3–4 | les 35 tables métier, leurs clés étrangères et leurs index |
 | 5 | la RLS : lecture pour tout compte connecté, écriture pour le personnel, présences pour les enseignants, sa propre fiche pour chacun |
 | 6 | les buckets Storage `logos` et `subjects` |
 | 7–8 | la ligne unique de configuration de l'école, et les droits PostgREST |
@@ -83,6 +83,14 @@ Aucune donnée de démonstration n'est insérée.
 >    Les séances déjà en base gardent leur sens exact : sans part écrite, l'école gardait tout.
 >    La correction du **règlement en double**, les **élèves de passage** sur la feuille de présence
 >    et la table « Retards de paiement & séances libres » sont du code, pas du schéma.
+> 11. **`supabase/update-2026-08-27-dettes-et-frais-eleve-et-avances-remboursables.sql`** — crée la
+>    table **`student_charges`** (les **dettes & frais divers** d'un élève : livre, tenue, sortie,
+>    transport, dégât) et ajoute `payments.charge_id` (le **frais qu'un versement règle**, pour que
+>    le règlement apparaisse dans l'historique de l'élève). Il **reprend aussi les avances déjà
+>    faites** : chaque dette réglée par la caisse de l'école reçoit son frais à rembourser, si bien
+>    qu'une avance d'avant aujourd'hui devient encaissable au guichet au lieu d'être seulement
+>    signalée. La reprise est rejouable — relancer le script ne crée jamais deux fois la même
+>    créance. Aucun calcul de scolarité, aucune paie et aucun solde de caisse ne bouge.
 >
 > Les deux premiers garantissent aussi qu'une fiche créée avec le seul nom s'enregistre sans
 > erreur.
@@ -409,7 +417,23 @@ et ce qui **reste dû** de l'autre, jamais un montant payé précédé d'un moin
 Un élève qui donne **plus** que ce que le mois coûte ne perd rien : la différence reste sur le
 **solde de cet emploi du temps** et paiera ses prochaines séances. L'écran d'encaissement l'annonce
 avant d'écrire — « M3 est soldé et 200 DA restent d'avance » — et la ligne de l'élève affiche
-ensuite ce solde d'avance.
+ensuite ce solde d'avance. La fenêtre d'encaissement porte aussi une **date** : la réception règle
+parfois pour la veille, et c'est alors CETTE date que portent le reçu, l'historique de l'élève et le
+mouvement de caisse.
+
+**En tête de la feuille : qui doit de l'argent dans ce groupe.** Un bandeau rouge nomme les élèves
+en dette — un par ligne, avec son numéro, son téléphone et le détail de ce qu'il doit :
+
+| Ce que le bandeau distingue | Ce que c'est | Ce que fait le bouton |
+| --------------------------- | ------------ | --------------------- |
+| **Scolarité** | ses mois dans le rouge (cet emploi et les autres), les restes d'anciens paiements, les frais d'inscription | ouvre **tout** ce qu'il doit, mois par mois, et l'encaisse ligne par ligne |
+| **Frais** | livre, tenue, sortie, transport — tout ce qui n'est pas de la scolarité | coche, corrige le montant, encaisse : ce qui n'est pas versé reste dû |
+| **Avancé par l'école** | ce que la caisse a réglé À SA PLACE pour ne pas faire attendre l'enseignant | se rembourse comme n'importe quel frais |
+
+Le bandeau existe parce que c'est le **seul moment où la famille est joignable** : l'élève est là,
+devant le comptoir. Chaque ligne du tableau porte en plus une colonne **« Frais & avances »** — le
+montant dû d'un clic à encaisser, et un bouton pour lui **porter un nouveau frais** sans quitter la
+feuille.
 
 ### La fiche élève
 
@@ -581,8 +605,15 @@ total avancé rappelé sous le compteur.
 entrer : c'est l'**élève** qui le doit à l'école, pas l'enseignant, qui est réglé depuis longtemps
 et n'a plus rien à réclamer. Un bandeau **« Dettes avancées par l'école »** en tête de la liste des
 étudiants les nomme un par un — numéro, élève, emploi du temps, mois, date, montant avancé et ce
-qu'il doit encore — avec le total sorti de la caisse. La ligne de l'élève reste signalée **en rouge**
+qu'il doit encore — avec le total **à récupérer**. La ligne de l'élève reste signalée **en rouge**
 dans le tableau du mois de son enseignant, mais rien ne s'y pilote plus.
+
+**Et l'avance se rembourse.** Elle ne se contentait plus d'être affichée : chaque avance est portée
+au compte de l'élève comme un **frais** (voir « Dettes & frais divers d'un élève » plus bas), avec
+un bouton **« Rembourser »** sur son bandeau. La famille rend ce qu'elle veut, quand elle passe ; ce
+qui n'est pas rendu **reste dû** et l'alerte le dit encore ; une avance entièrement remboursée
+**quitte la liste**. Rembourser une avance ne **rebloque jamais** la part de l'enseignant : elle a
+été faite pour la débloquer, elle ne peut pas la reprendre.
 
 ### Régler la scolarité d'un fils d'enseignant depuis la feuille du groupe
 
@@ -791,6 +822,51 @@ exactement ce périmètre : un enfant qui ne coche que des emplois hors périmè
 réclamer ; pour les autres, l'écran propose de les **encaisser tout de suite** ou de **créer la
 fiche avec la dette**, qui reste visible jusqu'à son règlement.
 
+## Dettes & frais divers d'un élève
+
+Une famille ne doit pas que des séances. Elle doit un **livre**, une **tenue de sport**, une
+**sortie**, un **transport**, une **vitre cassée** — et la réception n'avait nulle part où l'écrire.
+Ces sommes finissaient sur un carnet, ou dans la description d'un paiement, où aucune alerte ne les
+retrouvait le jour où l'élève repassait au comptoir.
+
+**Créer un frais** demande trois choses, parce que c'est tout ce qu'on sait au moment de le saisir :
+un **nom**, un **montant**, une **date**. La description est facultative — « Livre de mathématiques »
+se suffit à lui-même. Le bouton **« Nouveau frais »** est sur la carte de l'élève (menu ⋮), dans sa
+fiche détaillée, sur l'écran « Payer & recharger », et sur chaque ligne de la feuille de présence de
+ses groupes.
+
+**Il se règle en une ou plusieurs fois.** On coche les frais que la famille paie, on **corrige
+chaque montant** si elle ne donne qu'une partie, et l'écran annonce **avant d'écrire** ce qui
+restera dû. Un versement partiel est le cas normal : le frais reste ouvert pour la différence, et
+l'alerte continue de le dire. Chaque versement écrit sa ligne dans l'**historique de l'élève** et
+son **entrée en caisse**, à la date choisie, avec son reçu imprimable.
+
+**Où l'alerte apparaît :**
+
+| Écran | Ce qu'on y voit |
+| ----- | --------------- |
+| Carte de l'élève (**Étudiants**) | un bandeau rouge **« Dettes & frais divers »** avec le total dû, cliquable pour encaisser ; le filtre **« En dette »** compte ces frais comme le reste |
+| **Fiche détaillée** → onglet Paiements | chaque frais avec ce qu'il a coûté, ce qui a été versé dessus, ce qui reste dû et le détail de ses règlements |
+| **Payer & recharger les soldes** | la liste des frais ouverts, à cocher et à encaisser, sous les soldes des emplois du temps |
+| **Feuille de présence** d'un groupe | le bandeau du groupe et une colonne **« Frais & avances »** par ligne |
+
+**Deux origines**, et la différence se lit à l'écran. Un frais **saisi** par la réception, et un
+frais **avancé par l'école** — la dette de scolarité que la caisse a réglée à la place de la famille
+pour débloquer la part d'un enseignant. Le second porte une pastille **« Avancé par l'école »** et se
+rembourse exactement comme le premier.
+
+**Ce qu'un frais ne fait pas — et c'est voulu : il ne retient PAS la paie d'un enseignant.** Seule
+la scolarité le fait (les soldes dans le rouge, les restes d'anciens paiements, les frais
+d'inscription). Un livre impayé ne regarde pas le professeur de mathématiques, et une avance faite
+POUR débloquer sa part ne peut évidemment pas la rebloquer en devenant un frais. C'est pourquoi un
+règlement de frais porte toujours `rest = 0` : ce qui reste dû vit **sur le frais**
+(`amount − paid_amount`), jamais sur le versement, où il se lirait comme une scolarité impayée.
+
+**Créer un frais ne bouge pas un dinar** : c'est une créance, pas un encaissement. Seul son
+règlement écrit une entrée en caisse. Le supprimer retire ses règlements **et** leurs entrées, donc
+la recette du jour ne compte jamais de l'argent qui n'est pas dans le tiroir. Un élève effacé
+emporte ses frais.
+
 ## Le deuxième téléphone d'un élève
 
 Le premier numéro est celui qu'on compose ; le second est celui qu'on compose quand le premier ne
@@ -935,6 +1011,7 @@ aujourd'hui.
 | Session / connexion              | `lib/store/session.ts`, `app/(auth)/login/`                            |
 | Types & sélecteurs               | `lib/types.ts`, `lib/helpers.ts`                                       |
 | Élèves (achat, dette, détail)    | `components/pages/StudentsPage.tsx`                                    |
+| Dettes & frais divers d'un élève | `components/students/StudentCharges.tsx`                               |
 | Présence / scan                  | `components/pages/AttendancePage.tsx`, `lib/useScanProcessor.ts`       |
 | Mois d'emploi du temps (paie)    | `lib/teacherMonths.ts`, `components/teachers/`                          |
 | Règlement d'un mois (3 tables)   | `lib/teacherPayBoard.ts`, `components/teachers/TeacherPayCenter.tsx`, `components/teachers/PayBoardView.tsx`, `lib/reports/teacherMonthPayslip.ts` |

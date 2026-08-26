@@ -22,14 +22,26 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/SearchInput";
-import { PrintAsk } from "@/components/attendance/PresenceSheet";
+import { PrintAsk } from "@/components/ui/PrintAsk";
+import {
+  ChargeFormModal,
+  ChargeSettlementPanel,
+} from "@/components/students/StudentCharges";
 import { formatDA } from "@/lib/utils";
 import { soldReceiptHtml } from "@/lib/reports/documents";
 import {
   ClassTimingPicker,
   toggleTimingSelection,
 } from "@/components/students/ClassTimingPicker";
-import { AlertTriangle, CheckCircle2, Clock, Gift, Plus, Wallet } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Gift,
+  Plus,
+  Receipt,
+  Wallet,
+} from "lucide-react";
 import type { Student } from "@/lib/types";
 import {
   cycleOf,
@@ -44,6 +56,7 @@ import {
   registrationNumberOf,
   salleName,
   soldFor,
+  studentChargeDebt,
   soldStatus,
   studentListPrice,
   studentMonthPrice,
@@ -83,10 +96,14 @@ export function SoldManagerModal({
     amount: number;
     suggestion: number;
     description: string;
+    /** le jour où l'argent est entré — la veille se saisit encore aujourd'hui */
+    date: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [receipt, setReceipt] = useState<string | null>(null);
+  /** la saisie d'un nouveau frais, ouverte depuis ce même écran */
+  const [chargeForm, setChargeForm] = useState(false);
 
   /** Everything the student follows, with where his money stands on each. */
   const rows = useMemo(
@@ -136,6 +153,8 @@ export function SoldManagerModal({
 
   const totalSold = rows.reduce((s, r) => s + r.sold, 0);
   const totalDebt = rows.reduce((s, r) => s + Math.max(0, -r.sold), 0);
+  /** ce qu'il doit HORS scolarité : livres, tenues, avances de l'école… */
+  const chargeDebt = studentChargeDebt(db, student.id);
 
   const submit = async () => {
     if (!target) return;
@@ -151,6 +170,7 @@ export function SoldManagerModal({
       amount,
       monthCode: target.monthCode,
       description: target.description || undefined,
+      date: target.date,
     });
     setBusy(false);
     if (!res.ok) {
@@ -199,6 +219,11 @@ export function SoldManagerModal({
                 Solde total {formatDA(totalSold)}
               </Badge>
               {totalDebt > 0 && <Badge tone="danger">Dette {formatDA(totalDebt)}</Badge>}
+              {chargeDebt > 0 && (
+                <Badge tone="danger" className="gap-1">
+                  <Receipt className="h-3 w-3" /> Frais {formatDA(chargeDebt)}
+                </Badge>
+              )}
             </div>
           </div>
 
@@ -301,6 +326,7 @@ export function SoldManagerModal({
                                 amount: -c.balance,
                                 suggestion: -c.balance,
                                 description: `Règlement ${c.code} — ${r.label}`,
+                                date: todayIso(),
                               })
                             }
                             className="rounded-lg border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] font-bold text-danger hover:bg-danger/20"
@@ -322,6 +348,7 @@ export function SoldManagerModal({
                             amount: monthDebt || r.monthPrice || 0,
                             suggestion: monthDebt || r.monthPrice || 0,
                             description: "",
+                            date: todayIso(),
                           })
                         }
                         className="gap-1.5"
@@ -334,6 +361,32 @@ export function SoldManagerModal({
               })}
             </div>
           )}
+
+          {/* ---- LES FRAIS : LA DETTE QUI N'EST PAS DE LA SCOLARITÉ -------
+              Un livre, une tenue, une sortie, ou ce que l'école a avancé de sa
+              caisse pour débloquer la part d'un enseignant. Ça se réclame au
+              même guichet, à la même famille, dans la même minute — donc ça se
+              règle ICI, sur l'écran où l'argent rentre, et non sur un autre.
+
+              On coche les frais à régler, on corrige chaque montant si la
+              famille ne paie qu'une partie, et ce qui n'est pas versé RESTE DÛ :
+              le frais demeure ouvert et continue d'alerter. */}
+          <div className="rounded-2xl border border-line bg-canvas/30 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+                <Receipt className="h-3.5 w-3.5" /> Dettes &amp; frais divers
+                {chargeDebt > 0 && (
+                  <Badge tone="danger" className="ml-1 font-mono text-[10px]">
+                    {formatDA(chargeDebt)} dus
+                  </Badge>
+                )}
+              </span>
+              <Button size="sm" variant="outline" onClick={() => setChargeForm(true)} className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" /> Nouveau frais
+              </Button>
+            </div>
+            <ChargeSettlementPanel student={student} bare />
+          </div>
 
           {/* Enrolling him on ANOTHER emploi du temps — the only other thing a
               cashier ever needs on this screen, so it lives here rather than
@@ -446,6 +499,19 @@ export function SoldManagerModal({
                 />
               </div>
             </div>
+            {/* LE JOUR DU VERSEMENT. La réception encaisse parfois pour la
+                veille : le reçu, l'historique et la caisse portent alors CETTE
+                date, pas celle de la saisie. */}
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Date du paiement
+              </label>
+              <Input
+                type="date"
+                value={target.date}
+                onChange={(e) => setTarget({ ...target, date: e.target.value })}
+              />
+            </div>
             {target.suggestion > 0 && (
               <button
                 onClick={() => setTarget({ ...target, amount: target.suggestion })}
@@ -474,6 +540,10 @@ export function SoldManagerModal({
             </div>
           </div>
         </Modal>
+      )}
+
+      {chargeForm && (
+        <ChargeFormModal student={student} onClose={() => setChargeForm(false)} />
       )}
 
       {receipt && <PrintAsk html={receipt} onClose={() => setReceipt(null)} />}
