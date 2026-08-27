@@ -28,6 +28,19 @@ export interface TableSpec {
   fields: string[];
   /** Property -> column, only where the generic snake_case rule does not apply. */
   aliases?: Record<string, string>;
+  /**
+   * LES COLONNES « NOT NULL » DONT LA PROPRIÉTÉ EST FACULTATIVE, et la valeur à
+   * écrire quand elle manque.
+   *
+   * Un champ absent devient un `null` EXPLICITE (voir `toRow`), et Postgres
+   * n'applique JAMAIS le `default` d'une colonne à qui on passe null : il
+   * refuse la ligne. Un versement d'élève, dont personne ne renseigne
+   * `alertRead` à la création, était ainsi rejeté à chaque écriture — la caisse
+   * gardait son mouvement, le versement lui-même disparaissait au rechargement,
+   * et l'écran ne savait plus dire sur quel emploi du temps l'argent était
+   * passé. La valeur par défaut du schéma est donc recopiée ici, et écrite.
+   */
+  notNull?: Record<string, unknown>;
 }
 
 /** camelCase -> snake_case, the rule every column follows unless aliased. */
@@ -111,6 +124,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
              "startDate", "salary", "role", "rfid", "hourlyRate",
              "hasAccount", "username", "navKeys", "actionKeys", "createdAt",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { hasAccount: false },
   },
   parents: {
     table: "parents", pk: "id", pkField: "id",
@@ -154,6 +168,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
              "discount", "startDate", "expiryDate", "plan", "monthSeances", "balance",
              "createdAt",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { balance: 0 },
   },
   payments: {
     table: "payments", pk: "id", pkField: "id",
@@ -162,6 +177,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
              "discountValue", "netTotal", "amountPaid", "rest", "type", "paidFrom",
              "chargeId", "date", "description", "alertRead",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { alertRead: false },
   },
   studentCharges: {
     table: "student_charges", pk: "id", pkField: "id",
@@ -169,6 +185,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
              "sourcePaymentId", "subscriptionId", "monthCode", "paidAmount", "paid",
              "paymentId", "createdAt",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { origin: "manual", paidAmount: 0, paid: false },
   },
   attendance: {
     table: "attendance_records", pk: "id", pkField: "id",
@@ -196,18 +213,21 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "teacher_acomptes", pk: "id", pkField: "id",
     fields: ["id", "teacherId", "amount", "description", "date", "paid", "paymentId",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { paid: false },
   },
   teacherExpenses: {
     table: "teacher_expenses", pk: "id", pkField: "id",
     fields: ["id", "teacherId", "name", "amount", "description", "date", "paid",
              "paymentId", "createdAt",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { paid: false },
   },
   teacherChildDebts: {
     table: "teacher_child_debts", pk: "id", pkField: "id",
     fields: ["id", "teacherId", "studentId", "subscriptionId", "monthCode", "label",
              "amount", "date", "paid", "paymentId", "createdAt",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { paid: false },
   },
   absences: {
     table: "teacher_absences", pk: "id", pkField: "id",
@@ -230,11 +250,13 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "worker_acomptes", pk: "id", pkField: "id",
     fields: ["id", "workerId", "amount", "description", "date", "paid", "paymentId",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { paid: false },
   },
   workerAbsences: {
     table: "worker_absences", pk: "id", pkField: "id",
     fields: ["id", "workerId", "cost", "description", "date", "paid", "paymentId",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { paid: false },
   },
   workerPayments: {
     table: "worker_payments", pk: "id", pkField: "id",
@@ -293,6 +315,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     fields: ["id", "studentId", "passagerName", "itemLabel", "price", "date", "sessionId",
              "startTime", "endTime", "createdAt", "teacherPaid", "schoolShare", "teacherId",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { teacherPaid: false },
   },
   groupSeances: {
     table: "group_seances", pk: "id", pkField: "id",
@@ -318,7 +341,17 @@ export const COLLECTION_ORDER = Object.keys(TABLES) as CollectionKey[];
 export function toRow(spec: TableSpec, obj: Record<string, unknown>): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   for (const field of spec.fields) {
-    row[toColumn(field, spec)] = obj[field] === undefined ? null : obj[field];
+    const value = obj[field];
+    if (value === undefined || value === null) {
+      // Une colonne `not null` ne se laisse pas remplir par son `default` quand
+      // on lui passe null : elle rejette la ligne entière. On écrit donc le
+      // défaut nous-mêmes, et la clé reste présente — un envoi groupé exige
+      // que toutes les lignes portent exactement les mêmes colonnes.
+      const fallback = spec.notNull?.[field];
+      row[toColumn(field, spec)] = fallback === undefined ? null : fallback;
+      continue;
+    }
+    row[toColumn(field, spec)] = value;
   }
   return row;
 }
