@@ -40,11 +40,13 @@ import {
 } from "@/lib/helpers";
 import { formatDA } from "@/lib/utils";
 import { workerRoleName } from "@/lib/workers";
+import { useToast } from "@/lib/store/toast";
 
 import { useCan } from "@/lib/usePermissions";
 export function CashPage() {
   const can = useCan("cash");
   const db = useData();
+  const { addToast } = useToast();
   const {
     cash,
     cashMove,
@@ -61,6 +63,10 @@ export function CashPage() {
     workerPayments,
     studentCharges,
     reception,
+    deleteStudentPayment,
+    deleteTeacherPayment,
+    deleteWorkerPayment,
+    deleteGroupSeance,
   } = db;
 
   // Helper for timezone-safe local date string (YYYY-MM-DD)
@@ -534,9 +540,148 @@ export function CashPage() {
     setSelectedTx(null);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Voulez-vous vraiment supprimer cette transaction ? Cette action est irréversible.")) {
-      deleteFrom("cash", id);
+  /**
+   * SUPPRIMER UNE LIGNE DE CAISSE, EN DÉFAISANT CE QU'ELLE AVAIT FAIT.
+   *
+   * Une ligne de caisse n'est presque jamais seule : le versement d'un élève a
+   * crédité SON SOLDE, le règlement d'un enseignant vit dans SA FICHE DE PAIE,
+   * la paie d'un travailleur a soldé ses journées, une séance libre porte ses
+   * DEUX mouvements. Effacer la seule ligne de caisse laissait donc l'argent
+   * disparu du tiroir mais le paiement toujours porté à l'élève et le règlement
+   * toujours dans l'historique du professeur.
+   *
+   * On remonte donc jusqu'à la PIÈCE qui a écrit la ligne et on la supprime
+   * PAR ELLE — l'action dédiée reprend le solde, rouvre ce qui était soldé et
+   * retire la (ou les) ligne(s) de caisse d'un même geste. Ce qui n'est rattaché
+   * à aucune pièce (dépôt, retrait, dépense, acompte, dette avancée) tombe sur
+   * l'ancien comportement : la ligne de caisse seule s'en va.
+   */
+  const handleDelete = async (tx: CashTransaction) => {
+    // 1. Séance libre de groupe : elle signe ses deux mouvements (entrée des
+    //    élèves ET part de l'enseignant) — les deux partent avec elle.
+    const seance = pieces.seanceByCash.get(tx.id);
+    if (seance) {
+      if (
+        !confirm(
+          `Supprimer la séance libre de groupe « ${seance.title} » ? Ses deux mouvements de caisse (encaissement des élèves et part de l'enseignant) seront retirés.`,
+        )
+      )
+        return;
+      const res = await deleteGroupSeance(seance.id);
+      addToast({
+        type: res.ok ? "success" : "danger",
+        title: res.ok ? "Séance supprimée" : "Suppression impossible",
+        message: res.ok
+          ? "La séance et ses deux mouvements de caisse ont été retirés."
+          : "La séance n'a pas pu être supprimée.",
+      });
+      return;
+    }
+
+    // 2. Paie d'un travailleur : l'argent revient en caisse, et ses journées,
+    //    acomptes et absences soldés redeviennent dus.
+    const wage = pieces.workerPayByCash.get(tx.id);
+    if (wage) {
+      const w = reception.find((x) => x.id === wage.workerId);
+      const who = w ? `${w.firstName} ${w.lastName}` : "ce travailleur";
+      if (
+        !confirm(
+          `Supprimer ce règlement de ${who} ? Il sera retiré de son historique, et ses journées, acomptes et absences soldés redeviendront dus.`,
+        )
+      )
+        return;
+      const res = await deleteWorkerPayment(wage.id);
+      addToast({
+        type: res.ok ? "success" : "danger",
+        title: res.ok ? "Règlement supprimé" : "Suppression impossible",
+        message: res.ok
+          ? "Le règlement a été retiré de l'historique du travailleur et de la caisse."
+          : "Le règlement n'a pas pu être supprimé.",
+      });
+      return;
+    }
+
+    // 3. Règlement d'un enseignant : retiré de sa fiche de paie ; les présences,
+    //    arriérés, dépenses, acomptes et scolarités qu'il avait soldés
+    //    redeviennent dus. Un vieux règlement sans `cashId` est retrouvé par son
+    //    montant et sa date, exactement comme l'action de suppression le fait.
+    const teacherPay =
+      pieces.teacherPayByCash.get(tx.id) ??
+      (tx.type === "teacher_payment"
+        ? teacherPayments.find(
+            (p) => p.amount === -tx.amount && p.paidAt.slice(0, 10) === tx.date.slice(0, 10),
+          )
+        : undefined);
+    if (teacherPay) {
+      const who = teacherNameOf(teacherPay.teacherId);
+      if (
+        !confirm(
+          `Supprimer ce règlement de ${who} ? Il sera retiré de l'historique de l'enseignant, et tout ce qu'il avait soldé (présences, arriérés, retenues) redeviendra dû.`,
+        )
+      )
+        return;
+      const res = await deleteTeacherPayment(teacherPay.id);
+      addToast({
+        type: res.ok ? "success" : "danger",
+        title: res.ok ? "Règlement supprimé" : "Suppression impossible",
+        message: res.ok
+          ? `${formatDA(res.amount ?? 0)} retirés de l'historique de l'enseignant et de la caisse.`
+          : "Le règlement n'a pas pu être supprimé.",
+      });
+      return;
+    }
+
+    // 4. Versement d'un élève : repris de SON SOLDE (l'emploi du temps crédité)
+    //    et retiré de la caisse. On ne cible QUE le versement qui a écrit
+    //    exactement cette ligne — même type, même date, même montant — pour ne
+    //    jamais reprendre le solde d'un autre élève par ressemblance. Un
+    //    règlement de dette ou de frais ne se défait pas ainsi (il se corrige en
+    //    réencaissant), donc il n'est pas visé ici.
+    if (tx.type === "student_payment") {
+      const credit = Math.abs(tx.amount);
+      const pmt = payments.find(
+        (p) => p.type !== "debt_payment" && p.date === tx.date && p.amountPaid === credit,
+      );
+      if (pmt) {
+        const stu = students.find((s) => s.id === pmt.studentId);
+        const who = stu ? `${stu.firstName} ${stu.lastName}` : "cet élève";
+        if (
+          !confirm(
+            `Supprimer ce versement de ${who} ? Il sera repris de son solde et retiré de la caisse.`,
+          )
+        )
+          return;
+        const res = await deleteStudentPayment(pmt.id);
+        if (!res.ok && res.messageKey === "payment.debtLocked") {
+          addToast({
+            type: "danger",
+            title: "Suppression impossible",
+            message:
+              "Ce règlement de dette se corrige en réencaissant depuis la fiche de l'élève, pas en le supprimant ici.",
+          });
+          return;
+        }
+        addToast({
+          type: res.ok ? "success" : "danger",
+          title: res.ok ? "Versement supprimé" : "Suppression impossible",
+          message: res.ok
+            ? `${formatDA(res.amount ?? 0)} repris du solde de l'élève et de la caisse.`
+            : "Le versement n'a pas pu être supprimé.",
+          studentName: stu ? `${stu.firstName} ${stu.lastName}` : undefined,
+        });
+        return;
+      }
+      // Aucun versement rattaché (séance de passage, ancien mouvement) : on
+      // retombe sur la suppression simple de la ligne de caisse.
+    }
+
+    // 5. Tout le reste — dépôt/retrait manuel, dépense, acompte, dette avancée,
+    //    et les paiements d'élève sans versement rattaché : seule la ligne de
+    //    caisse est retirée, comme auparavant.
+    if (
+      confirm("Voulez-vous vraiment supprimer cette transaction ? Cette action est irréversible.")
+    ) {
+      deleteFrom("cash", tx.id);
     }
   };
 
@@ -1203,7 +1348,7 @@ export function CashPage() {
                         )}
                         {can("delete") && (
 <button
-                            onClick={() => handleDelete(tx.id)}
+                            onClick={() => handleDelete(tx)}
                             className="p-1.5 rounded-lg hover:bg-danger/10 text-muted hover:text-danger transition-colors"
                             title="Supprimer"
                           >
