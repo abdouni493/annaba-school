@@ -3330,7 +3330,12 @@ export function StudentsPage() {
 
       {/* Situation d'un élève : ses emplois du temps, ses présences du mois et
           ce qu'il lui reste à payer */}
-      {situationOpen && <StudentSituationModal onClose={() => setSituationOpen(false)} />}
+      {situationOpen && (
+        <StudentSituationModal
+          onClose={() => setSituationOpen(false)}
+          canCollect={can("pay")}
+        />
+      )}
 
       {/* Payer & recharger les soldes — replaces "Inscriptions" + "Renouvellement" */}
       {soldStudent && (

@@ -16,6 +16,14 @@
  *
  * Le bouton n'existe que pour l'administration : un travailleur n'a pas à se
  * surveiller lui-même.
+ *
+ * DEUX FAÇONS DE LE MONTRER, parce qu'une cloche se rate.
+ *
+ * `variant="bell"` est le bouton de l'en-tête, toujours là, qui porte son
+ * compteur. `variant="banner"` est la bande qui barre le tableau de bord et qui
+ * n'apparaît QUE s'il y a quelque chose à lire : de l'argent est entré en
+ * caisse sans que la direction l'ait vu passer, et c'est le genre de chose
+ * qu'on ne découvre pas en cliquant sur une icône qu'on avait oubliée.
  */
 
 import { useMemo, useState } from "react";
@@ -32,7 +40,11 @@ import { enrollmentLabel, formatDateFr, studentName } from "@/lib/helpers";
 import { formatDA } from "@/lib/utils";
 import type { Payment } from "@/lib/types";
 
-export function WorkerPaymentsAlert() {
+export function WorkerPaymentsAlert({
+  variant = "bell",
+}: {
+  variant?: "bell" | "banner";
+} = {}) {
   const db = useData();
   const updateItem = useData((s) => s.updateItem);
   const { addToast } = useToast();
@@ -100,25 +112,54 @@ export function WorkerPaymentsAlert() {
       : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   };
 
+  // La bande ne s'affiche que lorsqu'il y a réellement quelque chose à lire :
+  // une alerte permanente n'est plus une alerte.
+  if (variant === "banner" && pending.length === 0) return null;
+
   return (
     <>
-      <Button
-        variant={pending.length > 0 ? "secondary" : "outline"}
-        onClick={() => setOpen(true)}
-        className="relative gap-2"
-      >
-        {pending.length > 0 ? (
-          <BellRing className="h-4 w-4 text-warning" />
-        ) : (
-          <Bell className="h-4 w-4 text-muted" />
-        )}
-        Paiements des travailleurs
-        {pending.length > 0 && (
-          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
-            {pending.length > 99 ? "99+" : pending.length}
+      {variant === "banner" ? (
+        <button
+          onClick={() => setOpen(true)}
+          className="flex w-full flex-wrap items-center gap-3 rounded-2xl border border-warning/40 bg-warning/10 p-3 text-left transition-colors hover:bg-warning/15"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-warning/20">
+            <BellRing className="h-4.5 w-4.5 text-warning" />
           </span>
-        )}
-      </Button>
+          <span className="min-w-0 flex-1">
+            <strong className="block text-[12px] font-bold text-ink">
+              {pending.length} encaissement{pending.length > 1 ? "s" : ""} saisi
+              {pending.length > 1 ? "s" : ""} par un travailleur, non lu
+              {pending.length > 1 ? "s" : ""}
+            </strong>
+            <span className="block text-[10px] leading-relaxed text-muted">
+              {formatDA(total)} entré{pending.length > 1 ? "s" : ""} en caisse depuis un compte de
+              travailleur. Cliquez pour lire, imprimer les reçus et classer.
+            </span>
+          </span>
+          <Badge tone="warning" className="shrink-0 font-mono text-[10px]">
+            {formatDA(total)}
+          </Badge>
+        </button>
+      ) : (
+        <Button
+          variant={pending.length > 0 ? "secondary" : "outline"}
+          onClick={() => setOpen(true)}
+          className="relative gap-2"
+        >
+          {pending.length > 0 ? (
+            <BellRing className="h-4 w-4 text-warning" />
+          ) : (
+            <Bell className="h-4 w-4 text-muted" />
+          )}
+          Paiements des travailleurs
+          {pending.length > 0 && (
+            <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
+              {pending.length > 99 ? "99+" : pending.length}
+            </span>
+          )}
+        </Button>
+      )}
 
       <Modal
         open={open}

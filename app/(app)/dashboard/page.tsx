@@ -535,6 +535,10 @@ function AdminDashboard() {
         </div>
       </div>
 
+      {/* L'argent encaissé par un travailleur barre l'écran de la direction
+          tant qu'elle ne l'a pas lu : une cloche dans un coin se rate. */}
+      {isAdmin && <WorkerPaymentsAlert variant="banner" />}
+
       {/* ---- search & filters ------------------------------------------- */}
       <Card className="border border-line card-shadow">
         <CardBody className="space-y-3 p-4">
@@ -1029,7 +1033,12 @@ function AdminDashboard() {
 
       {/* Situation d'un élève : tous ses emplois du temps, mois par mois, avec
           l'encaissement sur place */}
-      {situationOpen && <StudentSituationModal onClose={() => setSituationOpen(false)} />}
+      {situationOpen && (
+        <StudentSituationModal
+          onClose={() => setSituationOpen(false)}
+          canCollect={can("collect_payment")}
+        />
+      )}
 
       {/* Caisse — dépôt / dépense / retrait, la même saisie que l'écran Caisse */}
       {cashKind && (

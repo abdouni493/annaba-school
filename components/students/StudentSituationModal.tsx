@@ -168,7 +168,24 @@ function monthFilterLabel(f: MonthFilter): string {
   return f.offset === 1 ? "1 mois avant" : `${f.offset} mois avant`;
 }
 
-export function StudentSituationModal({ onClose }: { onClose: () => void }) {
+/**
+ * CONSULTER N'EST PAS ENCAISSER.
+ *
+ * « Situation d'un élève » est un écran de LECTURE : on y répond à « il en est
+ * où ? ». Prendre de l'argent est un geste distinct, et l'administration le
+ * coche séparément sur la fiche du travailleur. L'écran s'ouvrait pourtant avec
+ * son bouton « Encaisser » pour tout le monde : un compte autorisé à consulter
+ * pouvait encaisser sans que ce droit lui ait jamais été donné.
+ *
+ * `canCollect` absent = l'appelant ne filtre pas (l'administration).
+ */
+export function StudentSituationModal({
+  onClose,
+  canCollect = true,
+}: {
+  onClose: () => void;
+  canCollect?: boolean;
+}) {
   const db = useData();
   const { addSold } = db;
   const { language } = useSettings();
@@ -288,6 +305,18 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
 
   const submitPay = async () => {
     if (!pay || !student) return;
+    // Le bouton est masqué, mais c'est ICI que le refus doit vivre : un état
+    // resté ouvert pendant qu'on retire le droit ne doit pas encaisser quand
+    // même.
+    if (!canCollect) {
+      addToast({
+        type: "danger",
+        title: "Action non autorisée",
+        message: "Votre compte n'a pas le droit d'encaisser un paiement.",
+      });
+      setPay(null);
+      return;
+    }
     const amount = Math.max(0, Math.round(pay.amount || 0));
     if (amount <= 0) {
       addToast({ type: "danger", title: "Montant invalide", message: "Saisissez un montant." });
@@ -562,7 +591,9 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                         <th className="px-2 py-2.5">Versé / Reste</th>
                         <th className="px-2 py-2.5">Mois préc.</th>
                         <th className="px-2 py-2.5">Solde emploi</th>
-                        <th className="px-2 py-2.5 text-center">Encaisser</th>
+                        <th className="px-2 py-2.5 text-center">
+                          {canCollect ? "Encaisser" : "—"}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -706,6 +737,9 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
 
                           <td className="px-2 py-2">
                             <div className="flex items-center justify-center">
+                              {!canCollect ? (
+                                <span className="text-[10px] italic text-muted/60">—</span>
+                              ) : (
                               <button
                                 onClick={() =>
                                   setPay({
@@ -722,6 +756,7 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                               >
                                 <Wallet className="h-3.5 w-3.5" /> Encaisser
                               </button>
+                              )}
                             </div>
                           </td>
                         </tr>
