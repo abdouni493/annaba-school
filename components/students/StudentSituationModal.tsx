@@ -6,16 +6,22 @@
  *
  *   on cherche l'élève (nom, n° d'inscription ou téléphone)
  *      -> UN SEUL GRAND TABLEAU, lu comme la feuille de présence d'un groupe :
- *         une ligne par emploi du temps — ceux qu'il suit ET ceux qu'il a
+ *         TOUS ses emplois du temps d'abord — ceux qu'il suit ET ceux qu'il a
  *         quittés — avec ses séances du mois, ce qu'il a versé, ce qui reste dû,
  *         ce qu'il traîne des mois précédents et le solde de cet emploi ;
- *      -> on encaisse sur place, sur la ligne concernée, avec son reçu ;
- *      -> on remonte les mois d'un bouton pour lire — et régler — un mois passé.
+ *      -> deux filtres au-dessus du tableau resserrent la lecture : UN emploi
+ *         du temps précis, et UN mois précis ;
+ *      -> on encaisse sur place, sur la ligne concernée, avec son reçu.
  *
- * Le navigateur de mois travaille en DÉCALAGE, pas en numéro : « mois en cours »
- * puis « 1 mois avant ». Deux emplois du temps ne vivent pas le même mois au
- * même moment (l'un en est à son M5, l'autre à son M2), et afficher « M2 » pour
- * les deux mentirait sur l'un des deux.
+ * LES DEUX FAÇONS DE CHOISIR UN MOIS, parce que les deux sont vraies.
+ *
+ * Deux emplois du temps ne vivent pas le même mois au même moment : l'un en est
+ * à son M5, l'autre à son M2. Le filtre propose donc :
+ *  - un DÉCALAGE (« mois en cours », « 1 mois avant » …), qui recule d'un cran
+ *    sur CHAQUE ligne et reste juste quand on les lit toutes ensemble ;
+ *  - un MOIS PRÉCIS (M1, M2 …), qui est ce qu'on veut dès qu'on a isolé un seul
+ *    emploi du temps : « montre-moi son M3 ».
+ * Les flèches ‹ › déplacent celui des deux qui est actif.
  */
 
 import { useMemo, useState } from "react";
@@ -27,9 +33,12 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/SearchInput";
 import { PrintAsk } from "@/components/attendance/PresenceSheet";
+import { SeanceStepper } from "@/components/students/SeanceStepper";
 import { soldReceiptHtml } from "@/lib/reports/documents";
 import { formatDA } from "@/lib/utils";
 import {
+  BookOpen,
+  CalendarRange,
   ChevronLeft,
   ChevronRight,
   History,
@@ -62,6 +71,7 @@ import {
   studentName,
   studentSubscriptionHistory,
   teacherName,
+  todayIso,
   unsubscribedAtOf,
 } from "@/lib/helpers";
 
@@ -120,6 +130,42 @@ interface PayTarget {
   amount: number;
   suggestion: number;
   description?: string;
+  /**
+   * LE JOUR DE L'ENCAISSEMENT. La réception règle parfois pour la veille — le
+   * versement, son reçu et la caisse portent alors cette date-là, et non celle
+   * de la saisie. Absent = aujourd'hui.
+   */
+  date?: string;
+}
+
+/**
+ * LE FILTRE DE MOIS, dans les deux langues que cet écran doit parler :
+ *  - `{ kind: "back", offset }` : un DÉCALAGE appliqué à chaque emploi du temps
+ *    (0 = le mois en cours de chacun) ;
+ *  - `{ kind: "fixed", index }` : LE mois M(index+1), le même pour tous.
+ */
+type MonthFilter = { kind: "back"; offset: number } | { kind: "fixed"; index: number };
+
+const MONTH_FILTER_CURRENT: MonthFilter = { kind: "back", offset: 0 };
+
+/** La valeur du <select> — « current », « back:2 » ou « M3 ». */
+function monthFilterValue(f: MonthFilter): string {
+  if (f.kind === "fixed") return `M${f.index + 1}`;
+  return f.offset === 0 ? "current" : `back:${f.offset}`;
+}
+
+function parseMonthFilter(value: string): MonthFilter {
+  if (value === "current") return MONTH_FILTER_CURRENT;
+  if (value.startsWith("back:")) return { kind: "back", offset: Number(value.slice(5)) || 0 };
+  const n = Number(value.replace(/^M/, ""));
+  return Number.isFinite(n) && n > 0 ? { kind: "fixed", index: n - 1 } : MONTH_FILTER_CURRENT;
+}
+
+/** Ce que le navigateur affiche entre ses deux flèches. */
+function monthFilterLabel(f: MonthFilter): string {
+  if (f.kind === "fixed") return monthCodeLabel(`M${f.index + 1}`);
+  if (f.offset === 0) return "Mois en cours";
+  return f.offset === 1 ? "1 mois avant" : `${f.offset} mois avant`;
 }
 
 export function StudentSituationModal({ onClose }: { onClose: () => void }) {
@@ -130,8 +176,10 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
 
   const [query, setQuery] = useState("");
   const [student, setStudent] = useState<Student | null>(null);
-  /** 0 = le mois en cours de chaque emploi, 1 = celui d'avant, etc. */
-  const [back, setBack] = useState(0);
+  /** Décalage relatif OU mois précis — voir `MonthFilter`. */
+  const [month, setMonth] = useState<MonthFilter>(MONTH_FILTER_CURRENT);
+  /** « all » = tous ses emplois du temps, sinon l'id d'UN tarif. */
+  const [emploi, setEmploi] = useState<string>("all");
   const [pay, setPay] = useState<PayTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<string | null>(null);
@@ -153,8 +201,12 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
       const sub = db.subscriptions.find((x) => x.id === subId)!;
       const session = db.sessions.find((x) => x.id === sub.sessionId);
       const currentIndex = currentCycleIndex(db, student.id, subId);
-      // Le décalage ne descend jamais sous le premier mois de l'emploi.
-      const index = Math.max(0, currentIndex - back);
+      // En DÉCALAGE, on ne descend jamais sous le premier mois de l'emploi ; en
+      // MOIS PRÉCIS, on montre le mois demandé tel quel, même si cet emploi du
+      // temps ne l'a pas encore atteint — la ligne dit alors qu'il est à venir
+      // plutôt que d'afficher en douce un autre mois.
+      const index =
+        month.kind === "fixed" ? month.index : Math.max(0, currentIndex - month.offset);
       const code = `M${index + 1}`;
       const cycle = cycleOf(db, student.id, subId, code);
       const slots = cycleSlots(db, student.id, subId, code);
@@ -195,18 +247,43 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
       } satisfies SituationRow;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [student, back, db.subscriptions, db.sessions, db.students, db.attendance, db.payments, db.enrollments]);
+  }, [student, month, db.subscriptions, db.sessions, db.students, db.attendance, db.payments, db.enrollments]);
 
-  const slotCount = rows.reduce((mx, r) => Math.max(mx, r.size, r.lead + r.slots.length), 0);
-  const totalDue = rows.reduce((s, r) => s + r.due, 0);
-  const totalPrevious = rows.reduce((s, r) => s + r.previousDue, 0);
-  const totalCredited = rows.reduce((s, r) => s + r.credited, 0);
+  /**
+   * CE QUE LE TABLEAU MONTRE VRAIMENT : tous ses emplois du temps par défaut,
+   * un seul dès qu'on en choisit un. Les totaux, les colonnes de séances et le
+   * navigateur de mois suivent CETTE liste — sans quoi l'écran annoncerait
+   * « reste 6 000 DA » au-dessus d'un tableau qui n'en montre que 2 000.
+   */
+  const visibleRows = emploi === "all" ? rows : rows.filter((r) => r.subId === emploi);
+
+  const slotCount = visibleRows.reduce(
+    (mx, r) => Math.max(mx, r.size, r.lead + r.slots.length),
+    0,
+  );
+  const totalDue = visibleRows.reduce((s, r) => s + r.due, 0);
+  const totalPrevious = visibleRows.reduce((s, r) => s + r.previousDue, 0);
+  const totalCredited = visibleRows.reduce((s, r) => s + r.credited, 0);
   /** Le décalage ne peut pas remonter plus haut que le plus vieux mois lisible. */
   const maxBack = rows.reduce((mx, r) => Math.max(mx, r.currentIndex), 0);
+  /** Le mois le plus avancé qu'un de ses emplois du temps ait atteint. */
+  const maxMonth = maxBack + 1;
+
+  /** Reculer / avancer d'un cran, dans la langue du filtre actif. */
+  const stepMonth = (delta: -1 | 1) =>
+    setMonth((m) =>
+      m.kind === "fixed"
+        ? { kind: "fixed", index: Math.max(0, m.index + delta) }
+        : { kind: "back", offset: Math.min(maxBack, Math.max(0, m.offset - delta)) },
+    );
+
+  const atOldest = month.kind === "fixed" ? month.index === 0 : month.offset >= maxBack;
+  const atNewest = month.kind === "fixed" ? month.index >= maxBack : month.offset === 0;
 
   const pick = (st: Student) => {
     setStudent(st);
-    setBack(0);
+    setMonth(MONTH_FILTER_CURRENT);
+    setEmploi("all");
   };
 
   const submitPay = async () => {
@@ -223,6 +300,7 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
       amount,
       monthCode: pay.monthCode,
       description: pay.description,
+      date: pay.date,
     });
     setBusy(false);
     if (!res.ok) {
@@ -334,43 +412,111 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-1 rounded-xl border border-line bg-surface p-1">
                     <button
-                      onClick={() => setBack((b) => Math.min(maxBack, b + 1))}
-                      disabled={back >= maxBack}
+                      onClick={() => stepMonth(-1)}
+                      disabled={atOldest}
                       className="rounded-lg p-1 text-muted hover:bg-primary-50 hover:text-ink disabled:opacity-30"
                       title="Mois précédent"
                     >
                       <ChevronLeft className="h-4 w-4" />
                     </button>
                     <span className="min-w-[132px] text-center text-[11px] font-bold text-ink">
-                      {back === 0
-                        ? "Mois en cours"
-                        : back === 1
-                          ? "1 mois avant"
-                          : `${back} mois avant`}
+                      {monthFilterLabel(month)}
                     </span>
                     <button
-                      onClick={() => setBack((b) => Math.max(0, b - 1))}
-                      disabled={back === 0}
+                      onClick={() => stepMonth(1)}
+                      disabled={atNewest}
                       className="rounded-lg p-1 text-muted hover:bg-primary-50 hover:text-ink disabled:opacity-30"
                       title="Mois suivant"
                     >
                       <ChevronRight className="h-4 w-4" />
                     </button>
                   </div>
-                  {back > 0 && (
-                    <Button size="sm" variant="outline" onClick={() => setBack(0)}>
-                      Revenir au mois en cours
-                    </Button>
-                  )}
                   <Button size="sm" variant="outline" onClick={() => setStudent(null)}>
                     Changer d&apos;élève
                   </Button>
                 </div>
               </div>
 
+              {/* ---- 2 bis. LES DEUX FILTRES --------------------------------
+                  On arrive sur TOUS ses emplois du temps ; ces deux listes
+                  resserrent ensuite la lecture — un cours précis, un mois
+                  précis — sans jamais changer ce que l'écran sait faire :
+                  encaisser sur la ligne qu'on regarde. */}
+              <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-line bg-canvas/40 p-3">
+                <div className="min-w-[240px] flex-1">
+                  <label className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+                    <BookOpen className="h-3.5 w-3.5 text-primary" /> Emploi du temps
+                  </label>
+                  <Select
+                    value={emploi}
+                    onChange={(e) => setEmploi(e.target.value)}
+                    className="w-full"
+                  >
+                    <option value="all">
+                      Tous ses emplois du temps ({rows.length})
+                    </option>
+                    {rows.map((r) => (
+                      <option key={r.subId} value={r.subId}>
+                        {r.label} — groupe {r.groupName}
+                        {r.active ? "" : " (quitté)"}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div className="min-w-[240px] flex-1">
+                  <label className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+                    <CalendarRange className="h-3.5 w-3.5 text-primary" /> Mois
+                  </label>
+                  <Select
+                    value={monthFilterValue(month)}
+                    onChange={(e) => setMonth(parseMonthFilter(e.target.value))}
+                    className="w-full"
+                  >
+                    <optgroup label="Décalage — appliqué à chaque emploi du temps">
+                      <option value="current">Mois en cours</option>
+                      {Array.from({ length: maxBack }, (_, i) => i + 1).map((b) => (
+                        <option key={b} value={`back:${b}`}>
+                          {b === 1 ? "1 mois avant" : `${b} mois avant`}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Mois précis — le même pour tous">
+                      {Array.from({ length: maxMonth }, (_, i) => `M${i + 1}`).map((c) => (
+                        <option key={c} value={c}>
+                          {monthCodeLabel(c)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </Select>
+                </div>
+
+                {(emploi !== "all" || month.kind === "fixed" || month.offset > 0) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setEmploi("all");
+                      setMonth(MONTH_FILTER_CURRENT);
+                    }}
+                  >
+                    Tout réafficher
+                  </Button>
+                )}
+              </div>
+
               {/* ---- 3. ses totaux -------------------------------------- */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Tile label="Emplois du temps" value={String(rows.length)} tone="text-ink" />
+                <Tile
+                  label="Emplois du temps"
+                  value={
+                    emploi === "all"
+                      ? String(rows.length)
+                      : `1 / ${rows.length}`
+                  }
+                  tone="text-ink"
+                  hint={emploi === "all" ? undefined : "filtré"}
+                />
                 <Tile
                   label="Versé sur le mois affiché"
                   value={formatDA(totalCredited)}
@@ -391,9 +537,11 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
               </div>
 
               {/* ---- 4. LE TABLEAU -------------------------------------- */}
-              {rows.length === 0 ? (
+              {visibleRows.length === 0 ? (
                 <p className="rounded-2xl border border-dashed border-line py-10 text-center text-xs italic text-muted">
-                  Cet élève n&apos;est inscrit sur aucun emploi du temps.
+                  {rows.length === 0
+                    ? "Cet élève n'est inscrit sur aucun emploi du temps."
+                    : "Aucun emploi du temps ne correspond au filtre."}
                 </p>
               ) : (
                 <div className="overflow-x-auto rounded-2xl border border-line">
@@ -418,7 +566,7 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r) => (
+                      {visibleRows.map((r) => (
                         <tr
                           key={r.subId}
                           className={`border-t border-line/60 align-middle hover:bg-primary-50/30 ${
@@ -453,6 +601,12 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                             >
                               {monthCodeLabel(r.code)}
                             </Badge>
+                            {r.index > r.currentIndex && (
+                              <span className="mt-0.5 block text-[9px] font-bold text-warning">
+                                à venir — cet emploi du temps en est à{" "}
+                                {monthCodeLabel(`M${r.currentIndex + 1}`)}
+                              </span>
+                            )}
                             <span className="mt-0.5 block text-[9px] text-muted">
                               {r.done}/{Math.max(0, r.size - r.lead)} séance(s)
                               {r.complete ? " · mois clos" : ""}
@@ -525,7 +679,7 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                               <span className="text-[10px] text-muted">—</span>
                             ) : r.previousDue > 0 ? (
                               <button
-                                onClick={() => setBack((b) => Math.min(maxBack, b + 1))}
+                                onClick={() => stepMonth(-1)}
                                 title="Remonter d'un mois pour le régler"
                                 className="rounded-lg border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] font-bold text-danger hover:bg-danger/20"
                               >
@@ -560,6 +714,7 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                                     monthCode: r.code,
                                     amount: r.due || 0,
                                     suggestion: r.due,
+                                    date: todayIso(),
                                   })
                                 }
                                 title={`Encaisser un solde sur ${r.code}`}
@@ -658,14 +813,41 @@ export function StudentSituationModal({ onClose }: { onClose: () => void }) {
                 />
               </div>
             </div>
+            {/* LE JOUR DU VERSEMENT — la veille se saisit encore aujourd'hui,
+                et c'est cette date que porteront le reçu, l'historique de
+                l'élève et le mouvement de caisse. */}
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Date du paiement
+              </label>
+              <Input
+                type="date"
+                value={pay.date ?? todayIso()}
+                onChange={(e) => setPay({ ...pay, date: e.target.value })}
+              />
+            </div>
             {pay.suggestion > 0 && (
               <button
                 onClick={() => setPay({ ...pay, amount: pay.suggestion })}
                 className="text-[11px] font-bold text-primary hover:underline"
               >
-                Régler la totalité ({formatDA(pay.suggestion)})
+                Régler ce qui est déjà dû ({formatDA(pay.suggestion)})
               </button>
             )}
+
+            {/* ---- LE RACCOURCI « UNE SÉANCE DE PLUS » -----------------------
+                Le même bloc, mot pour mot, que sur la feuille de présence du
+                groupe : « + 1 séance » et la PROPOSITION du mois entier compté
+                depuis SA première séance, moins ce qu'il a déjà versé. La
+                réception ne doit pas calculer autrement selon l'écran par lequel
+                elle est passée. */}
+            <SeanceStepper
+              student={student}
+              subscriptionId={pay.subId}
+              monthCode={pay.monthCode}
+              amount={pay.amount || 0}
+              onAmount={(next) => setPay({ ...pay, amount: next })}
+            />
 
             {/* Ce que ce versement laisse derrière lui : un élève qui donne 2000
                 sur un mois à 1800 garde 200 sur le solde de CET emploi. */}
