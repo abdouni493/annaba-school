@@ -39,6 +39,7 @@ import {
   studentName,
 } from "@/lib/helpers";
 import { formatDA } from "@/lib/utils";
+import { workerRoleName } from "@/lib/workers";
 
 import { useCan } from "@/lib/usePermissions";
 export function CashPage() {
@@ -55,6 +56,11 @@ export function CashPage() {
     payments,
     students,
     expenses,
+    subscriptions,
+    sessions,
+    workerPayments,
+    studentCharges,
+    reception,
   } = db;
 
   // Helper for timezone-safe local date string (YYYY-MM-DD)
@@ -130,6 +136,211 @@ export function CashPage() {
     return { from: customStart || "1970-01-01", to: customEnd || todayStr };
   })();
 
+  const teacherNameOf = (id: string) => {
+    const t = teachers.find((x) => x.id === id);
+    return t ? `${t.firstName} ${t.lastName}` : "—";
+  };
+
+  /**
+   * LES PIÈCES, RANGÉES PAR CE QUI PERMET DE LES RETROUVER.
+   *
+   * Chaque ligne du journal remonte jusqu'à la pièce qui l'a écrite, et le
+   * journal d'une année en compte des milliers : les reparcourir toutes pour
+   * chaque ligne alourdissait la page à vue d'œil. Les correspondances sont
+   * donc préparées UNE fois, puis lues directement.
+   */
+  const pieces = useMemo(() => {
+    const paymentsByDate = new Map<string, typeof payments>();
+    for (const p of payments) {
+      const bucket = paymentsByDate.get(p.date);
+      if (bucket) bucket.push(p);
+      else paymentsByDate.set(p.date, [p]);
+    }
+    const teacherPayByCash = new Map<string, (typeof teacherPayments)[number]>();
+    for (const p of teacherPayments) if (p.cashId) teacherPayByCash.set(p.cashId, p);
+    const workerPayByCash = new Map<string, (typeof workerPayments)[number]>();
+    for (const p of workerPayments) if (p.cashId) workerPayByCash.set(p.cashId, p);
+    // Une séance libre de groupe porte SES DEUX mouvements — l'entrée des
+    // élèves et la sortie de l'enseignant — et les signe tous les deux.
+    const seanceByCash = new Map<string, (typeof groupSeances)[number]>();
+    for (const g of groupSeances) {
+      if (g.cashInId) seanceByCash.set(g.cashInId, g);
+      if (g.cashOutId) seanceByCash.set(g.cashOutId, g);
+    }
+    return {
+      paymentsByDate,
+      teacherPayByCash,
+      workerPayByCash,
+      seanceByCash,
+      subById: new Map(subscriptions.map((s) => [s.id, s] as const)),
+      sessionById: new Map(sessions.map((s) => [s.id, s] as const)),
+      chargeById: new Map(studentCharges.map((c) => [c.id, c] as const)),
+    };
+  }, [
+    payments,
+    teacherPayments,
+    workerPayments,
+    groupSeances,
+    subscriptions,
+    sessions,
+    studentCharges,
+  ]);
+
+  /**
+   * LE VERSEMENT D'ÉLÈVE QUI A ÉCRIT CE MOUVEMENT.
+   *
+   * `addSold` écrit le paiement et sa ligne de caisse dans la MÊME seconde et
+   * avec la même date : on retrouve donc d'abord la correspondance exacte, et
+   * la fenêtre de deux secondes ne sert que de filet pour les anciennes lignes.
+   * Le montant départage deux versements du même instant.
+   */
+  const paymentOfTx = (tx: CashTransaction) => {
+    const credit = Math.abs(tx.amount);
+    const exact = pieces.paymentsByDate.get(tx.date) ?? [];
+    return (
+      exact.find((p) => p.amountPaid === credit) ??
+      exact[0] ??
+      payments.find(
+        (p) =>
+          Math.abs(new Date(p.date).getTime() - new Date(tx.date).getTime()) < 2000 &&
+          p.amountPaid === credit,
+      ) ??
+      payments.find(
+        (p) => Math.abs(new Date(p.date).getTime() - new Date(tx.date).getTime()) < 2000,
+      )
+    );
+  };
+
+  /**
+   * CE QUE LA COLONNE « EMPLOI DU TEMPS » DIT D'UNE LIGNE.
+   *
+   * `label` est le nom du cours, `hint` son groupe / ses jours / ses horaires,
+   * `note` le mois qu'il règle. `offSchedule` marque ce qui ne PEUT pas porter
+   * d'emploi du temps — un livre, un salaire de personnel, une séance libre :
+   * la colonne le dit alors franchement au lieu d'en inventer un.
+   */
+  type EmploiCell = {
+    label: string;
+    hint?: string;
+    note?: string;
+    offSchedule?: boolean;
+  };
+
+  /**
+   * L'EMPLOI DU TEMPS QUE CE MOUVEMENT PAIE.
+   *
+   * C'est la question qu'on pose à la caisse et à laquelle elle ne répondait
+   * pas : « + 4 000 DA — Amine Benali », d'accord, mais SUR QUEL COURS ? Chaque
+   * ligne remonte donc jusqu'à la pièce qui l'a produite — le versement de
+   * l'élève pour une entrée, le règlement de l'enseignant pour une sortie, la
+   * séance libre pour ses deux mouvements — et en tire le nom de l'emploi du
+   * temps, son groupe, ses jours et ses heures.
+   *
+   * `null` = la pièce est introuvable, et la colonne le dit plutôt que d'aller
+   * chercher au hasard un versement du même instant.
+   */
+  const emploiOfTx = (tx: CashTransaction): EmploiCell | null => {
+    // 1. La séance libre de groupe signe elle-même ses deux mouvements : c'est
+    //    la piste la plus sûre, donc la première — sans quoi son entrée irait
+    //    se faire attribuer le versement d'un élève tombé à la même seconde.
+    const seance = pieces.seanceByCash.get(tx.id);
+    if (seance) {
+      return {
+        label: seance.title,
+        hint: `${teacherNameOf(seance.teacherId)} · ${formatDateFr(seance.date)} · ${seance.startTime}–${seance.endTime}`,
+        note: "séance libre de groupe",
+        offSchedule: true,
+      };
+    }
+
+    // 2. La paie d'un travailleur ne tient à aucun cours : elle tient à un
+    //    métier et à une période, et c'est cela qu'il faut lire.
+    const wage = pieces.workerPayByCash.get(tx.id);
+    if (wage) {
+      const w = reception.find((x) => x.id === wage.workerId);
+      return {
+        label: "Salaire du personnel",
+        hint: w ? `${w.firstName} ${w.lastName} · ${workerRoleName(db, w.role)}` : undefined,
+        note: wage.periodKeys.join(" · ") || undefined,
+        offSchedule: true,
+      };
+    }
+
+    if (tx.type === "student_payment" || tx.type === "student_debt") {
+      const pmt = paymentOfTx(tx);
+      if (!pmt) return null;
+      // Un frais (livre, tenue, avance de l'école) ne touche aucun emploi du
+      // temps : il n'en porte pas, et la colonne ne doit pas lui en prêter un.
+      if (pmt.chargeId) {
+        const charge = pieces.chargeById.get(pmt.chargeId);
+        return {
+          label: "Frais divers",
+          hint: charge ? charge.name : undefined,
+          note: "hors emploi du temps",
+          offSchedule: true,
+        };
+      }
+      const sub = pmt.subscriptionId ? pieces.subById.get(pmt.subscriptionId) : undefined;
+      const ses = sub && pieces.sessionById.get(sub.sessionId);
+      if (!ses) return null;
+      return {
+        label: ses.title || moduleName(db, ses.moduleId) || "Emploi du temps",
+        hint: `Groupe ${groupName(db, ses.groupId)} · ${formatDays(ses.days) || "—"} · ${sessionTimeLabel(ses)}`,
+        note: pmt.monthCode ? monthCodeLabel(pmt.monthCode) : undefined,
+      };
+    }
+
+    if (tx.type === "teacher_payment") {
+      const pay = pieces.teacherPayByCash.get(tx.id);
+      if (!pay) return null;
+      const b = pay.board;
+      if (b) {
+        return {
+          label: b.emploi,
+          hint: `Groupe ${b.groupName} · ${b.daysLabel} · ${b.timeLabel}`,
+          note: monthCodeLabel(b.monthCode),
+        };
+      }
+      const months = pay.months ?? [];
+      if (months.length > 0) {
+        return {
+          label: months.map((m) => m.title).join(" · "),
+          note: months.map((m) => monthCodeLabel(m.monthCode)).join(" · "),
+        };
+      }
+      const titles = Array.from(
+        new Set((pay.details ?? []).map((d) => d.title || d.moduleName).filter(Boolean)),
+      );
+      if (titles.length > 0) return { label: titles.join(" · ") };
+      // Un vieux règlement AU POURCENTAGE soldait toutes les présences d'un
+      // coup : il ne nomme aucun emploi, et le prétendre serait mentir.
+      if (pay.method === "percent") {
+        return {
+          label: "Tous créneaux confondus",
+          hint: `${pay.sessionsCount} créneau(x) · ${pay.studentsCount} élève(s)`,
+          note: "règlement au pourcentage",
+          offSchedule: true,
+        };
+      }
+      return null;
+    }
+    return null;
+  };
+
+  /** Pourquoi cette ligne-là ne porte aucun emploi du temps. */
+  const noEmploiReason = (tx: CashTransaction) => {
+    if (tx.type === "acompte") return "acompte sur salaire";
+    if (tx.type === "expense") return "dépense de l'école";
+    if (tx.type === "deposit" || tx.type === "withdraw") return "mouvement manuel";
+    return "—";
+  };
+
+  /** Ce que la colonne affiche, mis à plat pour que la recherche le trouve. */
+  const emploiTextOf = (tx: CashTransaction) => {
+    const e = emploiOfTx(tx);
+    return e ? `${e.label} ${e.hint ?? ""} ${e.note ?? ""}` : "";
+  };
+
   // Filtering transactions
   const getFilteredTransactions = () => {
     const now = new Date();
@@ -169,7 +380,10 @@ export function CashPage() {
         return (
           tx.description.toLowerCase().includes(query) ||
           tx.type.toLowerCase().includes(query) ||
-          tx.amount.toString().includes(query)
+          tx.amount.toString().includes(query) ||
+          // On cherche aussi PAR COURS : taper « maths 4AM » doit ramener tout
+          // ce qui est passé par cet emploi du temps, dans les deux sens.
+          emploiTextOf(tx).toLowerCase().includes(query)
         );
       }
 
@@ -365,7 +579,21 @@ export function CashPage() {
    */
   const detailOf = (tx: CashTransaction) => {
     if (tx.type === "teacher_payment") {
-      const pay = teacherPayments.find((p) => p.cashId === tx.id);
+      // La paie d'un travailleur : ni mois d'emploi ni élèves, mais un brut et
+      // ce qui a été repris dessus.
+      const wage = pieces.workerPayByCash.get(tx.id);
+      if (wage) {
+        const w = reception.find((x) => x.id === wage.workerId);
+        return [
+          w ? `${w.firstName} ${w.lastName}` : "Travailleur",
+          `brut ${formatDA(wage.gross)}`,
+          wage.acomptes > 0 ? `acomptes -${formatDA(wage.acomptes)}` : "",
+          wage.absences > 0 ? `absences -${formatDA(wage.absences)}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      }
+      const pay = pieces.teacherPayByCash.get(tx.id);
       if (pay) {
         const t = teachers.find((x) => x.id === pay.teacherId);
         // Un règlement de MOIS porte sa photographie : on peut donc dire
@@ -374,9 +602,11 @@ export function CashPage() {
         // « 3 créneaux ».
         const b = pay.board;
         if (b) {
+          // L'emploi, le groupe et le mois ont maintenant leur propre colonne :
+          // les redire ici ne ferait que noyer ce qu'on vient lire — combien
+          // d'élèves, combien de séances tenues, et ce qui a été repris.
           return [
             t ? `${t.firstName} ${t.lastName}` : "Enseignant",
-            `${b.emploi} · ${b.groupName} · ${b.monthCode}`,
             `${b.students.length} élève(s) · ${b.held}/${b.size} séances`,
             `brut ${formatDA(b.gross)}`,
             b.arrears.length > 0 ? `${b.arrears.length} arriéré(s) rattrapé(s)` : "",
@@ -385,11 +615,10 @@ export function CashPage() {
             .filter(Boolean)
             .join(" · ");
         }
-        const months = (pay.months ?? []).map((m) => `${m.title} ${m.monthCode}`).join(" · ");
         const arrears = (pay.arrears ?? []).length;
         return [
           t ? `${t.firstName} ${t.lastName}` : "Enseignant",
-          months || `${pay.sessionsCount} créneau(x)`,
+          `${pay.sessionsCount} créneau(x)`,
           pay.gross != null ? `brut ${formatDA(pay.gross)}` : "",
           arrears > 0 ? `${arrears} arriéré(s) débloqué(s)` : "",
         ]
@@ -399,14 +628,13 @@ export function CashPage() {
     }
     if (tx.type === "student_payment" || tx.type === "student_debt") {
       // Le versement de l'élève écrit dans la même seconde que le mouvement.
-      const near = payments.find(
-        (pmt) => Math.abs(new Date(pmt.date).getTime() - new Date(tx.date).getTime()) < 2000,
-      );
+      const near = paymentOfTx(tx);
       if (near) {
         const stu = students.find((x) => x.id === near.studentId);
+        // Le mois est dans la colonne « Emploi du temps » : ici on lit qui a
+        // payé, et s'il reste quelque chose à devoir.
         return [
           stu ? `${stu.firstName} ${stu.lastName}` : "Élève",
-          near.monthCode ? monthCodeLabel(near.monthCode) : "",
           near.rest > 0 ? `reste ${formatDA(near.rest)}` : "soldé",
         ]
           .filter(Boolean)
@@ -420,11 +648,6 @@ export function CashPage() {
       if (exp) return `Dépense « ${exp.name} »`;
     }
     return "";
-  };
-
-  const teacherNameOf = (id: string) => {
-    const t = teachers.find((x) => x.id === id);
-    return t ? `${t.firstName} ${t.lastName}` : "—";
   };
 
   const getTxTypeBadge = (type: string) => {
@@ -882,6 +1105,7 @@ export function CashPage() {
               <tr className="bg-canvas/50 border-b border-line text-muted font-bold text-[10px] uppercase tracking-wider">
                 <th className="p-4 pl-6">Date / Heure</th>
                 <th className="p-4">Type</th>
+                <th className="p-4">Emploi du temps</th>
                 <th className="p-4">Description</th>
                 <th className="p-4">Détail de la pièce</th>
                 <th className="p-4 text-right">Montant</th>
@@ -892,7 +1116,7 @@ export function CashPage() {
             <tbody className="divide-y divide-line">
               {tabTxList.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-12 text-center text-muted italic bg-surface/30">
+                  <td colSpan={8} className="p-12 text-center text-muted italic bg-surface/30">
                     <div className="max-w-sm mx-auto flex flex-col items-center gap-2">
                       <AlertTriangle className="h-8 w-8 text-muted/65" />
                       <span className="block font-bold mt-1.5">Aucune transaction trouvée</span>
@@ -912,6 +1136,50 @@ export function CashPage() {
                       </div>
                     </td>
                     <td className="p-4">{getTxTypeBadge(tx.type)}</td>
+                    {/* SUR QUEL COURS CET ARGENT EST-IL PASSÉ ? La caisse ne le
+                        disait nulle part : il fallait ouvrir la fiche de
+                        l'élève ou celle de l'enseignant pour le savoir. */}
+                    <td className="p-4 max-w-[220px]">
+                      {(() => {
+                        const emploi = emploiOfTx(tx);
+                        if (!emploi)
+                          return (
+                            <span className="text-[10px] italic text-muted/60">
+                              {noEmploiReason(tx)}
+                            </span>
+                          );
+                        return (
+                          <span title={emploi.hint}>
+                            <strong
+                              className={`block text-[11px] leading-tight ${
+                                emploi.offSchedule ? "text-muted" : "text-ink"
+                              }`}
+                            >
+                              <BookOpen
+                                className={`mr-1 inline h-3 w-3 ${
+                                  emploi.offSchedule ? "text-muted/60" : "text-primary"
+                                }`}
+                              />
+                              {emploi.label}
+                            </strong>
+                            {emploi.note && (
+                              <span
+                                className={`block font-mono text-[9px] ${
+                                  emploi.offSchedule ? "text-muted/70" : "text-primary"
+                                }`}
+                              >
+                                {emploi.note}
+                              </span>
+                            )}
+                            {emploi.hint && (
+                              <span className="block text-[9px] leading-tight text-muted">
+                                {emploi.hint}
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td className="p-4 font-semibold text-ink max-w-md truncate">{tx.description}</td>
                     <td className="p-4 text-[10px] text-muted max-w-xs">
                       {detailOf(tx) || <span className="italic text-muted/60">—</span>}

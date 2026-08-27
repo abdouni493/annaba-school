@@ -250,3 +250,4 @@ then make sure to make it calculate correctly without multiplication of decalges
 make sure to follow the calculations of how much part of teacher for each emploi du temps and for each seance libre and make sure to calcualte correclty the retards payments and evrything dynamic and smooth 
 
 apply this updates then give me the full sql code that i have torun for this new updates and push all updates to repo with merge code directly without pull request 
+
