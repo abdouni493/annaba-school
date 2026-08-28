@@ -2123,6 +2123,18 @@ export function passagerLabel(db: Database, ind: IndependentSession): string {
   return ind.passagerName || "Passager";
 }
 
+/**
+ * Toutes les séances libres qu'un élève a suivies, n'importe où — le mois
+ * suivant, le mois précédent, un autre emploi du temps — sans qu'il y ait été
+ * inscrit. Elle reste rattachée à sa fiche pour son historique, même si elle
+ * n'entre ni dans son solde ni dans la liste du mois prochain d'aucun groupe.
+ */
+export function studentPassagerVisits(db: Database, studentId: string): IndependentSession[] {
+  return db.independent
+    .filter((i) => i.studentId === studentId)
+    .sort((a, b) => `${b.date}${b.createdAt ?? ""}`.localeCompare(`${a.date}${a.createdAt ?? ""}`));
+}
+
 /** The séances libres de groupe of one teacher, most recent first. */
 export function teacherGroupSeances(db: Database, teacherId: string): GroupSeance[] {
   return db.groupSeances

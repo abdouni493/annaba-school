@@ -644,15 +644,23 @@ function MonthBoard({
 
   const settlement = board.settlement;
   /**
-   * UN MOIS RÉGLÉ NE SE REPAIE PAS.
+   * UNE PART DÉJÀ RÉGLÉE NE SE REPAIE PAS — mais ça ne fige que la TABLE 1.
    *
-   * Tant qu'aucun règlement n'existe, l'écran prépare un versement. Dès qu'il
-   * en existe un, il devient un CONSTAT : les cases se figent, le bouton
-   * « Enregistrer » disparaît, et il ne reste que « Modifier » (le net, la date,
-   * le libellé) et « Supprimer » (tout redevient dû, le mois se règle à neuf).
-   * C'est ce qui empêche de verser deux fois le même mois.
+   * Tant qu'aucun règlement n'existe, l'écran prépare un versement pour les
+   * élèves du mois : les cases se figent une fois réglées, pour empêcher de
+   * verser deux fois la même part.
+   *
+   * Les retards de paiement, les séances libres et les retenues, eux, peuvent
+   * tout à fait arriver APRÈS ce premier règlement — un élève qui s'acquitte
+   * en retard, un élève de passage qui vient un autre jour, un acompte saisi
+   * la semaine suivante. Un mois « réglé » n'a donc plus le droit de RIEN
+   * recevoir de plus que par ces trois tables-là ; `canSettleExtra` dit s'il en
+   * reste, et l'écran garde alors un bouton pour les régler à part.
    */
   const locked = !!settlement;
+  const canSettleExtra =
+    locked &&
+    (board.arrears.length > 0 || board.passagers.length > 0 || board.deductions.some((d) => d.selectable));
 
   /** Ce que ce mois RESTE à devoir — ce qui reviendra sur le règlement suivant. */
   const stillOpen = money(
@@ -661,7 +669,12 @@ function MonthBoard({
       board.passagersTotal,
   );
 
-  const totals = boardTotals(board, { studentIds, arrearKeys, passagerIds, deductionIds });
+  const totals = boardTotals(board, {
+    studentIds: locked ? [] : studentIds,
+    arrearKeys,
+    passagerIds,
+    deductionIds,
+  });
   /** Les élèves du mois qui n'ont pas soldé leur mois — ceux qu'il faut relancer. */
   const unpaidRows = board.students.filter((r) => r.debt > 0);
 
@@ -756,7 +769,7 @@ function MonthBoard({
       addToast({
         type: "danger",
         title: "Rien à régler",
-        message: "Cochez au moins un élève, un arriéré ou une retenue.",
+        message: "Cochez au moins un élève, un arriéré, une séance libre ou une retenue.",
       });
       return;
     }
@@ -770,11 +783,14 @@ function MonthBoard({
       return;
     }
 
-    const picked = { studentIds, arrearKeys, passagerIds, deductionIds };
+    // Un mois déjà réglé ne renvoie plus rien pour sa table 1, même si l'état
+    // local en gardait la trace : seuls les retards, les séances libres et les
+    // retenues arrivées depuis peuvent encore faire l'objet d'un règlement.
+    const picked = { studentIds: locked ? [] : studentIds, arrearKeys, passagerIds, deductionIds };
     const frozen = freezeBoard(db, board, picked);
-    const chosenStudents = board.students.filter(
-      (r) => studentIds.includes(r.studentId) && !r.withheld,
-    );
+    const chosenStudents = locked
+      ? []
+      : board.students.filter((r) => studentIds.includes(r.studentId) && !r.withheld);
     const chosenArrears = board.arrears.filter((r) => arrearKeys.includes(r.key));
     const chosenPassagers = board.passagers.filter((r) => passagerIds.includes(r.id));
     const chosenDeductions = board.deductions.filter(
@@ -839,11 +855,16 @@ function MonthBoard({
         amount: totals.net,
         gross: totals.gross,
         method: "group",
-        months: monthSnapshot,
+        // Un complément ne réclame pas le mois : ce règlement-là l'a déjà fait,
+        // et c'est encore SON montant qui doit rester affiché comme « le »
+        // règlement de {monthCode} — un complément s'ajoute, il ne remplace pas.
+        months: locked ? [] : monthSnapshot,
         board: frozen,
         description:
           note.trim() ||
-          `Règlement ${emploi.title} · ${monthCode} — ${teacher.firstName} ${teacher.lastName}`,
+          (locked
+            ? `Complément ${emploi.title} · ${monthCode} — ${teacher.firstName} ${teacher.lastName}`
+            : `Règlement ${emploi.title} · ${monthCode} — ${teacher.firstName} ${teacher.lastName}`),
         expenseIds: chosenDeductions.filter((d) => d.kind === "expense").map((d) => d.id),
         acompteIds: chosenDeductions.filter((d) => d.kind === "acompte").map((d) => d.id),
         childDebtIds: chosenDeductions.filter((d) => d.kind === "child_debt").map((d) => d.id),
@@ -993,19 +1014,21 @@ function MonthBoard({
               {settlement.id.slice(0, 8).toUpperCase()}
             </span>
             <span className="block text-[11px] leading-relaxed text-muted">
-              Ce mois <strong className="text-ink">ne se règle plus</strong> : les tables
-              ci-dessous se lisent, elles ne se cochent pas. Pour corriger le net versé, la date ou
-              le libellé, utilisez <strong className="text-ink">Modifier</strong> ; pour tout
-              reprendre à zéro, <strong className="text-ink">Supprimer</strong> — le mois redevient
-              alors réglable.
+              Sa table 1 (les élèves du mois) <strong className="text-ink">ne se règle plus</strong> :
+              elle se lit, elle ne se coche plus. Pour corriger le net versé, la date ou le
+              libellé, utilisez <strong className="text-ink">Modifier</strong> ; pour tout reprendre
+              à zéro, <strong className="text-ink">Supprimer</strong> — le mois redevient alors
+              réglable.
             </span>
             {stillOpen > 0 && (
               <span className="mt-1 block rounded-lg border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] leading-relaxed text-warning">
                 <strong>{formatDA(stillOpen)}</strong> se sont libérés depuis ce versement (des
-                élèves ont payé en retard, ou des séances libres sont tombées ici). Ces parts
-                appartiennent à <strong>{monthCode}</strong> mais se rattrapent sur le{" "}
+                élèves ont payé en retard, ou des séances libres sont tombées ici). Un retard de
+                paiement appartient à <strong>{monthCode}</strong> mais se rattrape sur le{" "}
                 <strong>règlement suivant</strong>, dans sa table « Retards de paiement &amp;
-                séances libres » — jamais en repayant ce mois-ci.
+                séances libres ». Une séance libre ou une retenue, elles, restent attachées à{" "}
+                <strong>{monthCode}</strong> : cochez-les ci-dessous et utilisez «&nbsp;Régler le
+                complément&nbsp;» pour les verser, sans rouvrir les élèves déjà réglés.
               </span>
             )}
           </div>
@@ -1340,7 +1363,7 @@ function MonthBoard({
             <Clock className="h-3.5 w-3.5 text-success" /> 2a. Retards de paiement —{" "}
             {board.arrears.length} ligne(s)
           </strong>
-          {board.arrears.length > 0 && !locked && (
+          {board.arrears.length > 0 && (
             <Button
               size="sm"
               variant="outline"
@@ -1385,7 +1408,7 @@ function MonthBoard({
                         <input
                           type="checkbox"
                           checked={picked}
-                          disabled={locked}
+                          disabled={busy}
                           onChange={() =>
                             setArrearKeys((prev) =>
                               prev.includes(r.key)
@@ -1456,7 +1479,7 @@ function MonthBoard({
               l&apos;enseignant {formatDA(board.passagersTotal)}.
             </span>
           </div>
-          {board.passagers.length > 0 && !locked && (
+          {board.passagers.length > 0 && (
             <Button
               size="sm"
               variant="outline"
@@ -1500,7 +1523,7 @@ function MonthBoard({
                         <input
                           type="checkbox"
                           checked={picked}
-                          disabled={locked}
+                          disabled={busy}
                           onChange={() =>
                             setPassagerIds((prev) =>
                               prev.includes(r.id)
@@ -1576,7 +1599,7 @@ function MonthBoard({
               permet de vérifier qu&apos;on ne retient rien deux fois.
             </span>
           </div>
-          {board.deductions.some((d) => d.selectable) && !locked && (
+          {board.deductions.some((d) => d.selectable) && (
             <Button
               size="sm"
               variant="outline"
@@ -1615,7 +1638,7 @@ function MonthBoard({
                   <DeductionLine
                     key={d.id}
                     row={d}
-                    locked={locked}
+                    locked={busy}
                     checked={deductionIds.includes(d.id)}
                     onToggle={() =>
                       setDeductionIds((prev) =>
@@ -1708,22 +1731,34 @@ function MonthBoard({
           />
           <div className="flex items-center justify-between border-t-2 border-primary/40 pt-2">
             <strong className="text-sm text-ink">
-              {locked ? "NET VERSÉ À L'ENSEIGNANT" : "NET À VERSER À L'ENSEIGNANT"}
+              {locked
+                ? canSettleExtra
+                  ? "COMPLÉMENT À VERSER — séances libres & retenues"
+                  : "NET VERSÉ À L'ENSEIGNANT"
+                : "NET À VERSER À L'ENSEIGNANT"}
             </strong>
             <strong className="font-mono text-xl font-black text-primary">
-              {formatDA(locked ? settlement!.amount : totals.net)}
+              {formatDA(locked && !canSettleExtra ? settlement!.amount : totals.net)}
             </strong>
           </div>
-          {locked && settlement!.amount !== totals.net && (
+          {locked && (
             <p className="text-[10px] leading-relaxed text-muted">
-              Le net figé du règlement fait foi. Ce que les tables affichent aujourd&apos;hui
-              ({formatDA(totals.net)}) peut différer : des élèves ont payé depuis, ou des séances
-              libres sont tombées sur ce mois — cela se rattrape sur le règlement suivant.
+              {canSettleExtra
+                ? `Un second versement, distinct du règlement du ${formatDateFr(
+                    settlement!.paidAt.slice(0, 10),
+                  )} (${formatDA(
+                    settlement!.amount,
+                  )} nets) — les deux resteront listés séparément dans « Mes règlements reçus ».`
+                : settlement!.amount !== totals.net
+                  ? `Le net figé du règlement fait foi. Ce que les tables affichent aujourd'hui (${formatDA(
+                      totals.net,
+                    )}) peut différer : des élèves ont payé depuis.`
+                  : null}
             </p>
           )}
         </div>
 
-        {!locked && (
+        {(!locked || canSettleExtra) && (
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
               Libellé du règlement (optionnel)
@@ -1731,7 +1766,11 @@ function MonthBoard({
             <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder={`Règlement ${emploi.title} · ${monthCode}`}
+              placeholder={
+                locked
+                  ? `Complément ${emploi.title} · ${monthCode}`
+                  : `Règlement ${emploi.title} · ${monthCode}`
+              }
             />
           </div>
         )}
@@ -1740,25 +1779,33 @@ function MonthBoard({
           <Button variant="outline" onClick={printPreview} className="gap-1.5">
             <Printer className="h-4 w-4" /> Aperçu / imprimer
           </Button>
-          {/* UN MOIS RÉGLÉ N'A PLUS DE BOUTON DE VERSEMENT. Le seul moyen de
-              rejouer ce règlement est de le corriger ou de le supprimer, en
-              haut de l'écran — c'est ce qui rend un double paiement impossible. */}
-          {locked ? (
+          {/* LA TABLE 1 D'UN MOIS RÉGLÉ N'A PLUS DE BOUTON DE VERSEMENT — c'est
+              ce qui rend un double paiement des élèves impossible. Mais un
+              retard, une séance libre ou une retenue arrivés APRÈS ce
+              règlement restent, eux, payables : « Régler le complément » leur
+              ouvre un règlement à part, sans rouvrir les élèves déjà réglés. */}
+          {locked && (
             <span className="flex items-center gap-1.5 rounded-xl border border-success/40 bg-success/10 px-3 py-2 text-[11px] font-bold text-success">
               <ShieldCheck className="h-4 w-4" />
-              Mois réglé le {formatDateFr(settlement!.paidAt.slice(0, 10))} — utilisez
-              «&nbsp;Modifier&nbsp;» ou «&nbsp;Supprimer&nbsp;» pour y revenir
+              Élèves réglés le {formatDateFr(settlement!.paidAt.slice(0, 10))} — «&nbsp;Modifier&nbsp;»
+              ou «&nbsp;Supprimer&nbsp;» pour y revenir
             </span>
-          ) : (
+          )}
+          {(!locked || canSettleExtra) && (
             <Button
               variant="success"
               onClick={submit}
               disabled={busy}
               className="gap-1.5"
-              title="Enregistrer le règlement de ce mois"
+              title={
+                locked
+                  ? "Régler à part ce que ce mois doit encore — sans toucher aux élèves déjà réglés"
+                  : "Enregistrer le règlement de ce mois"
+              }
             >
               <Wallet className="h-4 w-4" />
-              Enregistrer le règlement — {formatDA(totals.net)}
+              {locked ? "Régler le complément" : "Enregistrer le règlement"} —{" "}
+              {formatDA(totals.net)}
             </Button>
           )}
         </div>
@@ -2026,11 +2073,13 @@ const DED_KIND: Record<BoardDeduction["kind"], { label: string; tone: Tone; icon
 function DeductionLine({
   row,
   checked,
-  locked,
+  locked: busy,
   onToggle,
 }: {
   row: BoardDeduction;
   checked: boolean;
+  /** un règlement est en train de s'enregistrer — pas « ce mois est déjà réglé » :
+   *  une retenue reste retenable même sur un mois dont la table 1 est figée. */
   locked: boolean;
   onToggle: () => void;
 }) {
@@ -2041,15 +2090,11 @@ function DeductionLine({
         <input
           type="checkbox"
           checked={checked && row.selectable}
-          disabled={locked || !row.selectable}
+          disabled={busy || !row.selectable}
           onChange={onToggle}
           className="h-4 w-4 disabled:opacity-30"
           title={
-            locked
-              ? "Ce mois a déjà été réglé"
-              : row.selectable
-                ? "Retenir cette ligne"
-                : "Déjà retenue par un règlement précédent"
+            row.selectable ? "Retenir cette ligne" : "Déjà retenue par un règlement précédent"
           }
         />
       </td>

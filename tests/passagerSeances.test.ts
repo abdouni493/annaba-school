@@ -3,7 +3,7 @@ import { useData } from "@/lib/store/data";
 import { buildSeed } from "@/tests/fixtures/seed";
 import { teacherEmplois } from "@/lib/teacherMonths";
 import { boardTotals, buildPayBoard, freezeBoard, monthTiles } from "@/lib/teacherPayBoard";
-import { independentTotals, passagersOn } from "@/lib/helpers";
+import { independentTotals, passagersOn, studentPassagerVisits } from "@/lib/helpers";
 
 /**
  * LES ÉLÈVES DE PASSAGE — une séance vendue à quelqu'un qui n'est pas inscrit.
@@ -298,5 +298,34 @@ describe("la séance libre sur la paie de l'enseignant", () => {
     expect(tiles[0].passagerCount).toBe(1);
     // L'école a tout gardé : la séance libre ne rapporte rien à l'enseignant.
     expect(tiles[0].passagers).toBe(0);
+  });
+});
+
+describe("la séance libre d'un élève déjà inscrit ailleurs, sur sa propre fiche", () => {
+  beforeEach(board);
+
+  it("reste rattachée à son historique, même sans solde ni inscription", async () => {
+    const [d1] = days(1);
+    // PAYER est inscrit ailleurs (SUB/SES) — il vient suivre une séance libre
+    // sur ce même emploi du temps sans s'y inscrire une seconde fois.
+    await useData.getState().createPassagerSeances({
+      sessionId: SES,
+      date: d1,
+      names: [],
+      price: 500,
+      schoolShare: 200,
+      studentId: PAYER,
+    });
+
+    const visits = studentPassagerVisits(useData.getState(), PAYER);
+    expect(visits).toHaveLength(1);
+    expect(visits[0].sessionId).toBe(SES);
+    expect(visits[0].date).toBe(d1);
+    // La part enseignant est bien due, pas encore réglée.
+    expect(visits[0].teacherPaid).toBe(false);
+  });
+
+  it("n'en montre aucune pour un élève qui n'en a jamais suivi", () => {
+    expect(studentPassagerVisits(useData.getState(), PAYER)).toHaveLength(0);
   });
 });
