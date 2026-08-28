@@ -67,7 +67,6 @@ import {
   teacherName,
 } from "@/lib/helpers";
 import {
-  AlertTriangle,
   ArrowDownLeft,
   ArrowUpRight,
   Calendar,
@@ -76,7 +75,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  Eraser,
   Filter,
   Hourglass,
   Receipt,
@@ -123,16 +121,7 @@ type CashKind = "deposit" | "withdraw" | "expense";
 
 function AdminDashboard() {
   const db = useData();
-  const {
-    sessions,
-    attendance,
-    students,
-    subscriptions,
-    classes,
-    cashMove,
-    push,
-    clearSubscriptionSolds,
-  } = db;
+  const { sessions, attendance, students, subscriptions, classes, cashMove, push } = db;
   const { addToast } = useToast();
   const can = useCan("dashboard");
   const { user } = useSession();
@@ -152,11 +141,6 @@ function AdminDashboard() {
   const [situationOpen, setSituationOpen] = useState(false);
   /** the emploi the create screen arrives pre-ticked on */
   const [createSubIds, setCreateSubIds] = useState<string[]>([]);
-  /** « Effacer les soldes » : l'écran de confirmation, et le temps du travail */
-  const [wipeOpen, setWipeOpen] = useState(false);
-  const [wiping, setWiping] = useState(false);
-  /** le mot à recopier : on n'efface pas une caisse d'un clic distrait */
-  const [wipeWord, setWipeWord] = useState("");
 
   // ---- search & filters (they sweep EVERY emploi du temps, not just today) --
   const [search, setSearch] = useState("");
@@ -344,61 +328,6 @@ function AdminDashboard() {
 
   const openSession = sessions.find((s) => s.id === openSessionId) ?? null;
   const openDow = JS_DAYS[new Date(`${openDate}T12:00:00`).getDay()];
-
-  /** Le tarif de l'emploi ouvert — c'est LUI que les soldes créditent. */
-  const openSub = openSession
-    ? subscriptions.find((x) => x.sessionId === openSession.id && !x.archivedAt)
-    : undefined;
-
-  /**
-   * CE QUE « EFFACER LES SOLDES » VA EMPORTER SUR L'EMPLOI OUVERT.
-   *
-   * Compté AVANT le clic, pour que l'écran de confirmation annonce des nombres
-   * plutôt qu'une promesse : combien d'élèves sont concernés, combien de
-   * versements disparaissent, la somme qui cesse d'avoir été encaissée, et
-   * l'état des cagnottes — ce qui reste d'avance, ce qui est déjà en dette.
-   */
-  const wipePreview = useMemo(() => {
-    if (!openSub) return { students: 0, payments: 0, amount: 0, credit: 0, debt: 0 };
-    const rows = db.enrollments.filter((e) => e.subscriptionId === openSub.id);
-    const paid = db.payments.filter((p) => p.subscriptionId === openSub.id);
-    return {
-      students: new Set([...rows.map((e) => e.studentId), ...paid.map((p) => p.studentId)]).size,
-      payments: paid.length,
-      amount: paid.reduce((t, p) => t + Math.max(0, Math.round(p.amountPaid || 0)), 0),
-      credit: rows.reduce((t, e) => t + Math.max(0, e.balance ?? 0), 0),
-      debt: rows.reduce((t, e) => t + Math.max(0, -(e.balance ?? 0)), 0),
-    };
-  }, [db.enrollments, db.payments, openSub]);
-
-  /**
-   * Le clic qui remet l'emploi du temps à zéro d'argent. Il n'est offert qu'à
-   * la direction : un travailleur ne peut pas effacer ce qu'une caisse a
-   * encaissé, même par erreur de manipulation.
-   */
-  const wipeSolds = async () => {
-    if (!openSub || !openSession) return;
-    setWiping(true);
-    const res = await clearSubscriptionSolds(openSub.id);
-    setWiping(false);
-    setWipeOpen(false);
-    if (!res.ok) {
-      addToast({
-        type: "danger",
-        title: "Effacement impossible",
-        message: "Cet emploi du temps n'a pas de tarif : il ne porte donc aucun solde.",
-      });
-      return;
-    }
-    addToast({
-      type: "success",
-      title: "Soldes effacés",
-      message:
-        `${sessionTitle(openSession)} — ${res.payments ?? 0} versement(s) retirés, ` +
-        `${formatDA(res.amount ?? 0)} annulés. ${res.students ?? 0} élève(s) redoivent la ` +
-        `totalité de leur scolarité sur cet emploi du temps.`,
-    });
-  };
 
   const openSheet = (s: ScheduleSession, on: string = date) => {
     // Un travailleur à qui l'on n'a pas ouvert la feuille de présence peut voir
@@ -1074,36 +1003,17 @@ function AdminDashboard() {
       {openSession && (
         <Modal open onClose={() => setOpenSessionId(null)} title="" full>
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between">
               <Badge tone="primary" className="gap-1">
                 <Calendar className="h-3 w-3" />
                 {DAY_LABELS_FR[openDow]} {formatDateFr(openDate)}
               </Badge>
-              <div className="flex items-center gap-2">
-                {/* REMETTRE CET EMPLOI DU TEMPS À ZÉRO D'ARGENT.
-                    Réservé à la direction, et jamais sans confirmation : ce
-                    bouton efface des encaissements, il ne les corrige pas. */}
-                {isAdmin && openSub && (
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    onClick={() => {
-                      setWipeWord("");
-                      setWipeOpen(true);
-                    }}
-                    className="gap-1.5"
-                    title="Effacer tous les soldes versés sur cet emploi du temps — irréversible"
-                  >
-                    <Eraser className="h-3.5 w-3.5" /> Effacer les soldes
-                  </Button>
-                )}
-                <button
-                  onClick={() => setOpenSessionId(null)}
-                  className="rounded-lg p-1.5 text-muted hover:bg-danger/10 hover:text-danger"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+              <button
+                onClick={() => setOpenSessionId(null)}
+                className="rounded-lg p-1.5 text-muted hover:bg-danger/10 hover:text-danger"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
             <PresenceSheet
               session={openSession}
@@ -1117,115 +1027,6 @@ function AdminDashboard() {
                 openCreateFor(sub ? [sub.id] : []);
               }}
             />
-          </div>
-        </Modal>
-      )}
-
-      {/* EFFACER LES SOLDES DE L'EMPLOI DU TEMPS OUVERT.
-          Le pendant, pour un seul emploi, du script de purge de `supabase/`.
-          L'écran annonce des nombres, pas une promesse, et demande de recopier
-          un mot : après le clic, plus rien ne se rattrape. */}
-      {wipeOpen && openSession && openSub && (
-        <Modal
-          open
-          onClose={() => {
-            if (!wiping) setWipeOpen(false);
-          }}
-          title="Effacer les soldes de cet emploi du temps"
-        >
-          <div className="space-y-3">
-            <div className="rounded-xl bg-primary-50/60 p-3">
-              <strong className="block text-sm text-ink">{sessionTitle(openSession)}</strong>
-              <span className="text-[11px] text-muted">
-                Groupe {groupName(db, openSession.groupId)} · {formatDays(openSession.days)} ·{" "}
-                {teacherName(db, openSession.teacherId)}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-line bg-canvas/50 p-2.5">
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-muted">
-                  Élèves
-                </span>
-                <strong className="font-mono text-lg text-ink">{wipePreview.students}</strong>
-              </div>
-              <div className="rounded-xl border border-line bg-canvas/50 p-2.5">
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-muted">
-                  Versements
-                </span>
-                <strong className="font-mono text-lg text-ink">{wipePreview.payments}</strong>
-              </div>
-              <div className="rounded-xl border border-danger/40 bg-danger/10 p-2.5">
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-muted">
-                  Encaissé
-                </span>
-                <strong className="font-mono text-lg text-danger">
-                  {formatDA(wipePreview.amount)}
-                </strong>
-              </div>
-            </div>
-
-            <p className="text-xs leading-relaxed text-ink">
-              Chaque élève de cet emploi du temps redeviendra redevable de la{" "}
-              <strong>totalité de sa scolarité</strong> dessus : plus un dinar versé, plus une
-              séance payée d&apos;avance, plus un crédit.
-              {wipePreview.credit > 0 && (
-                <>
-                  {" "}
-                  Les <strong>{formatDA(wipePreview.credit)}</strong> encore en avance sur les
-                  cagnottes partent avec.
-                </>
-              )}
-              {wipePreview.debt > 0 && (
-                <>
-                  {" "}
-                  Les <strong>{formatDA(wipePreview.debt)}</strong> déjà en dette restent dus.
-                </>
-              )}
-            </p>
-
-            <ul className="space-y-1 rounded-xl border border-line bg-canvas/50 p-3 text-[11px] text-muted">
-              <li>• Les versements de cet emploi et leur reflet en caisse sont supprimés.</li>
-              <li>• Les cagnottes retombent à zéro, sans séance réglée d&apos;avance.</li>
-              <li>• Les avances de l&apos;école sur cet emploi cessent d&apos;être réclamées.</li>
-              <li>
-                • Les scolarités portées sur le salaire d&apos;un père et pas encore retenues sont
-                rendues à l&apos;enfant.
-              </li>
-              <li className="text-ink">
-                • <strong>Les présences ne bougent pas</strong> : l&apos;élève est bien venu, et
-                l&apos;enseignant a bien travaillé.
-              </li>
-            </ul>
-
-            <div className="rounded-xl border border-danger/40 bg-danger/10 p-3">
-              <span className="flex items-center gap-1.5 text-[11px] font-bold text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                Irréversible. Recopiez EFFACER pour confirmer.
-              </span>
-              <Input
-                autoFocus
-                value={wipeWord}
-                onChange={(e) => setWipeWord(e.target.value)}
-                placeholder="EFFACER"
-                className="mt-2"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 border-t border-line pt-3">
-              <Button variant="outline" onClick={() => setWipeOpen(false)} disabled={wiping}>
-                Annuler
-              </Button>
-              <Button
-                variant="danger"
-                onClick={wipeSolds}
-                disabled={wiping || wipeWord.trim().toUpperCase() !== "EFFACER"}
-                className="gap-1.5"
-              >
-                <Eraser className="h-4 w-4" />
-                {wiping ? "Effacement…" : "Effacer les soldes"}
-              </Button>
-            </div>
           </div>
         </Modal>
       )}
