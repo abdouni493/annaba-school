@@ -43,6 +43,7 @@ import {
   ChevronRight,
   History,
   Search,
+  Ticket,
   UserMinus,
   Wallet,
 } from "lucide-react";
@@ -56,6 +57,7 @@ import {
   formatDateFr,
   formatDays,
   groupName,
+  independentTotals,
   moduleName as moduleNameOf,
   monthCodeLabel,
   registrationNumberOf,
@@ -69,6 +71,7 @@ import {
   studentListPrice,
   studentMatches,
   studentName,
+  studentPassagerVisits,
   studentSubscriptionHistory,
   teacherName,
   todayIso,
@@ -265,6 +268,18 @@ export function StudentSituationModal({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [student, month, db.subscriptions, db.sessions, db.students, db.attendance, db.payments, db.enrollments]);
+
+  /**
+   * SES SÉANCES LIBRES — celles suivies SANS être inscrit sur l'emploi du
+   * temps qui les portait. Elles n'ont ni solde ni mois, donc aucune ligne
+   * du tableau ci-dessus ne les montre ; c'est ici, sur SA fiche, qu'elles
+   * doivent rester lisibles.
+   */
+  const passagerVisits = useMemo(
+    () => (student ? studentPassagerVisits(db, student.id) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [student, db.independent],
+  );
 
   /**
    * CE QUE LE TABLEAU MONTRE VRAIMENT : tous ses emplois du temps par défaut,
@@ -793,6 +808,62 @@ export function StudentSituationModal({
                   calendrier.
                 </span>
               </div>
+
+              {/* ---- ses séances libres : suivies sans y être inscrit ------
+                  Elles n'ouvrent ni solde ni ligne dans le tableau ci-dessus —
+                  c'est le prix d'être « juste venu une fois » — mais sa fiche
+                  doit pouvoir les montrer, sinon elles n'apparaissent nulle
+                  part pour qui cherche « qu'est-ce qu'il a suivi ce mois-ci ». */}
+              {passagerVisits.length > 0 && (
+                <div className="overflow-hidden rounded-2xl border border-primary/25">
+                  <div className="flex items-center gap-1.5 bg-primary-50/60 p-3">
+                    <Ticket className="h-4 w-4 text-primary" />
+                    <strong className="text-xs text-ink">
+                      Séances libres suivies ({passagerVisits.length})
+                    </strong>
+                    <span className="text-[10px] text-muted">
+                      — suivies sans être inscrit sur l&apos;emploi du temps qui les portait :
+                      aucun solde, aucune place sur la feuille du mois prochain.
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto bg-surface">
+                    <table className="w-full min-w-[560px] text-[11px]">
+                      <thead className="bg-canvas/60">
+                        <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                          <th className="px-2 py-2">Date</th>
+                          <th className="px-2 py-2">Emploi du temps</th>
+                          <th className="px-2 py-2">Enseignant</th>
+                          <th className="px-2 py-2 text-right">Prix payé</th>
+                          <th className="px-2 py-2 text-center">Paie enseignant</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {passagerVisits.map((ind) => {
+                          const session = db.sessions.find((s) => s.id === ind.sessionId);
+                          const label =
+                            session?.title || moduleNameOf(db, session?.moduleId ?? "") || "—";
+                          const t = independentTotals(ind);
+                          return (
+                            <tr key={ind.id} className="border-t border-line/60">
+                              <td className="px-2 py-2 text-ink">{formatDateFr(ind.date)}</td>
+                              <td className="px-2 py-2 text-ink">{label}</td>
+                              <td className="px-2 py-2 text-muted">
+                                {teacherName(db, ind.teacherId ?? "")}
+                              </td>
+                              <td className="px-2 py-2 text-right font-mono">{formatDA(t.price)}</td>
+                              <td className="px-2 py-2 text-center">
+                                <Badge tone={ind.teacherPaid ? "success" : "warning"} className="text-[9px]">
+                                  {ind.teacherPaid ? "réglée" : "en attente"}
+                                </Badge>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </>
           )}
 

@@ -689,6 +689,27 @@ interface MonthInput {
   currentIndex: number;
 }
 
+/**
+ * Un règlement existe-t-il déjà pour ce mois de cet emploi du temps ?
+ *
+ * C'est la même question que `settledMonthCodes` (l'écran de paie) pose pour
+ * savoir si une pastille affiche « Réglé » — posée ici pour que `alreadySettled`
+ * réponde pareil, au lieu de ne regarder que les parts individuellement payées.
+ */
+function monthHasSettlement(
+  db: Database,
+  teacherId: string | undefined,
+  sessionId: string,
+  code: string,
+): boolean {
+  if (!teacherId) return false;
+  return db.teacherPayments.some((p) => {
+    if (p.teacherId !== teacherId) return false;
+    if ((p.months ?? []).some((m) => m.sessionId === sessionId && m.monthCode === code)) return true;
+    return !!p.board && p.board.sessionId === sessionId && p.board.monthCode === code;
+  });
+}
+
 function buildMonth(db: Database, input: MonthInput): TeacherMonth {
   const { session, sub, size, listPrice, roster, index, currentIndex, dues, dates } = input;
   const code = `M${index + 1}`;
@@ -808,7 +829,15 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
   const open = openDues.reduce((s, d) => s + d.amount, 0);
   const withheld = openDues.filter((d) => d.withheld).reduce((s, d) => s + d.amount, 0);
 
-  const alreadySettled = settled > 0;
+  // Un mois est « déjà réglé » soit parce qu'au moins une part de sa table 1 a
+  // été cochée et payée (le cas courant), soit parce qu'un règlement existe
+  // déjà pour lui SANS avoir payé aucune part — un mois où le seul élève
+  // devait tout retenir, et où le règlement n'a soldé qu'une retenue, un
+  // arriéré d'un autre mois, ou une séance libre. Sans ce second signal, un
+  // tel mois reste « pas encore réglé » pour toujours à ses propres yeux, alors
+  // que sa pastille affiche « Réglé » : la part qui s'y débloque ensuite ne
+  // devient jamais un arriéré, elle disparaît.
+  const alreadySettled = settled > 0 || monthHasSettlement(db, session.teacherId, session.id, code);
   const month: TeacherMonth = {
     key: `${session.id}|${code}`,
     sessionId: session.id,
