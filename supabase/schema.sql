@@ -1267,6 +1267,11 @@ create table if not exists public.independent_sessions (
   end_time      text,
   created_at    text,
   teacher_paid  boolean not null default false,
+  -- La direction a-t-elle vu passer cette séance ? Une séance libre vendue
+  -- depuis la feuille de présence d'un groupe fait entrer de l'argent sans
+  -- qu'aucun reçu ne parte : elle remonte donc dans la cloche du tableau de
+  -- bord, comme un versement, jusqu'à ce qu'elle y soit imprimée ou classée.
+  alert_read    boolean not null default false,
   created_by         text,                       -- qui a écrit la ligne
   created_by_name    text,                       -- son nom, recopié à l'écriture
   created_by_role    text

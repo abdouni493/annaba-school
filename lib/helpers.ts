@@ -2094,16 +2094,33 @@ export function independentTotals(ind: {
   return { price, school, teacher: money(price - school), unsplit };
 }
 
-/** Les séances libres d'un créneau, un jour donné — celles qui s'affichent sur
- *  la feuille de présence de CETTE séance-là, et sur aucune autre. */
+/**
+ * Les séances libres d'un créneau, un jour donné — celles qui s'affichent sur
+ * la feuille de présence de CETTE séance-là, et sur aucune autre.
+ *
+ * Un ÉLÈVE DÉJÀ INSCRIT peut venir suivre une séance de cet emploi du temps
+ * sans y être inscrit : il paie sa séance et figure sur cette feuille comme
+ * n'importe quel passager. Sa ligne porte alors un `studentId` — c'est la SEULE
+ * différence, et elle sert à le nommer, pas à l'écarter.
+ */
 export function passagersOn(
   db: Database,
   sessionId: string,
   date: string,
 ): IndependentSession[] {
   return db.independent
-    .filter((i) => i.sessionId === sessionId && !i.studentId && i.date === date)
+    .filter((i) => i.sessionId === sessionId && i.date === date)
     .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+}
+
+/** Qui a suivi cette séance libre : l'élève inscrit qu'elle nomme, ou le
+ *  passager sans fiche — « Passager » quand on n'a même pas retenu son nom. */
+export function passagerLabel(db: Database, ind: IndependentSession): string {
+  if (ind.studentId) {
+    const student = db.students.find((s) => s.id === ind.studentId);
+    if (student) return studentName(student);
+  }
+  return ind.passagerName || "Passager";
 }
 
 /** The séances libres de groupe of one teacher, most recent first. */

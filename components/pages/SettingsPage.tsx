@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useData } from "@/lib/store/data";
+import { useEffect, useRef, useState } from "react";
+import { useData, type Database as DataDatabase } from "@/lib/store/data";
+import {
+  countRows,
+  isRestorableDump,
+  restoreBackup,
+  type RestoreProgress,
+  type RestoreReport,
+} from "@/lib/supabase/restore";
 import { useSession } from "@/lib/store/session";
 import { uploadImage } from "@/lib/accounts/uploadImage";
 import { changeOwnPassword } from "@/lib/accounts/users";
@@ -27,7 +34,11 @@ import {
   Globe,
   Image,
   Coins,
-  MessageCircle
+  MessageCircle,
+  CheckCircle2,
+  FileJson,
+  Loader2,
+  X,
 } from "lucide-react";
 import { WhatsAppSettingsPanel } from "@/components/whatsapp/WhatsAppSettingsPanel";
 
@@ -35,7 +46,7 @@ import { useCan } from "@/lib/usePermissions";
 export function SettingsPage() {
   const can = useCan("settings");
   const dataStore = useData();
-  const { school, modules, moduleAbsenceRules, setModuleAbsenceRule, updateSchool, restoreState } = dataStore;
+  const { school, modules, moduleAbsenceRules, setModuleAbsenceRule, updateSchool } = dataStore;
   const sessionUser = useSession((s) => s.user);
   const updateUser = useSession((s) => s.updateUser);
   const [logoUploading, setLogoUploading] = useState(false);
@@ -109,9 +120,23 @@ export function SettingsPage() {
     if (sessionUser?.name) setAdminName(sessionUser.name);
   }, [sessionUser?.name]);
 
-  // Backup/Restore State
-  const [restoreJsonText, setRestoreJsonText] = useState("");
+  // ---- Sauvegarde & restauration ------------------------------------------
+  /**
+   * LE FICHIER, PUIS SEULEMENT LE FICHIER.
+   *
+   * La restauration se faisait en collant le JSON dans une zone de texte : une
+   * sauvegarde d'école pèse plusieurs mégaoctets, et aucun navigateur ne colle
+   * ça sans se figer. On dépose donc le fichier — glissé ou choisi — il est lu,
+   * compté, et ce qu'il contient s'affiche AVANT qu'une seule ligne parte.
+   */
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreDump, setRestoreDump] = useState<Partial<DataDatabase> | null>(null);
   const [restoreError, setRestoreError] = useState("");
+  const [restoreReading, setRestoreReading] = useState(false);
+  const [restoreProgress, setRestoreProgress] = useState<RestoreProgress | null>(null);
+  const [restoreReport, setRestoreReport] = useState<RestoreReport | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const handleSaveSchool = () => {
     if (!schoolName.trim()) {
@@ -181,24 +206,55 @@ export function SettingsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleRestoreBackup = () => {
+  /**
+   * LIRE LE FICHIER DÉPOSÉ — et ne rien écrire encore.
+   *
+   * Tant que le contenu n'est pas lu et reconnu, le bouton de restauration
+   * reste fermé : on ne lance pas un écrasement de base sur un fichier qu'on
+   * n'a pas ouvert.
+   */
+  const readRestoreFile = async (file: File) => {
+    setRestoreError("");
+    setRestoreReport(null);
+    setRestoreDump(null);
+    setRestoreFile(file);
+    setRestoreReading(true);
     try {
-      setRestoreError("");
-      if (!restoreJsonText.trim()) {
-        setRestoreError("Veuillez coller le contenu JSON de sauvegarde.");
+      const text = await file.text();
+      const parsed: unknown = JSON.parse(text);
+      if (!isRestorableDump(parsed)) {
+        setRestoreError(
+          "Ce fichier n'est pas une sauvegarde de l'application : il ne contient ni l'établissement ni la liste des élèves.",
+        );
         return;
       }
-      const parsed = JSON.parse(restoreJsonText);
-      if (!parsed.school || !parsed.students) {
-        setRestoreError("Format JSON invalide. Les tables clés de la structure de base sont manquantes.");
-        return;
-      }
-
-      restoreState(parsed);
-      setRestoreJsonText("");
-    } catch (e: any) {
-      setRestoreError(`Erreur lors de l'analyse du JSON : ${e.message}`);
+      setRestoreDump(parsed);
+    } catch (e) {
+      setRestoreError(
+        `Fichier illisible : ${e instanceof Error ? e.message : "format JSON invalide"}.`,
+      );
+    } finally {
+      setRestoreReading(false);
     }
+  };
+
+  const clearRestoreFile = () => {
+    setRestoreFile(null);
+    setRestoreDump(null);
+    setRestoreError("");
+    setRestoreReport(null);
+    if (restoreInputRef.current) restoreInputRef.current.value = "";
+  };
+
+  /** Le lancement : table par table, et l'écran suit. */
+  const handleRestoreBackup = async () => {
+    if (!restoreDump || restoreProgress) return;
+    setRestoreError("");
+    setRestoreReport(null);
+    const report = await restoreBackup(restoreDump, setRestoreProgress);
+    setRestoreProgress(null);
+    setRestoreReport(report);
+    if (!report.ok) setRestoreError(report.error ?? "La restauration s'est interrompue.");
   };
 
   return (
@@ -726,29 +782,208 @@ export function SettingsPage() {
                   </div>
 
                   <div className="space-y-3">
-                    <label className="block text-xs font-semibold text-muted">Contenu JSON de sauvegarde</label>
-                    <textarea
-                      value={restoreJsonText}
-                      onChange={(e) => setRestoreJsonText(e.target.value)}
-                      placeholder='Coller le JSON ici... {"school": {...}, "students": [...]}'
-                      rows={6}
-                      className="w-full rounded-2xl border border-line bg-canvas p-4 font-mono text-[10px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                    {/* ---- 1. LE FICHIER : déposé ou choisi ----------------- */}
+                    <input
+                      ref={restoreInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void readRestoreFile(file);
+                      }}
                     />
 
+                    {!restoreFile ? (
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDragging(true);
+                        }}
+                        onDragLeave={() => setDragging(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setDragging(false);
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) void readRestoreFile(file);
+                        }}
+                        onClick={() => restoreInputRef.current?.click()}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") restoreInputRef.current?.click();
+                        }}
+                        className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${
+                          dragging
+                            ? "border-primary bg-primary-50/60"
+                            : "border-line bg-canvas/40 hover:border-primary hover:bg-primary-50/30"
+                        }`}
+                      >
+                        <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-50">
+                          <Upload className="h-5 w-5 text-primary" />
+                        </span>
+                        <strong className="text-xs font-bold text-ink">
+                          Déposez ici votre fichier de sauvegarde
+                        </strong>
+                        <span className="text-[11px] text-muted">
+                          ou cliquez pour le choisir — le <code className="font-mono">.json</code>{" "}
+                          exporté par le bouton ci-dessus
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-canvas/40 p-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50">
+                            {restoreReading ? (
+                              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            ) : (
+                              <FileJson className="h-5 w-5 text-primary" />
+                            )}
+                          </span>
+                          <div className="min-w-0">
+                            <strong className="block truncate text-xs font-bold text-ink">
+                              {restoreFile.name}
+                            </strong>
+                            <span className="block text-[10px] text-muted">
+                              {(restoreFile.size / 1024 / 1024).toFixed(2)} Mo
+                              {restoreDump
+                                ? ` · ${countRows(restoreDump).toLocaleString("fr-FR")} ligne(s) · ${
+                                    restoreDump.students?.length ?? 0
+                                  } élève(s)`
+                                : restoreReading
+                                  ? " · lecture en cours…"
+                                  : ""}
+                            </span>
+                          </div>
+                        </div>
+                        {!restoreProgress && (
+                          <button
+                            onClick={clearRestoreFile}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                            title="Retirer ce fichier"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ---- 2. CE QUE LE FICHIER CONTIENT -------------------- */}
+                    {restoreDump && !restoreProgress && !restoreReport && (
+                      <div className="rounded-2xl border border-line bg-surface p-3">
+                        <span className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                          Ce qui sera remis en place
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(
+                            [
+                              ["Élèves", restoreDump.students?.length],
+                              ["Emplois du temps", restoreDump.sessions?.length],
+                              ["Enseignants", restoreDump.teachers?.length],
+                              ["Inscriptions", restoreDump.enrollments?.length],
+                              ["Versements", restoreDump.payments?.length],
+                              ["Présences", restoreDump.attendance?.length],
+                              ["Caisse", restoreDump.cash?.length],
+                            ] as const
+                          )
+                            .filter(([, n]) => typeof n === "number")
+                            .map(([label, n]) => (
+                              <span
+                                key={label}
+                                className="rounded-lg border border-line bg-canvas/60 px-2 py-1 text-[10px] text-muted"
+                              >
+                                {label} <strong className="font-mono text-ink">{n}</strong>
+                              </span>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ---- 3. LE TRAITEMENT, TABLE PAR TABLE ---------------- */}
+                    {restoreProgress && (
+                      <div className="space-y-2 rounded-2xl border border-primary/30 bg-primary-50/40 p-4">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                          <strong className="text-xs font-bold text-ink">
+                            {restoreProgress.phase === "clear"
+                              ? "Nettoyage de la base"
+                              : "Écriture des données"}
+                          </strong>
+                          <span className="ms-auto font-mono text-[10px] text-muted">
+                            {restoreProgress.step} / {restoreProgress.total}
+                          </span>
+                        </div>
+
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-surface">
+                          <div
+                            className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                            style={{
+                              width: `${Math.round(
+                                (restoreProgress.step / Math.max(1, restoreProgress.total)) * 100,
+                              )}%`,
+                            }}
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="truncate font-mono text-[11px] text-ink">
+                            {restoreProgress.label}
+                          </span>
+                          <span className="font-mono text-[10px] text-muted">
+                            {restoreProgress.rowsWritten.toLocaleString("fr-FR")} ligne(s) écrites
+                          </span>
+                        </div>
+                        <p className="text-[10px] leading-relaxed text-muted">
+                          Ne fermez pas cette page : chaque table part vers la base et attend sa
+                          confirmation avant que la suivante ne commence.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* ---- 4. LE COMPTE RENDU ------------------------------- */}
+                    {restoreReport?.ok && (
+                      <div className="rounded-2xl border border-success/40 bg-success/10 p-4">
+                        <strong className="flex items-center gap-2 text-xs font-bold text-success">
+                          <CheckCircle2 className="h-4 w-4" /> Restauration terminée
+                        </strong>
+                        <p className="mt-1 text-[11px] leading-relaxed text-ink">
+                          {restoreReport.rows.toLocaleString("fr-FR")} ligne(s) remises en place sur{" "}
+                          {restoreReport.collections} table(s).
+                          {restoreReport.removed > 0 && (
+                            <>
+                              {" "}
+                              {restoreReport.removed.toLocaleString("fr-FR")} ligne(s) absentes de la
+                              sauvegarde ont été retirées.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    )}
+
                     {restoreError && (
-                      <div className="p-3 bg-danger/10 border border-danger/20 rounded-xl text-danger flex items-center gap-2 text-xs">
+                      <div className="flex items-center gap-2 rounded-xl border border-danger/20 bg-danger/10 p-3 text-xs text-danger">
                         <AlertTriangle className="h-4 w-4 shrink-0" />
                         <span>{restoreError}</span>
                       </div>
                     )}
 
-                    <div className="pt-2 flex justify-end">
+                    <div className="flex justify-end gap-2 pt-2">
+                      {restoreReport?.ok && (
+                        <Button
+                          onClick={clearRestoreFile}
+                          variant="outline"
+                          className="px-5 py-2.5 rounded-xl text-xs font-bold border-line text-ink"
+                        >
+                          Terminer
+                        </Button>
+                      )}
                       <Button
                         onClick={handleRestoreBackup}
+                        disabled={!restoreDump || !!restoreProgress || restoreReading}
                         variant="outline"
                         className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold border-line hover:bg-primary-50 text-ink"
                       >
-                        Lancer la Restauration
+                        {restoreProgress ? "Restauration en cours…" : "Lancer la Restauration"}
                       </Button>
                     </div>
                   </div>

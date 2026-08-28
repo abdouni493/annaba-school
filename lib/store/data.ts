@@ -909,6 +909,14 @@ interface DataActions {
     date?: string,
   ) => void;
   updateSchool: (updatedFields: Partial<School>) => void;
+  /**
+   * Repose un état complet dans le magasin, en une seule écriture.
+   *
+   * La restauration d'une sauvegarde ne passe PAS par là : elle rejoue le
+   * fichier table par table (`lib/supabase/restore.ts`) pour respecter l'ordre
+   * des clés étrangères et pour que l'écran puisse dire où elle en est. Cette
+   * action reste le geste brut, sans étape ni compte rendu.
+   */
   restoreState: (dump: Partial<Database>) => void;
   reset: () => void;
 }
@@ -3287,7 +3295,6 @@ export const useData = create<DataStore>((set, get) => ({
     );
     const settledPassagers = db.independent.filter(
       (i) =>
-        !i.studentId &&
         !i.teacherPaid &&
         (byId
           ? passagerIdSet.has(i.id)
@@ -4088,6 +4095,10 @@ export const useData = create<DataStore>((set, get) => ({
     const when = date.length === 10 ? `${date}T12:00:00.000Z` : date;
 
     const rows: IndependentSession[] = list.map((name, i) => ({
+      // Signée comme tout le reste : c'est cette signature que la cloche du
+      // tableau de bord lit pour dire à la direction qu'un travailleur a
+      // encaissé une séance libre sans qu'elle l'ait vu passer.
+      ...authorStamp(),
       id: uid("ind"),
       studentId: studentId || undefined,
       passagerName: studentId ? undefined : name || "Passager",
@@ -4101,6 +4112,7 @@ export const useData = create<DataStore>((set, get) => ({
       endTime: endTime || times.endTime,
       createdAt: new Date(Date.parse(nowIso) + i).toISOString(),
       teacherPaid: false,
+      alertRead: false,
     }));
 
     const total = money(split.price * rows.length);
@@ -4113,6 +4125,7 @@ export const useData = create<DataStore>((set, get) => ({
           ? [
               ...state.cash,
               {
+                ...authorStamp(),
                 id: cashId,
                 type: "student_payment",
                 amount: total,

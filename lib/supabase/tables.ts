@@ -314,8 +314,9 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     table: "independent_sessions", pk: "id", pkField: "id",
     fields: ["id", "studentId", "passagerName", "itemLabel", "price", "date", "sessionId",
              "startTime", "endTime", "createdAt", "teacherPaid", "schoolShare", "teacherId",
+             "alertRead",
              "createdBy", "createdByName", "createdByRole"],
-    notNull: { teacherPaid: false },
+    notNull: { teacherPaid: false, alertRead: false },
   },
   groupSeances: {
     table: "group_seances", pk: "id", pkField: "id",

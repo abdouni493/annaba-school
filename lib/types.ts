@@ -1314,6 +1314,15 @@ export interface IndependentSession extends Authored {
   /** l'enseignant que cette séance paie — figé à la création, parce que
    *  l'emploi du temps peut changer de titulaire après coup */
   teacherId?: string;
+  /**
+   * LA DIRECTION A-T-ELLE VU PASSER CETTE SÉANCE ?
+   *
+   * Une séance libre saisie depuis la feuille de présence d'un groupe fait
+   * entrer de l'argent en caisse sans qu'aucun reçu ne parte de lui-même. Elle
+   * remonte donc dans la cloche du tableau de bord — au même titre qu'un
+   * versement — jusqu'à ce que l'administration l'imprime ou la classe.
+   */
+  alertRead?: boolean;
 }
 
 /**

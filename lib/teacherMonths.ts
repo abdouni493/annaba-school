@@ -48,6 +48,7 @@ import {
   moduleName,
   independentTotals,
   monthlyPriceOf,
+  passagerLabel,
   netPriceFor,
   registrationNumberOf,
   salleName,
@@ -880,7 +881,9 @@ function monthAlerts(m: TeacherMonth): TeacherAlert[] {
 }
 
 /** Les passagers d'une séance libre tombent dans le mois dont ils occupent la
- *  fenêtre de dates ; à défaut, dans le mois en cours. */
+ *  fenêtre de dates ; à défaut, dans le mois en cours. Un élève DÉJÀ INSCRIT
+ *  venu suivre une séance libre de ce créneau compte comme les autres : sa
+ *  séance a été payée, elle doit donc rapporter à l'enseignant. */
 function attachPassagers(
   db: Database,
   session: ScheduleSession,
@@ -888,7 +891,7 @@ function attachPassagers(
   currentIndex: number,
 ): void {
   const rows: IndependentSession[] = db.independent.filter(
-    (i) => i.sessionId === session.id && !i.studentId && !i.teacherPaid,
+    (i) => i.sessionId === session.id && !i.teacherPaid,
   );
   for (const ind of rows) {
     const idx = months.findIndex(
@@ -899,7 +902,7 @@ function attachPassagers(
     const split = independentTotals(ind);
     target.passagers.push({
       id: ind.id,
-      name: ind.passagerName ?? "Passager",
+      name: passagerLabel(db, ind),
       dateKey: ind.date,
       price: split.price,
       schoolShare: split.school,

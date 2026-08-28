@@ -5,6 +5,7 @@ import { setCurrentActor, useData } from "@/lib/store/data";
 import { buildSeed } from "@/tests/fixtures/seed";
 import { TABLES, toColumn, toRow } from "@/lib/supabase/tables";
 import { accessRightsOf, canDoAction } from "@/lib/permissions";
+import { independentTotals, passagerLabel, passagersOn } from "@/lib/helpers";
 import type { ReceptionStaff } from "@/lib/types";
 
 /**
@@ -327,7 +328,140 @@ describe("le câblage des écrans", () => {
 
   it("la cloche lit bien le rôle « reception » et le drapeau de lecture", () => {
     const src = read("components/dashboard/WorkerPaymentsAlert.tsx");
-    expect(src).toContain('p.createdByRole === "reception"');
-    expect(src).toContain("!p.alertRead");
+    // Les deux sources de la cloche — les versements ET les séances libres —
+    // s'écartent sur les deux mêmes critères : qui l'a écrite, et l'a-t-on lue.
+    expect(src).toContain('p.createdByRole !== "reception" || p.alertRead');
+    expect(src).toContain('ind.createdByRole !== "reception" || ind.alertRead');
+  });
+});
+
+// ---------------------------------------------------------------------------
+//  5. LA SÉANCE LIBRE VENDUE PAR UN TRAVAILLEUR
+//
+//  Elle fait entrer de l'argent sans qu'aucun reçu ne parte de lui-même : elle
+//  doit donc être signée comme un versement, et remonter à la direction jusqu'à
+//  ce qu'elle l'ait imprimée ou classée.
+// ---------------------------------------------------------------------------
+
+describe("une séance libre saisie par un travailleur remonte à la direction", () => {
+  const SES = "ses-1";
+  const today = new Date().toLocaleDateString("fr-CA");
+
+  it("porte la signature de celui qui l'a vendue, et se dit non lue", async () => {
+    setCurrentActor(WORKER);
+    const res = await useData.getState().createPassagerSeances({
+      sessionId: SES,
+      date: today,
+      names: ["Yacine"],
+      price: 600,
+      schoolShare: 200,
+    });
+    expect(res.ok).toBe(true);
+
+    const row = useData.getState().independent.find((i) => i.id === res.ids![0])!;
+    expect(row.createdByRole).toBe("reception");
+    expect(row.createdByName).toBe(WORKER.name);
+    expect(row.alertRead).toBe(false);
+    // La recette qu'elle pose en caisse porte la même signature : sans elle,
+    // la caisse ne saurait pas dire qui a encaissé.
+    const cash = useData.getState().cash.find((c) => c.amount === 600);
+    expect(cash?.createdByRole).toBe("reception");
+  });
+
+  it("ce que l'administration vend elle-même ne réveille pas la cloche", async () => {
+    setCurrentActor(ADMIN);
+    const res = await useData.getState().createPassagerSeances({
+      sessionId: SES,
+      date: today,
+      names: ["Yacine"],
+      price: 600,
+      schoolShare: 200,
+    });
+    const row = useData.getState().independent.find((i) => i.id === res.ids![0])!;
+    expect(row.createdByRole).toBe("admin");
+  });
+
+  it("la ligne envoyée à Postgres est acceptable — `alert_read` est not null", async () => {
+    setCurrentActor(WORKER);
+    const res = await useData.getState().createPassagerSeances({
+      sessionId: SES,
+      date: today,
+      names: [""],
+      price: 500,
+      schoolShare: 500,
+    });
+    const row = useData.getState().independent.find((i) => i.id === res.ids![0])!;
+    const wire = toRow(TABLES.independent, row as unknown as Record<string, unknown>);
+    expect(wire[toColumn("alertRead", TABLES.independent)]).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+//  6. UN ÉLÈVE DÉJÀ INSCRIT VENU SUIVRE UNE SÉANCE LIBRE
+//
+//  Il n'est PAS inscrit sur cet emploi du temps : aucun solde ne s'ouvre. Mais
+//  il a payé, donc il figure sur la feuille de la séance et l'enseignant est
+//  payé pour lui, exactement comme pour un passager sans fiche.
+// ---------------------------------------------------------------------------
+
+describe("un élève inscrit ailleurs peut suivre une séance libre du groupe", () => {
+  const SES = "ses-1";
+  const today = new Date().toLocaleDateString("fr-CA");
+
+  it("figure sur la feuille de CETTE séance, sous son propre nom", async () => {
+    setCurrentActor(ADMIN);
+    await useData.getState().createPassagerSeances({
+      sessionId: SES,
+      date: today,
+      names: ["ignoré"],
+      price: 600,
+      schoolShare: 200,
+      studentId: STU,
+    });
+
+    const db = useData.getState();
+    const rows = passagersOn(db, SES, today);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].studentId).toBe(STU);
+    // Son nom vient de sa fiche, pas de la ligne de saisie.
+    const student = db.students.find((s) => s.id === STU)!;
+    expect(passagerLabel(db, rows[0])).toBe(`${student.firstName} ${student.lastName}`.trim());
+  });
+
+  it("n'ouvre aucun solde et ne l'inscrit sur aucun emploi du temps", async () => {
+    setCurrentActor(ADMIN);
+    const before = useData.getState().students.find((s) => s.id === STU)!.subscriptionIds.length;
+    const enrolments = useData.getState().enrollments.length;
+
+    await useData.getState().createPassagerSeances({
+      sessionId: SES,
+      date: today,
+      names: [""],
+      price: 600,
+      schoolShare: 200,
+      studentId: STU,
+    });
+
+    const db = useData.getState();
+    expect(db.students.find((s) => s.id === STU)!.subscriptionIds).toHaveLength(before);
+    expect(db.enrollments).toHaveLength(enrolments);
+  });
+
+  it("rapporte à l'enseignant, comme n'importe quel passager", async () => {
+    setCurrentActor(ADMIN);
+    await useData.getState().createPassagerSeances({
+      sessionId: SES,
+      date: today,
+      names: [""],
+      price: 600,
+      schoolShare: 200,
+      studentId: STU,
+    });
+
+    const db = useData.getState();
+    const row = db.independent.find((i) => i.studentId === STU)!;
+    // 600 payés, 200 pour l'école : 400 reviennent à l'enseignant.
+    expect(independentTotals(row).teacher).toBe(400);
+    expect(row.teacherPaid).toBe(false);
   });
 });

@@ -41,7 +41,11 @@ import {
   ChargeFormModal,
   StudentChargesModal,
 } from "@/components/students/StudentCharges";
-import { presenceSheetHtml, soldReceiptHtml } from "@/lib/reports/documents";
+import {
+  presenceSheetHtml,
+  seanceLibreInvoiceHtml,
+  soldReceiptHtml,
+} from "@/lib/reports/documents";
 import {
   AlertTriangle,
   Banknote,
@@ -93,6 +97,7 @@ import {
   groupName,
   independentTotals,
   joinPointFor,
+  passagerLabel,
   passagersOn,
   moduleName as moduleNameOf,
   monthCodeLabel,
@@ -565,11 +570,27 @@ export function PresenceSheet({
     { total: 0, school: 0, teacher: 0 },
   );
 
+  /**
+   * AJOUTER À CETTE SÉANCE CEUX QUI NE SONT PAS INSCRITS DESSUS.
+   *
+   * Deux personnes très différentes passent par ici, et c'est volontaire :
+   *
+   *  - des PASSAGERS sans fiche, saisis en nombre, nommés ou non ;
+   *  - un ÉLÈVE DÉJÀ INSCRIT à l'école, retrouvé par son nom ou son numéro,
+   *    qui vient suivre UNE séance de cet emploi du temps sans s'y inscrire.
+   *    Sa séance se rattache à sa fiche — donc à son historique — mais elle
+   *    n'ouvre aucun solde et ne le met sur aucune liste du mois prochain.
+   *
+   * Dans les deux cas l'argent entre en caisse tout de suite, et le reçu est
+   * proposé dans la foulée : c'est le ticket qu'on remet à la famille.
+   */
   const addPassagers = async (input: {
     names: string[];
     price: number;
     schoolShare: number;
     label: string;
+    /** l'élève inscrit qui suit la séance, quand c'en est un */
+    student?: Student;
   }) => {
     const res = await createPassagerSeances({
       sessionId: session.id,
@@ -578,23 +599,48 @@ export function PresenceSheet({
       price: input.price,
       schoolShare: input.schoolShare,
       itemLabel: input.label,
+      studentId: input.student?.id,
     });
     if (!res.ok) {
       addToast({
         type: "danger",
         title: "Enregistrement impossible",
-        message: "Ces élèves de passage n'ont pas pu être ajoutés à la séance.",
+        message: "Ces séances libres n'ont pas pu être ajoutées.",
       });
       return;
     }
     setPassagerOpen(false);
+    const who = input.student
+      ? studentName(input.student)
+      : `${input.names.length} élève(s) de passage`;
     addToast({
       type: "success",
-      title: `${input.names.length} élève(s) de passage ajouté(s)`,
+      title: `${who} — séance libre enregistrée`,
       message: `${formatDA(res.total ?? 0)} encaissés sur la séance du ${formatDateFr(date)} · ${formatDA(
         res.teacherTotal ?? 0,
       )} pour ${teacherName(db, session.teacherId)} — réglés avec ${monthCodeLabel(monthCode)}.`,
     });
+    // Le reçu de la séance libre, proposé aussitôt : sans lui, la famille
+    // repartait sans ticket pour un argent bel et bien encaissé.
+    setReceipt(
+      seanceLibreInvoiceHtml(db, {
+        payer: input.student
+          ? studentName(input.student)
+          : input.names.map((n) => n.trim()).filter(Boolean)[0] ||
+            `${input.names.length} passager(s)`,
+        registrationNumber: input.student
+          ? registrationNumberOf(db, input.student)
+          : undefined,
+        classLabel: input.student ? studentCaseLabel(input.student) : undefined,
+        itemLabel: input.label,
+        price: res.total ?? 0,
+        date,
+        time: `${sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).startTime} - ${
+          sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).endTime
+        }`,
+        language,
+      }),
+    );
   };
 
   const removePassager = (p: IndependentSession) => {
@@ -603,7 +649,7 @@ export function PresenceSheet({
     addToast({
       type: "success",
       title: "Élève de passage retiré",
-      message: `${p.passagerName ?? "Passager"} — la séance et la part de l'enseignant s'en vont avec lui.`,
+      message: `${passagerLabel(db, p)} — la séance et la part de l'enseignant s'en vont avec lui.`,
     });
   };
 
@@ -701,16 +747,17 @@ export function PresenceSheet({
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} className="gap-1.5">
             <UserRoundPlus className="h-3.5 w-3.5" /> Élève existant
           </Button>
-          {/* IL EST VENU UNE FOIS. On ne lui crée pas de fiche, on ne l'inscrit
-              pas : il paie sa séance et il figure sur CETTE feuille-là. */}
+          {/* IL EST VENU UNE FOIS. On ne l'inscrit pas sur cet emploi du temps :
+              il paie sa séance et il figure sur CETTE feuille-là. Que l'école
+              le connaisse déjà ou non ne change rien à cela. */}
           <Button
             size="sm"
             variant="outline"
             onClick={() => setPassagerOpen(true)}
             className="gap-1.5"
-            title="Ajouter un ou plusieurs élèves de passage à la séance du jour — sans fiche, sans inscription"
+            title="Ajouter à la séance du jour des passagers sans fiche, ou un élève déjà inscrit venu suivre une séance libre — sans l'inscrire sur cet emploi du temps"
           >
-            <Ticket className="h-3.5 w-3.5 text-primary" /> Élève passager
+            <Ticket className="h-3.5 w-3.5 text-primary" /> Séance libre
           </Button>
           <Button size="sm" variant="success" onClick={() => setBulkStatus("present")} className="gap-1.5">
             <CheckCheck className="h-3.5 w-3.5" /> Tout présent
@@ -949,31 +996,32 @@ export function PresenceSheet({
         <div className="flex flex-wrap items-center justify-between gap-2 bg-primary-50/50 p-3">
           <div className="min-w-0">
             <strong className="flex items-center gap-1.5 text-sm text-ink">
-              <Ticket className="h-4 w-4 text-primary" /> Élèves de passage — séance du{" "}
+              <Ticket className="h-4 w-4 text-primary" /> Séances libres — séance du{" "}
               {formatDateFr(date)} ({passagers.length})
             </strong>
             <span className="block text-[11px] leading-relaxed text-muted">
-              Ils ne sont pas inscrits : ils paient la séance sur place et n&apos;apparaissent que
-              sur <strong className="text-ink">cette feuille-ci</strong>. La séance suivante repart
-              sans eux — s&apos;ils reviennent, on les ressaisit. Ce que l&apos;école ne garde pas
-              revient à l&apos;enseignant et se règle avec {monthCodeLabel(monthCode)}.
+              Ils ne sont <strong className="text-ink">pas inscrits sur cet emploi du temps</strong>{" "}
+              : ils paient la séance sur place et n&apos;apparaissent que sur cette feuille-ci — un
+              passager sans fiche comme un élève déjà inscrit ailleurs. La séance suivante repart
+              sans eux. Ce que l&apos;école ne garde pas revient à l&apos;enseignant et se règle
+              avec {monthCodeLabel(monthCode)}.
             </span>
           </div>
           <Button size="sm" onClick={() => setPassagerOpen(true)} className="gap-1.5">
-            <Ticket className="h-3.5 w-3.5" /> Ajouter des passagers
+            <Ticket className="h-3.5 w-3.5" /> Ajouter une séance libre
           </Button>
         </div>
 
         {passagers.length === 0 ? (
           <p className="bg-surface px-3 py-5 text-center text-xs italic text-muted">
-            Aucun élève de passage sur la séance du {formatDateFr(date)}.
+            Aucune séance libre sur le créneau du {formatDateFr(date)}.
           </p>
         ) : (
           <div className="overflow-x-auto bg-surface">
             <table className="w-full min-w-[640px] text-[11px]">
               <thead className="bg-canvas/60">
                 <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
-                  <th className="px-2 py-2">Élève de passage</th>
+                  <th className="px-2 py-2">Qui a suivi la séance</th>
                   <th className="px-2 py-2">Séance</th>
                   <th className="px-2 py-2 text-center">Horaire</th>
                   <th className="px-2 py-2 text-right">Prix payé</th>
@@ -988,10 +1036,23 @@ export function PresenceSheet({
                   return (
                     <tr key={p.id} className="border-t border-line/60">
                       <td className="px-2 py-2">
-                        <strong className="text-ink">{p.passagerName || "Passager"}</strong>
-                        <Badge tone="primary" className="ms-1 text-[8px]">
-                          passager
-                        </Badge>
+                        <strong className="text-ink">{passagerLabel(db, p)}</strong>
+                        {/* Un élève DÉJÀ INSCRIT venu suivre une séance libre se
+                            distingue d'un passager sans fiche : il porte son
+                            numéro d'inscription, et son nom vient de sa fiche. */}
+                        {p.studentId ? (
+                          <Badge tone="success" className="ms-1 text-[8px]">
+                            élève inscrit
+                            {(() => {
+                              const st = db.students.find((x) => x.id === p.studentId);
+                              return st ? ` · n° ${registrationNumberOf(db, st)}` : "";
+                            })()}
+                          </Badge>
+                        ) : (
+                          <Badge tone="primary" className="ms-1 text-[8px]">
+                            passager
+                          </Badge>
+                        )}
                       </td>
                       <td className="px-2 py-2 text-[10px] text-muted">{p.itemLabel}</td>
                       <td className="px-2 py-2 text-center font-mono text-[10px] text-muted">
@@ -1354,6 +1415,7 @@ export function PresenceSheet({
           teacher={teacherName(db, session.teacherId)}
           monthLabel={monthCodeLabel(monthCode)}
           suggestedPrice={unitPrice}
+          enrolledIds={fullRoster.map((st) => st.id)}
           onConfirm={addPassagers}
           onClose={() => setPassagerOpen(false)}
         />
@@ -1365,7 +1427,7 @@ export function PresenceSheet({
           <div className="space-y-3">
             <div className="rounded-xl bg-primary-50/60 p-3">
               <strong className="block text-sm text-ink">
-                {passagerToRemove.passagerName || "Passager"}
+                {passagerLabel(db, passagerToRemove)}
               </strong>
               <span className="text-[11px] text-muted">
                 {passagerToRemove.itemLabel} · {formatDateFr(passagerToRemove.date)} ·{" "}
@@ -1402,22 +1464,29 @@ export function PresenceSheet({
 // ---------------------------------------------------------------------------
 
 /**
- * AJOUTER DES ÉLÈVES DE PASSAGE À UNE SÉANCE — d'un seul geste.
+ * AJOUTER À UNE SÉANCE CEUX QUI NE SONT PAS INSCRITS DESSUS.
  *
- * Trois choses seulement sont demandées, parce qu'il n'y en a pas quatre à
- * savoir au comptoir :
+ * DEUX PERSONNES TRÈS DIFFÉRENTES passent par cet écran, et l'onglet du haut
+ * dit laquelle :
  *
- *   · QUI est venu — un nom par ligne, et **une ligne vide reste valide** : on
- *     ne retient pas toujours le nom de quelqu'un qui vient une fois, elle
- *     s'enregistre alors comme « Passager ». Six élèves d'un coup se saisissent
- *     donc en tapant « 6 » puis, éventuellement, les noms qu'on connaît ;
- *   · COMBIEN un passager paie pour la séance ;
- *   · CE QUE L'ÉCOLE GARDE dessus. Le reste est la part de l'enseignant — elle
- *     s'affiche pendant la saisie, personne ne la calcule de tête.
+ *  · « PASSAGERS » — des gens sans fiche. Un nom par ligne, et **une ligne vide
+ *    reste valide** : on ne retient pas toujours le nom de quelqu'un qui vient
+ *    une fois, elle s'enregistre alors comme « Passager ». Six élèves d'un coup
+ *    se saisissent donc en tapant « 6 », puis les noms qu'on connaît ;
+ *  · « ÉLÈVE DÉJÀ INSCRIT » — quelqu'un que l'école connaît déjà, retrouvé par
+ *    son nom, son numéro d'inscription ou son téléphone, qui vient suivre UNE
+ *    séance de cet emploi du temps sans s'y inscrire. Sa séance se rattache à
+ *    sa fiche, donc à son historique, mais elle n'ouvre AUCUN solde et ne le
+ *    met sur aucune liste du mois prochain : il n'est pas inscrit pour autant.
  *
- * Tout est écrit à la seconde : l'argent entre en caisse, les passagers
- * apparaissent sous la feuille de CETTE séance, et la part de l'enseignant
- * rejoint le mois où la séance tombe.
+ * Le reste est commun aux deux, parce qu'il n'y a pas quatre choses à savoir
+ * au comptoir : COMBIEN la séance est payée, et CE QUE L'ÉCOLE GARDE dessus.
+ * Le reliquat est la part de l'enseignant — elle s'affiche pendant la saisie,
+ * personne ne la calcule de tête.
+ *
+ * Tout est écrit à la seconde : l'argent entre en caisse, la ligne apparaît
+ * sous la feuille de CETTE séance, la part de l'enseignant rejoint le mois où
+ * la séance tombe, et le reçu est proposé dans la foulée.
  */
 function PassagerModal({
   title,
@@ -1426,6 +1495,7 @@ function PassagerModal({
   teacher,
   monthLabel,
   suggestedPrice,
+  enrolledIds,
   onConfirm,
   onClose,
 }: {
@@ -1436,26 +1506,59 @@ function PassagerModal({
   monthLabel: string;
   /** le prix d'une séance de cet emploi, proposé par défaut */
   suggestedPrice: number;
+  /**
+   * LES ÉLÈVES DÉJÀ INSCRITS SUR CET EMPLOI DU TEMPS.
+   *
+   * Ils ne peuvent pas y venir « en séance libre » : ils y ont un solde, leurs
+   * séances y sont déjà comptées, et les vendre une seconde fois les ferait
+   * payer deux fois la même heure. La recherche les montre donc — pour qu'on
+   * comprenne pourquoi ils ne sortent pas — mais elle refuse de les choisir.
+   */
+  enrolledIds: string[];
   onConfirm: (input: {
     names: string[];
     price: number;
     schoolShare: number;
     label: string;
+    student?: Student;
   }) => void;
   onClose: () => void;
 }) {
+  const db = useData();
+  /** « passagers sans fiche » ou « un élève que l'école connaît déjà » */
+  const [mode, setMode] = useState<"passagers" | "student">("passagers");
   const [names, setNames] = useState<string[]>(["", ""]);
   const [price, setPrice] = useState(Math.round(suggestedPrice));
   const [schoolShare, setSchoolShare] = useState(Math.round(suggestedPrice));
   const [label, setLabel] = useState(title);
   const [busy, setBusy] = useState(false);
 
+  // ---- la recherche d'un élève déjà inscrit --------------------------------
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<Student | null>(null);
+
+  /**
+   * Ce que la recherche propose : TOUS les élèves de l'école, pas seulement
+   * ceux de ce groupe — c'est bien quelqu'un qui n'est pas inscrit ici qu'on
+   * cherche. La liste ne s'ouvre qu'une fois deux caractères tapés, sinon elle
+   * afficherait mille fiches à la première frappe.
+   */
+  const enrolled = useMemo(() => new Set(enrolledIds), [enrolledIds]);
+  const found = useMemo(() => {
+    const q = query.trim();
+    if (q.length < 2) return [] as Student[];
+    return db.students.filter((st) => studentMatches(db, st, q)).slice(0, 30);
+  }, [db, query]);
+
   const count = names.length;
+  // Un élève nommé, c'est UNE séance : le compteur de passagers ne s'applique
+  // pas à lui, et les totaux affichés doivent dire la même chose que la caisse.
+  const seats = mode === "student" ? 1 : count;
   const unitSchool = money(Math.min(Math.max(0, schoolShare), Math.max(0, price)));
   const unitTeacher = money(Math.max(0, price) - unitSchool);
-  const total = money(Math.max(0, price) * count);
-  const totalSchool = money(unitSchool * count);
-  const totalTeacher = money(unitTeacher * count);
+  const total = money(Math.max(0, price) * seats);
+  const totalSchool = money(unitSchool * seats);
+  const totalTeacher = money(unitTeacher * seats);
 
   const setCount = (n: number) => {
     const next = Math.max(1, Math.min(60, n));
@@ -1465,7 +1568,7 @@ function PassagerModal({
   };
 
   return (
-    <Modal open onClose={onClose} title="Élèves de passage sur cette séance" wide>
+    <Modal open onClose={onClose} title="Séance libre sur ce créneau" wide>
       <div className="space-y-4">
         <div className="rounded-xl bg-primary-50/60 p-3">
           <strong className="block text-sm text-ink">{title}</strong>
@@ -1474,14 +1577,152 @@ function PassagerModal({
             {teacher}
           </span>
           <span className="mt-1 block text-[11px] leading-relaxed text-muted">
-            Ces élèves ne sont <strong className="text-ink">pas inscrits</strong> : aucune fiche
-            n&apos;est créée, aucun solde n&apos;est ouvert. Ils figureront sur la feuille de cette
-            séance et sur aucune autre, et la part de l&apos;enseignant se règlera avec{" "}
-            <strong className="text-ink">{monthLabel}</strong>.
+            Personne n&apos;est{" "}
+            <strong className="text-ink">inscrit sur cet emploi du temps</strong> en passant par
+            ici : aucun solde n&apos;est ouvert, aucune liste du mois prochain ne change. La séance
+            figure sur cette feuille et sur aucune autre, et la part de l&apos;enseignant se
+            règlera avec <strong className="text-ink">{monthLabel}</strong>.
           </span>
         </div>
 
+        {/* ---- QUI vient : des passagers sans fiche, ou un élève connu ----- */}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setMode("passagers")}
+            className={`rounded-xl border p-3 text-left transition-colors ${
+              mode === "passagers"
+                ? "border-primary bg-primary-50/60"
+                : "border-line bg-canvas/30 hover:bg-primary-50/30"
+            }`}
+          >
+            <strong className="flex items-center gap-1.5 text-[11px] text-ink">
+              <Ticket className="h-3.5 w-3.5 text-primary" /> Passagers sans fiche
+            </strong>
+            <span className="mt-0.5 block text-[10px] leading-relaxed text-muted">
+              Des gens que l&apos;école ne connaît pas. Un nom par ligne, ou rien du tout.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("student")}
+            className={`rounded-xl border p-3 text-left transition-colors ${
+              mode === "student"
+                ? "border-primary bg-primary-50/60"
+                : "border-line bg-canvas/30 hover:bg-primary-50/30"
+            }`}
+          >
+            <strong className="flex items-center gap-1.5 text-[11px] text-ink">
+              <GraduationCap className="h-3.5 w-3.5 text-primary" /> Élève déjà inscrit
+            </strong>
+            <span className="mt-0.5 block text-[10px] leading-relaxed text-muted">
+              Un élève de l&apos;école qui vient suivre UNE séance de ce groupe.
+            </span>
+          </button>
+        </div>
+
+        {/* ---- retrouver l'élève par son nom ------------------------------- */}
+        {mode === "student" && (
+          <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+              🔎 L&apos;élève qui suit la séance
+            </span>
+            {picked ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-success/40 bg-success/10 p-3">
+                <div className="min-w-0">
+                  <strong className="block text-sm text-ink">{studentName(picked)}</strong>
+                  <span className="text-[10px] text-muted">
+                    N° {registrationNumberOf(db, picked)}
+                    {picked.phone ? ` · ${picked.phone}` : ""} · {studentCaseLabel(picked)}
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setPicked(null);
+                    setQuery("");
+                  }}
+                  className="gap-1.5"
+                >
+                  <X className="h-3.5 w-3.5" /> Changer
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                  <Input
+                    autoFocus
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Nom, n° d'inscription (00042) ou téléphone…"
+                    className="pl-9"
+                  />
+                </div>
+                {query.trim().length < 2 ? (
+                  <p className="py-4 text-center text-[11px] italic text-muted">
+                    Tapez au moins deux caractères pour chercher parmi tous les élèves de
+                    l&apos;école.
+                  </p>
+                ) : found.length === 0 ? (
+                  <p className="py-4 text-center text-[11px] italic text-muted">
+                    Aucun élève ne correspond à « {query.trim()} ». S&apos;il n&apos;a pas de
+                    fiche, enregistrez-le comme passager.
+                  </p>
+                ) : (
+                  <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                    {found.map((st) => {
+                      const already = enrolled.has(st.id);
+                      return (
+                        <button
+                          key={st.id}
+                          type="button"
+                          disabled={already}
+                          onClick={() => setPicked(st)}
+                          title={
+                            already
+                              ? "Il est déjà inscrit sur cet emploi du temps : sa séance y est comptée, il ne la paie pas une seconde fois."
+                              : undefined
+                          }
+                          className={`flex w-full items-center justify-between gap-2 rounded-xl border p-2.5 text-left transition-colors ${
+                            already
+                              ? "cursor-not-allowed border-line bg-canvas/40 opacity-60"
+                              : "border-line bg-surface hover:border-primary hover:bg-primary-50/50"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <strong className="block truncate text-[11px] text-ink">
+                              {studentName(st)}
+                            </strong>
+                            <span className="block text-[9px] text-muted">
+                              N° {registrationNumberOf(db, st)}
+                              {st.phone ? ` · ${st.phone}` : ""}
+                            </span>
+                          </span>
+                          <Badge
+                            tone={already ? "warning" : "neutral"}
+                            className="shrink-0 text-[9px]"
+                          >
+                            {already ? "déjà dans ce groupe" : `${st.subscriptionIds.length} emploi(s)`}
+                          </Badge>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+            <p className="text-[10px] leading-relaxed text-muted">
+              Il paie <strong className="text-ink">cette séance-là</strong> et rien d&apos;autre :
+              il n&apos;est pas inscrit sur cet emploi du temps, aucun solde ne s&apos;ouvre, et la
+              séance reste rattachée à sa fiche pour son historique.
+            </p>
+          </div>
+        )}
+
         {/* ---- combien, et qui ------------------------------------------- */}
+        {mode === "passagers" && (
         <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
@@ -1540,6 +1781,7 @@ function PassagerModal({
             ))}
           </div>
         </div>
+        )}
 
         {/* ---- l'argent --------------------------------------------------- */}
         <div className="space-y-3 rounded-xl border border-primary/25 bg-primary-50/40 p-3">
@@ -1617,19 +1859,36 @@ function PassagerModal({
               setBusy(true);
               try {
                 await onConfirm({
-                  names,
+                  // Un élève nommé n'occupe qu'une place : son nom vient de sa
+                  // fiche, pas des lignes de saisie des passagers.
+                  names: mode === "student" ? [studentName(picked!)] : names,
                   price: Math.max(0, price),
                   schoolShare: unitSchool,
                   label: label.trim() || title,
+                  student: mode === "student" ? picked ?? undefined : undefined,
                 });
               } finally {
                 setBusy(false);
               }
             }}
-            disabled={busy || price <= 0}
+            disabled={
+              busy ||
+              price <= 0 ||
+              (mode === "student" && (!picked || enrolled.has(picked.id)))
+            }
             className="gap-1.5"
           >
-            <Ticket className="h-4 w-4" /> Ajouter {count} passager(s) — {formatDA(total)}
+            {mode === "student" ? (
+              <>
+                <GraduationCap className="h-4 w-4" />
+                {picked ? `Inscrire ${studentName(picked)} sur la séance` : "Choisissez un élève"} —{" "}
+                {formatDA(total)}
+              </>
+            ) : (
+              <>
+                <Ticket className="h-4 w-4" /> Ajouter {count} passager(s) — {formatDA(total)}
+              </>
+            )}
           </Button>
         </div>
       </div>
