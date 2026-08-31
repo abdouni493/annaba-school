@@ -17,6 +17,7 @@ import type {
   StudentCharge,
   Subscription,
   SubscriptionDiscount,
+  TeacherPayment,
 } from "@/lib/types";
 
 /** French weekday labels — shared by every screen that prints a timing. */
@@ -2272,4 +2273,95 @@ export function teacherChildDebtsOf(db: Database, teacherId: string) {
 /** Son total — ce que sa prochaine paie va lui coûter en scolarités. */
 export function teacherChildDebtTotal(db: Database, teacherId: string): number {
   return teacherChildDebtsOf(db, teacherId).reduce((s, d) => s + d.amount, 0);
+}
+
+/**
+ * L'EMPLOI DU TEMPS QU'UNE SCOLARITÉ PORTÉE A PAYÉ, NOMMÉ.
+ *
+ * C'est la seule chose qui manquait au père : savoir POUR QUEL COURS de son
+ * fils on lui retient de l'argent. Le nom est figé sur la ligne au moment où
+ * elle est écrite ; pour les lignes plus anciennes, qui ne le portaient pas
+ * encore, il se relit depuis l'emploi du temps crédité — jamais perdu, puisque
+ * supprimer un emploi du temps l'archive au lieu de l'effacer.
+ *
+ * Vide quand la somme ne tient à aucun emploi du temps (des restes, des frais).
+ */
+export function teacherChildDebtEmploi(
+  db: Database,
+  debt: { emploi?: string; subscriptionId?: string },
+): string | undefined {
+  if (debt.emploi?.trim()) return debt.emploi.trim();
+  if (!debt.subscriptionId) return undefined;
+  const sub = db.subscriptions.find((x) => x.id === debt.subscriptionId);
+  if (!sub) return undefined;
+  const label = subscriptionLabel(db, sub);
+  return label === "—" ? undefined : label;
+}
+
+/**
+ * UNE SCOLARITÉ D'ENFANT RETENUE SUR UN RÈGLEMENT, prête à s'afficher.
+ *
+ * Un règlement peut retenir la scolarité d'un enfant de deux façons, et le père
+ * doit lire les deux dans la même table :
+ *
+ *  - `childCharges` : ce que CE règlement a soldé lui-même. Chaque ligne porte
+ *    déjà l'emploi du temps et son mois ;
+ *  - `childDebts`   : ce que le guichet avait crédité D'AVANCE en le portant
+ *    sur ce salaire. Les règlements récents figent l'emploi du temps ; pour les
+ *    plus anciens il se relit depuis la ligne d'origine, qui n'est jamais
+ *    effacée — seulement marquée réglée.
+ */
+export interface SettlementChildLine {
+  key: string;
+  studentId?: string;
+  studentName: string;
+  registrationNumber?: string;
+  /** l'emploi du temps payé — absent quand la somme n'en concerne aucun */
+  emploi?: string;
+  monthCode?: string;
+  amount: number;
+  /** `settled` = soldée par ce règlement ; `advanced` = réglée d'avance au guichet */
+  origin: "settled" | "advanced";
+}
+
+export function settlementChildLines(
+  db: Database,
+  payment: TeacherPayment,
+): SettlementChildLine[] {
+  const charges = (payment.childCharges ?? []).flatMap((c) =>
+    c.lines.map((l, i) => ({
+      key: `ch-${c.studentId}-${l.subscriptionId}-${l.monthCode}-${i}`,
+      studentId: c.studentId,
+      studentName: c.studentName,
+      registrationNumber: c.registrationNumber,
+      emploi: l.label,
+      monthCode: l.monthCode,
+      amount: l.amount,
+      origin: "settled" as const,
+    })),
+  );
+
+  const advanced = (payment.childDebts ?? []).map((d) => {
+    const source = db.teacherChildDebts.find((x) => x.id === d.id);
+    return {
+      key: `cd-${d.id}`,
+      studentId: source?.studentId,
+      studentName:
+        d.studentName ?? source?.label ?? d.label.replace(/^Scolarité — /, ""),
+      registrationNumber: undefined,
+      emploi: d.emploi ?? (source ? teacherChildDebtEmploi(db, source) : undefined),
+      monthCode: d.monthCode ?? source?.monthCode,
+      amount: d.amount,
+      origin: "advanced" as const,
+    };
+  });
+
+  return [...charges, ...advanced];
+}
+
+/** « Yacine · Mathématiques 1AS · M2 » — la scolarité en une ligne. */
+export function settlementChildLabel(line: SettlementChildLine): string {
+  return [line.studentName, line.emploi ?? "hors emploi du temps", line.monthCode]
+    .filter(Boolean)
+    .join(" · ");
 }

@@ -50,11 +50,48 @@ import {
   formatDateFr,
   formatDays,
   salleName,
+  settlementChildLabel,
+  settlementChildLines,
+  teacherChildDebtEmploi,
   todayIso,
 } from "@/lib/helpers";
 import { useSettings } from "@/lib/store/settings";
 
 import { useCan } from "@/lib/usePermissions";
+
+/**
+ * LES SCOLARITÉS D'ENFANTS D'UN RÈGLEMENT, en pastilles — avec leur cours.
+ *
+ * « 🎓 Yacine · Mathématiques 1AS · M2 » : la ligne d'historique dit désormais
+ * POUR QUEL emploi du temps du fils l'enseignant a été retenu, sans qu'il
+ * faille ouvrir le détail. C'est la même pastille que les arriérés débloqués,
+ * volontairement : les deux répondent à la même question — d'où vient ce
+ * montant ?
+ */
+function SettlementChildBadges({ payment }: { payment: TeacherPayment }) {
+  const db = useData();
+  const lines = settlementChildLines(db, payment);
+  if (lines.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {lines.map((l) => (
+        <Badge
+          key={l.key}
+          tone="danger"
+          className="text-[9px]"
+          title={
+            l.origin === "advanced"
+              ? "Scolarité réglée d'avance au guichet et retenue sur ce règlement"
+              : "Scolarité soldée par ce règlement"
+          }
+        >
+          🎓 {settlementChildLabel(l)} · {formatDA(l.amount)}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
 export function TeachersPage() {
   const can = useCan("teachers");
   const db = useData();
@@ -1981,6 +2018,11 @@ export function TeachersPage() {
                                   ))}
                                 </div>
                               )}
+                              {/* La scolarité d'un enfant retenue sur ce
+                                  règlement, avec SON emploi du temps : la même
+                                  pastille que les arriérés, pour qu'on lise
+                                  sans ouvrir quel cours du fils a été payé. */}
+                              <SettlementChildBadges payment={pay} />
                             </div>
                             {/* Voir · Modifier · Imprimer · Supprimer */}
                             <div className="flex shrink-0 items-center gap-1">
@@ -2642,14 +2684,78 @@ export function TeachersPage() {
               </div>
             )}
 
+            {/* LES SCOLARITÉS D'ENFANTS PORTÉES SUR CE SALAIRE, cours par cours.
+
+                Elles partageaient la table des dépenses et des acomptes : une
+                date, un libellé, un montant. L'enseignant y lisait « −1 500 DA »
+                sans jamais savoir LEQUEL des emplois du temps de son fils il
+                venait de payer. Elles ont donc leur propre table, avec l'emploi
+                du temps et son mois en colonnes — relus depuis la ligne
+                d'origine quand le règlement est trop ancien pour les avoir
+                figés. */}
+            {(viewedPayment.childDebts ?? []).length > 0 && (
+              <div className="rounded-xl border border-danger/25 bg-danger/5 p-3">
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-danger">
+                  🎓 Scolarités d&apos;enfants portées sur ce salaire (
+                  {viewedPayment.childDebts!.length})
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-[11px]">
+                    <thead className="bg-canvas/60">
+                      <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                        <th className="px-2 py-1.5">Date</th>
+                        <th className="px-2 py-1.5">Enfant</th>
+                        <th className="px-2 py-1.5">Emploi du temps</th>
+                        <th className="px-2 py-1.5 text-center">Mois</th>
+                        <th className="px-2 py-1.5 text-right">Retenu</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {viewedPayment.childDebts!.map((r) => {
+                        const source = db.teacherChildDebts.find((x) => x.id === r.id);
+                        const emploi =
+                          r.emploi ?? (source ? teacherChildDebtEmploi(db, source) : undefined);
+                        const code = r.monthCode ?? source?.monthCode;
+                        return (
+                          <tr key={r.id} className="border-t border-line/50">
+                            <td className="px-2 py-1.5 font-mono text-[10px] text-muted">
+                              {formatDateFr(r.date)}
+                            </td>
+                            <td className="px-2 py-1.5 font-semibold text-ink">
+                              {r.studentName ??
+                                source?.label ??
+                                r.label.replace(/^Scolarité — /, "")}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <Badge tone={emploi ? "primary" : "neutral"} className="text-[9px]">
+                                {emploi ?? "Hors emploi du temps"}
+                              </Badge>
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              {code ? (
+                                <Badge tone="neutral" className="font-mono text-[9px]">
+                                  {code}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted">—</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-right font-mono font-bold text-danger">
+                              − {formatDA(r.amount)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Ce qui a été retenu */}
             {[
               { title: "🧾 Dépenses retenues", rows: viewedPayment.expenses ?? [] },
               { title: "💵 Acomptes retenus", rows: viewedPayment.acomptes ?? [] },
-              {
-                title: "🎓 Scolarités d'enfants portées sur ce salaire",
-                rows: viewedPayment.childDebts ?? [],
-              },
             ]
               .filter((block) => block.rows.length > 0)
               .map((block) => (
@@ -2686,24 +2792,49 @@ export function TeachersPage() {
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-primary">
                   👨‍👧 Enfants scolarisés sur ce salaire ({viewedPayment.childCharges!.length})
                 </h4>
-                {viewedPayment.childCharges!.map((c) => (
-                  <div key={c.studentId} className="border-t border-line/50 py-1.5">
-                    <strong className="text-ink">
-                      {c.studentName}
-                      {c.registrationNumber && (
-                        <span className="ml-1.5 font-mono text-[10px] text-muted">
-                          N° {c.registrationNumber}
-                        </span>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-[11px]">
+                    <thead className="bg-canvas/60">
+                      <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                        <th className="px-2 py-1.5">N°</th>
+                        <th className="px-2 py-1.5">Enfant</th>
+                        <th className="px-2 py-1.5">Emploi du temps</th>
+                        <th className="px-2 py-1.5 text-center">Mois</th>
+                        <th className="px-2 py-1.5 text-right">Retenu</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {viewedPayment.childCharges!.flatMap((c) =>
+                        c.lines.map((l, i) => (
+                          <tr
+                            key={`${c.studentId}-${l.subscriptionId}-${l.monthCode}-${i}`}
+                            className="border-t border-line/50"
+                          >
+                            <td className="px-2 py-1.5 font-mono text-[10px] text-muted">
+                              {i === 0 ? c.registrationNumber ?? "—" : ""}
+                            </td>
+                            <td className="px-2 py-1.5 font-semibold text-ink">
+                              {i === 0 ? c.studentName : ""}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <Badge tone="primary" className="text-[9px]">
+                                {l.label}
+                              </Badge>
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              <Badge tone="neutral" className="font-mono text-[9px]">
+                                {l.monthCode}
+                              </Badge>
+                            </td>
+                            <td className="px-2 py-1.5 text-right font-mono font-bold text-danger">
+                              − {formatDA(l.amount)}
+                            </td>
+                          </tr>
+                        )),
                       )}
-                    </strong>
-                    <span className="float-right font-mono font-bold text-danger">
-                      − {formatDA(c.amount)}
-                    </span>
-                    <span className="block text-[10px] text-muted">
-                      {c.lines.map((l) => `${l.label} ${l.monthCode} (${formatDA(l.amount)})`).join(" · ")}
-                    </span>
-                  </div>
-                ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 

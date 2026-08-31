@@ -14,6 +14,7 @@
  */
 
 import { Badge, type Tone } from "@/components/ui/Badge";
+import { DeductionLabel } from "@/components/teachers/DeductionLabel";
 import { formatDA } from "@/lib/utils";
 import { formatDateFr, monthCodeLabel } from "@/lib/helpers";
 import type { TeacherPayBoard, TeacherPayDeductionLine } from "@/lib/types";
@@ -313,10 +314,7 @@ export function PayBoardView({ board }: { board: TeacherPayBoard }) {
                         </Badge>
                       </td>
                       <td className="px-2 py-2">
-                        <strong className="block text-ink">{d.label}</strong>
-                        {d.description && (
-                          <span className="block text-[9px] text-muted">{d.description}</span>
-                        )}
+                        <DeductionLabel row={d} />
                       </td>
                       <td className="px-2 py-2 text-right font-mono font-bold text-danger">
                         − {formatDA(d.amount)}

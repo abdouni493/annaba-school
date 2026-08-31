@@ -345,6 +345,19 @@ export interface TeacherPayDeductionLine {
   kind: "expense" | "acompte" | "child" | "child_debt";
   label: string;
   description?: string;
+  /**
+   * SCOLARITÉ D'ENFANT : L'EMPLOI DU TEMPS RETENU SUR CE SALAIRE, nommé.
+   *
+   * L'enseignant lit sa table 3 pour savoir ce qu'on lui reprend. « Scolarité —
+   * Yacine » ne lui dit pas de quel cours il s'agit quand son fils en suit
+   * trois. Le nom de l'emploi du temps est donc porté ici, dans sa propre
+   * colonne, et figé avec le règlement.
+   *
+   * Vide sur une dépense ou un acompte.
+   */
+  emploi?: string;
+  /** le mois de cet emploi du temps que la retenue solde (M1, M2 …) */
+  monthCode?: string;
   date: string;
   amount: number;
   /** déjà réglée par ce versement (elle ne revient pas sur le suivant) */
@@ -384,6 +397,22 @@ export interface TeacherPaymentDeduction {
   kind: "expense" | "acompte";
   label: string;
   description?: string;
+  /**
+   * SCOLARITÉ D'ENFANT : L'EMPLOI DU TEMPS QUE LA RETENUE A PAYÉ.
+   *
+   * Une retenue de scolarité ne dit rien tant qu'elle ne dit pas POUR QUEL
+   * COURS. Le nom de l'emploi du temps et son mois sont donc figés à part,
+   * dans leurs propres champs, plutôt que noyés dans une phrase : « voir le
+   * détail », la fiche de paie et l'écran de l'enseignant les affichent alors
+   * dans leur propre colonne, des mois plus tard, sans rien recalculer.
+   *
+   * Vides sur une dépense ou un acompte ordinaires.
+   */
+  emploi?: string;
+  /** le mois de cet emploi du temps (M1, M2 …) */
+  monthCode?: string;
+  /** l'enfant dont c'est la scolarité */
+  studentName?: string;
   amount: number;
   date: string;
 }
@@ -397,7 +426,14 @@ export interface TeacherChildCharge extends Authored {
   studentId: string;
   studentName: string;
   registrationNumber?: string;
-  /** what he owes, emploi by emploi */
+  /**
+   * Ce qu'il doit, EMPLOI DU TEMPS PAR EMPLOI DU TEMPS.
+   *
+   * `label` est le NOM DE L'EMPLOI DU TEMPS et rien d'autre — « Mathématiques
+   * 1AS » — de sorte que la colonne « Emploi du temps » de la fiche de paie et
+   * de l'écran de détail se lise sans le mois ni le nombre de séances collés
+   * dedans : ils ont leurs propres colonnes.
+   */
   lines: { subscriptionId: string; label: string; monthCode: string; amount: number }[];
   amount: number;
 }
@@ -425,6 +461,19 @@ export interface TeacherChildDebt extends Authored {
   studentId: string;
   /** l'emploi du temps crédité (absent = une dette hors emploi : restes, frais) */
   subscriptionId?: string;
+  /**
+   * LE NOM DE CET EMPLOI DU TEMPS, RECOPIÉ LE JOUR OÙ LA SOMME EST PORTÉE.
+   *
+   * Le père doit pouvoir lire, sur sa paie, POUR QUEL COURS de son fils on lui
+   * retient de l'argent — « Mathématiques 1AS », pas « Scolarité ». Le nom est
+   * donc figé ici, à côté de l'identifiant : un emploi archivé, renommé ou
+   * repris par un autre enseignant ne peut plus transformer la ligne de sa
+   * fiche de paie en tiret.
+   *
+   * ABSENT = ligne écrite avant que le nom soit figé ; il se relit alors depuis
+   * `subscriptionId` (voir `teacherChildDebtEmploi`).
+   */
+  emploi?: string;
   /** le mois de cet emploi qui a été soldé (M1, M2 …) */
   monthCode?: string;
   /** ce que la ligne dit sur la fiche de paie */

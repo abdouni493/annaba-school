@@ -224,7 +224,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   },
   teacherChildDebts: {
     table: "teacher_child_debts", pk: "id", pkField: "id",
-    fields: ["id", "teacherId", "studentId", "subscriptionId", "monthCode", "label",
+    fields: ["id", "teacherId", "studentId", "subscriptionId", "emploi", "monthCode", "label",
              "amount", "date", "paid", "paymentId", "createdAt",
              "createdBy", "createdByName", "createdByRole"],
     notNull: { paid: false },

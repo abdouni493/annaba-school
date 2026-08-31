@@ -131,6 +131,9 @@ const TP_CSS = `
   .tp-tag { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 0.72em; font-weight: 700; margin-inline-start: 4px; }
   .tp-tag-warn { background: #fef3c7; color: #b45309; }
   .tp-tag-mute { background: #f1f0f7; color: #5c567a; }
+  /* L'emploi du temps qu'une scolarité d'enfant paie : la seule étiquette de
+     la fiche qui répond à « pour quel cours me retient-on cette somme ? ». */
+  .tp-tag-emploi { background: #fdf0f5; color: #7a1440; border: 1px solid #e6c3d4; }
   @media print { body { background: #fff; } }
 `;
 
@@ -280,15 +283,38 @@ export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string 
           : `<table class="tp-table">
         <thead><tr><th style="text-align:start;">${L.label}</th><th>${L.amountCol}</th></tr></thead>
         <tbody>${board.deductions
-          .map(
-            (d) => `<tr>
+          .map((d) => {
+            // UNE SCOLARITÉ D'ENFANT DIT POUR QUEL COURS ELLE EST RETENUE.
+            // Le nom de l'emploi du temps et son mois sortent de la phrase
+            // pour devenir des étiquettes : sur une fiche imprimée, c'est la
+            // ligne que l'enseignant vérifie en premier.
+            // Un règlement figé avant cette colonne ne porte pas d'`emploi` :
+            // son intitulé vit encore dans la phrase, qui reste alors imprimée
+            // telle quelle plutôt que remplacée par une étiquette devinée.
+            const named = (d.kind === "child" || d.kind === "child_debt") && !!d.emploi;
+            const tags = named
+              ? `<span class="tp-tag tp-tag-emploi">${esc(d.emploi!)}</span>${
+                  d.monthCode ? ` <span class="tp-tag tp-tag-mute">${esc(d.monthCode)}</span>` : ""
+                }`
+              : "";
+            // Le détail répète l'emploi et le mois : les étiquettes le disent
+            // déjà, la phrase ne garde que le reste.
+            const rest = named
+              ? d.description
+                  ?.split("·")
+                  .map((x) => x.trim())
+                  .filter((x) => x && x !== d.emploi && x !== d.monthCode)
+                  .join(" · ")
+              : d.description;
+            return `<tr>
           <td style="text-align:start;">
             <strong>${esc(d.label)}</strong> <span class="tp-tag tp-tag-mute">${esc(kindLabel[d.kind] ?? d.kind)}</span>
-            ${d.description ? `<br/><span style="font-size:0.78em;color:#5c567a;">${esc(d.description)}</span>` : ""}
+            ${tags ? `<br/>${tags}` : ""}
+            ${rest ? `<br/><span style="font-size:0.78em;color:#5c567a;">${esc(rest)}</span>` : ""}
           </td>
           <td class="num">− ${da(d.amount)}</td>
-        </tr>`,
-          )
+        </tr>`;
+          })
           .join("")}</tbody>
         <tfoot><tr><td>${L.total}</td><td class="num">− ${da(board.deductionsTotal)}</td></tr></tfoot>
       </table>`

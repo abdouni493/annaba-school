@@ -30,8 +30,15 @@ import { Badge, type Tone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { PayBoardView } from "@/components/teachers/PayBoardView";
+import { DeductionLabel } from "@/components/teachers/DeductionLabel";
 import { formatDA, money } from "@/lib/utils";
-import { formatDateFr, monthCodeLabel } from "@/lib/helpers";
+import {
+  formatDateFr,
+  monthCodeLabel,
+  settlementChildLabel,
+  settlementChildLines,
+  teacherChildDebtEmploi,
+} from "@/lib/helpers";
 import {
   buildPayBoard,
   monthTiles,
@@ -1216,10 +1223,7 @@ function MonthBoardView({
                         </Badge>
                       </td>
                       <td className="px-2 py-2">
-                        <strong className="block text-ink">{d.label}</strong>
-                        {d.description && (
-                          <span className="block text-[9px] text-muted">{d.description}</span>
-                        )}
+                        <DeductionLabel row={d} />
                       </td>
                       <td className="px-2 py-2 text-center">
                         <Badge tone={d.paid ? "success" : "warning"} className="text-[9px]">
@@ -1435,6 +1439,10 @@ interface LedgerLine {
   date: string;
   label: string;
   description?: string;
+  /** scolarité d'un enfant : l'emploi du temps qu'elle paie, nommé */
+  emploi?: string;
+  /** et le mois de cet emploi du temps */
+  monthCode?: string;
   amount: number;
   /** déjà reprise sur un règlement — elle ne reviendra jamais sur le suivant */
   paid: boolean;
@@ -1466,7 +1474,9 @@ const LEDGER_KIND: Record<
     label: "Scolarité d'enfant",
     tone: "danger",
     icon: <GraduationCap className="h-3 w-3" />,
-    hint: "La scolarité d'un de vos enfants, réglée d'avance au guichet et portée sur ce salaire.",
+    hint:
+      "La scolarité d'un de vos enfants, réglée d'avance au guichet et portée sur ce salaire. " +
+      "L'emploi du temps payé est nommé à côté : c'est le cours de votre enfant que cette retenue règle.",
   },
 };
 
@@ -1481,6 +1491,9 @@ function LedgerView({
   absences: TeacherAbsence[];
   childDebts: TeacherChildDebt[];
 }) {
+  const db = useData();
+  const emploiOf = (d: TeacherChildDebt) => teacherChildDebtEmploi(db, d);
+
   const lines: LedgerLine[] = [
     ...acomptes.map(
       (a): LedgerLine => ({
@@ -1516,13 +1529,18 @@ function LedgerView({
         paid: false,
       }),
     ),
+    // La scolarité d'un enfant, avec le COURS qu'elle paie : c'est la seule
+    // page où le père peut lire, avant même sa paie, pour quel emploi du temps
+    // de son fils l'école va le retenir.
     ...childDebts.map(
       (d): LedgerLine => ({
         id: `cd-${d.id}`,
         kind: "child_debt",
         date: d.date,
         label: d.label,
-        description: [d.monthCode, "réglée d'avance au guichet"].filter(Boolean).join(" · "),
+        emploi: emploiOf(d),
+        monthCode: d.monthCode,
+        description: "réglée d'avance au guichet",
         amount: d.amount,
         paid: !!d.paid,
       }),
@@ -1566,6 +1584,8 @@ function LedgerView({
         <strong>« déjà reprise »</strong> a été déduite d&apos;un règlement précédent et ne
         reviendra jamais sur le suivant — c&apos;est ce qui garantit qu&apos;on ne vous retient rien
         deux fois. Une ligne <strong>« à reprendre »</strong> tombera sur votre prochain règlement.
+        Pour la scolarité d&apos;un de vos enfants, <strong>l&apos;emploi du temps payé est nommé</strong>{" "}
+        avec son mois : vous savez de quel cours de votre enfant vient chaque dinar retenu.
       </p>
 
       <div className="overflow-x-auto rounded-2xl border border-line bg-surface">
@@ -1600,6 +1620,28 @@ function LedgerView({
                   </td>
                   <td className="px-3 py-2.5">
                     <strong className="block text-ink">{l.label}</strong>
+                    {l.kind === "child_debt" && (
+                      <span className="mt-0.5 flex flex-wrap items-center gap-1">
+                        <Badge
+                          tone={l.emploi ? "primary" : "neutral"}
+                          className="gap-1 text-[9px]"
+                          title={
+                            l.emploi
+                              ? `Scolarité de votre enfant sur l'emploi du temps « ${l.emploi} »`
+                              : "Somme sans emploi du temps rattaché : des restes ou des frais"
+                          }
+                        >
+                          <GraduationCap className="h-3 w-3" />
+                          {l.emploi ?? "Hors emploi du temps"}
+                        </Badge>
+                        {l.monthCode && (
+                          <Badge tone="neutral" className="gap-1 font-mono text-[9px]">
+                            <CalendarClock className="h-3 w-3" />
+                            {l.monthCode}
+                          </Badge>
+                        )}
+                      </span>
+                    )}
                     {l.description && (
                       <span className="block text-[9px] text-muted">{l.description}</span>
                     )}
@@ -1626,7 +1668,107 @@ function LedgerView({
 //  Mes règlements reçus — l'historique, et la photographie de chacun
 // ---------------------------------------------------------------------------
 
+/**
+ * LES ENFANTS SCOLARISÉS SUR CE RÈGLEMENT — et l'emploi du temps de chacun.
+ *
+ * Un règlement peut retenir la scolarité d'un enfant de deux façons, et le père
+ * doit lire les deux au même endroit :
+ *
+ *  - `childCharges` : ce que ce règlement a soldé lui-même. Chaque ligne porte
+ *    déjà son emploi du temps et son mois ;
+ *  - `childDebts`   : ce que le guichet avait crédité D'AVANCE, en le portant
+ *    sur ce salaire. Les règlements récents en figent l'emploi du temps ; pour
+ *    les plus anciens, il se relit depuis la ligne d'origine, qui n'est jamais
+ *    effacée — seulement marquée réglée.
+ *
+ * Sans cet écran, un père voyait « Scolarité — Yacine : −1 500 DA » sans jamais
+ * savoir lequel des trois cours de son fils il venait de payer.
+ */
+function ChildSettlementBlock({ payment }: { payment: TeacherPayment }) {
+  const db = useData();
+  const rows = settlementChildLines(db, payment);
+  if (rows.length === 0) return null;
+  const total = money(rows.reduce((s, r) => s + r.amount, 0));
+
+  return (
+    <section className="overflow-hidden rounded-2xl border-2 border-primary/30">
+      <div className="bg-gradient-to-r from-primary/15 to-transparent p-3">
+        <strong className="flex items-center gap-1.5 text-sm text-primary">
+          <GraduationCap className="h-4 w-4" /> Scolarité de vos enfants sur ce règlement (
+          {rows.length})
+        </strong>
+        <span className="block text-[11px] leading-relaxed text-muted">
+          Chaque ligne dit <strong className="text-ink">quel emploi du temps</strong> de votre enfant
+          a été payé, et <strong className="text-ink">quel mois</strong> de cet emploi. C&apos;est
+          exactement ce qui a été repris sur votre net ce jour-là — une fois, et une seule.
+        </span>
+      </div>
+      <div className="overflow-x-auto bg-surface">
+        <table className="w-full min-w-[620px] text-[11px]">
+          <thead className="bg-canvas/70">
+            <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+              <th className="px-3 py-2.5">Enfant</th>
+              <th className="px-3 py-2.5">Emploi du temps</th>
+              <th className="px-3 py-2.5 text-center">Mois</th>
+              <th className="px-3 py-2.5">Origine</th>
+              <th className="px-3 py-2.5 text-right">Retenu</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className="border-t border-line/60">
+                <td className="px-3 py-2.5">
+                  <strong className="block text-ink">{r.studentName}</strong>
+                  {r.registrationNumber && (
+                    <span className="block font-mono text-[9px] text-muted">
+                      N° {r.registrationNumber}
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5">
+                  <Badge tone={r.emploi ? "primary" : "neutral"} className="gap-1 text-[9px]">
+                    <GraduationCap className="h-3 w-3" />
+                    {r.emploi ?? "Hors emploi du temps"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2.5 text-center">
+                  {r.monthCode ? (
+                    <Badge tone="neutral" className="font-mono text-[9px]">
+                      {r.monthCode}
+                    </Badge>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-[10px] text-muted">
+                  {r.origin === "advanced"
+                    ? "Réglée d'avance au guichet"
+                    : "Soldée par ce règlement"}
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono font-bold text-danger">
+                  − {formatDA(r.amount)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-line bg-canvas/60">
+              <td colSpan={4} className="px-3 py-2.5 text-right text-[11px] font-bold text-ink">
+                TOTAL DES SCOLARITÉS
+              </td>
+              <td className="px-3 py-2.5 text-right font-mono text-sm font-black text-danger">
+                − {formatDA(total)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function SettlementList({ settlements }: { settlements: TeacherPayment[] }) {
+  const db = useData();
   const [viewed, setViewed] = useState<TeacherPayment | null>(null);
 
   if (settlements.length === 0) {
@@ -1681,6 +1823,13 @@ function SettlementList({ settlements }: { settlements: TeacherPayment[] }) {
                         détail complet
                       </Badge>
                     )}
+                    {/* La scolarité d'un enfant retenue sur ce règlement, avec
+                        SON emploi du temps : lisible sans ouvrir la carte. */}
+                    {settlementChildLines(db, p).map((l) => (
+                      <Badge key={l.key} tone="danger" className="text-[9px]">
+                        🎓 {settlementChildLabel(l)}
+                      </Badge>
+                    ))}
                   </div>
                 </div>
                 <div className="shrink-0 text-end">
@@ -1734,6 +1883,14 @@ function SettlementList({ settlements }: { settlements: TeacherPayment[] }) {
                 {" · "}Reçu N° PAY-{viewed.id.slice(0, 8).toUpperCase()}
               </span>
             </div>
+
+            {/* CE QUE MES ENFANTS ONT COÛTÉ SUR CE RÈGLEMENT, cours par cours.
+
+                La table 3 du board figé les liste déjà, mais elle n'existe que
+                pour les règlements récents — et un père veut pouvoir ouvrir
+                N'IMPORTE lequel de ses règlements et y lire tout de suite pour
+                quel emploi du temps de son fils on l'a retenu. */}
+            <ChildSettlementBlock payment={viewed} />
 
             {viewed.board ? (
               <PayBoardView board={viewed.board} />

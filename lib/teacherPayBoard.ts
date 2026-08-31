@@ -40,6 +40,7 @@ import {
   cycleOf,
   cycleSlots,
   monthlyPriceOf,
+  teacherChildDebtEmploi,
   teacherMonthShareOf,
 } from "@/lib/helpers";
 import { money } from "@/lib/utils";
@@ -223,10 +224,10 @@ export interface BoardPassager extends TeacherPayPassagerLine {
 export interface BoardDeduction extends TeacherPayDeductionLine {
   /** cochée par la réception (donc réellement retenue par ce règlement) */
   selectable: boolean;
-  /** scolarité d'enfant : l'emploi et le mois concernés, pour la recréditer */
+  /** scolarité d'enfant : l'élève et l'emploi à recréditer (le NOM de l'emploi
+   *  et le mois se lisent sur `emploi` / `monthCode`, hérités de la ligne) */
   studentId?: string;
   subscriptionId?: string;
-  monthCode?: string;
 }
 
 /** Tout ce que l'écran d'un mois affiche, avant que la réception ne coche. */
@@ -535,6 +536,11 @@ function buildDeductions(db: Database, teacher: Teacher): BoardDeduction[] {
         id: `child:${child.studentId}:${line.subscriptionId}:${line.monthCode}`,
         kind: "child",
         label: `Scolarité — ${child.studentName}`,
+        // L'emploi du temps a sa propre case, en plus de la phrase : c'est lui
+        // que l'enseignant cherche des yeux quand son fils suit trois modules,
+        // et une colonne se lit mieux qu'un membre de phrase.
+        emploi: line.label,
+        monthCode: line.monthCode,
         description: `${line.label} · ${line.monthCode} · ${line.seances} séance(s)`,
         date: "",
         amount: line.amount,
@@ -542,7 +548,6 @@ function buildDeductions(db: Database, teacher: Teacher): BoardDeduction[] {
         selectable: true,
         studentId: child.studentId,
         subscriptionId: line.subscriptionId,
-        monthCode: line.monthCode,
       });
     }
   }
@@ -550,18 +555,26 @@ function buildDeductions(db: Database, teacher: Teacher): BoardDeduction[] {
   // Les scolarités déjà créditées au guichet et portées sur ce salaire : elles
   // ont été promises à la caisse, ce règlement les honore.
   for (const d of db.teacherChildDebts.filter((x) => x.teacherId === teacher.id)) {
+    const emploi = teacherChildDebtEmploi(db, d);
     out.push({
       id: d.id,
       kind: "child_debt",
       label: `Scolarité avancée — ${d.label}`,
-      description: [d.monthCode, "réglée d'avance au guichet"].filter(Boolean).join(" · "),
+      emploi,
+      monthCode: d.monthCode,
+      description: [
+        emploi ?? "hors emploi du temps",
+        d.monthCode,
+        "réglée d'avance au guichet",
+      ]
+        .filter(Boolean)
+        .join(" · "),
       date: d.date,
       amount: d.amount,
       paid: !!d.paid,
       selectable: !d.paid,
       studentId: d.studentId,
       subscriptionId: d.subscriptionId,
-      monthCode: d.monthCode,
     });
   }
 
@@ -707,6 +720,11 @@ export function freezeBoard(
         kind: d.kind,
         label: d.label,
         description: d.description,
+        // L'emploi du temps d'une scolarité d'enfant est figé avec le reste :
+        // relire un vieux règlement doit encore dire pour QUEL cours du fils
+        // le père a été retenu.
+        emploi: d.emploi,
+        monthCode: d.monthCode,
         date: d.date,
         amount: d.amount,
         paid: true,

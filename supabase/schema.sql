@@ -651,6 +651,9 @@ create table if not exists public.teacher_child_debts (
   teacher_id      text not null references public.teachers (id) on delete cascade,
   student_id      text not null references public.students (id) on delete cascade,
   subscription_id text,                          -- l'emploi du temps crédité
+  emploi          text,                          -- SON NOM, recopié : c'est ce que
+                                                 -- le père lit sur sa paie — pour
+                                                 -- quel cours de son fils on le retient
   month_code      text,                          -- le mois de cet emploi (M1, M2 …)
   label           text not null default '',      -- ce que la fiche de paie affiche
   amount          numeric not null default 0,

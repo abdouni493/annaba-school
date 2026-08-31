@@ -501,7 +501,18 @@ export function buildTeacherPayslip(data: TeacherPayslipData): string {
                     (d) => `<tr>
                       <td>${fmtDate(d.date, lang)}</td>
                       <td><span class="badge ${d.kind === "expense" ? "badge-danger" : "badge-warning"}">${d.kind === "expense" ? L.expense : L.acompte}</span></td>
-                      <td><strong>${esc(d.label)}</strong></td>
+                      <td><strong>${esc(d.label)}</strong>${
+                        // Une scolarité d'enfant portée sur ce salaire arrive
+                        // ici comme une dépense avancée. Elle est la seule dont
+                        // on puisse demander « pour quel cours ? » : son emploi
+                        // du temps et son mois sont donc nommés sous le
+                        // libellé, et pas seulement dans le détail.
+                        d.emploi
+                          ? `<br/><span style="font-size:0.8em;color:#7a1440;font-weight:700;">${esc(
+                              d.emploi,
+                            )}${d.monthCode ? ` · ${esc(d.monthCode)}` : ""}</span>`
+                          : ""
+                      }</td>
                       <td>${esc(d.description || "—")}</td>
                       <td class="num deduct">${da(d.amount)}</td>
                     </tr>`,

@@ -17,6 +17,8 @@ import {
   studentDebtSummary,
   studentHasDebt,
   studentListPrice,
+  subscriptionLabel,
+  teacherChildDebtEmploi,
 } from "@/lib/helpers";
 import { money, positiveMoney, formatDA } from "@/lib/utils";
 import type {
@@ -2401,6 +2403,14 @@ export const useData = create<DataStore>((set, get) => ({
       teacherId,
       studentId,
       subscriptionId,
+      // Le nom de l'emploi du temps est recopié ici, et pas seulement son
+      // identifiant : c'est ce que son père lira sur sa paie — « pour quel
+      // cours de mon fils me retient-on cette somme ? » — même des mois plus
+      // tard, même si l'emploi a été archivé depuis. C'est le MÊME intitulé que
+      // celui des scolarités encore dues sur son écran de paie
+      // (`subscriptionLabel`), et non le libellé court du reçu de l'élève : les
+      // deux retenues doivent se lire comme une seule et même liste.
+      emploi: sub ? subscriptionLabel(db, sub) : undefined,
       monthCode,
       label: `${student.firstName} ${student.lastName}`.trim() || "Enfant",
       amount: due,
@@ -3354,16 +3364,25 @@ export const useData = create<DataStore>((set, get) => ({
     const clearedChildDebts = db.teacherChildDebts.filter(
       (d) => d.teacherId === teacherId && !d.paid && (childDebtIds ?? []).includes(d.id),
     );
-    const childDebtSnapshot: TeacherPaymentDeduction[] = clearedChildDebts.map((d) => ({
-      id: d.id,
-      kind: "expense",
-      label: `Scolarité — ${d.label}`,
-      description: [d.monthCode, d.subscriptionId ? undefined : "hors emploi du temps"]
-        .filter(Boolean)
-        .join(" · "),
-      amount: d.amount,
-      date: d.date,
-    }));
+    const childDebtSnapshot: TeacherPaymentDeduction[] = clearedChildDebts.map((d) => {
+      // L'emploi du temps que la scolarité a payé, nommé et figé sur le
+      // règlement : « voir le détail » et la fiche de paie réimprimée diront
+      // POUR QUEL COURS de son enfant l'enseignant a été retenu, et pas
+      // seulement combien.
+      const emploi = teacherChildDebtEmploi(db, d);
+      return {
+        id: d.id,
+        kind: "expense" as const,
+        label: `Scolarité — ${d.label}`,
+        description:
+          [emploi, d.monthCode].filter(Boolean).join(" · ") || "Hors emploi du temps",
+        emploi,
+        monthCode: d.monthCode,
+        studentName: d.label,
+        amount: d.amount,
+        date: d.date,
+      };
+    });
     const childDebtIdSet = new Set(clearedChildDebts.map((d) => d.id));
 
     set((state) => ({

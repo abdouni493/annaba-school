@@ -120,6 +120,7 @@ import {
   studentDebtSummary,
   studentName,
   studentSoldDebtRows,
+  subscriptionLabel,
   teacherName,
   todayIso,
 } from "@/lib/helpers";
@@ -2946,6 +2947,17 @@ function TeacherChildPayModal({
   const sub = db.subscriptions.find((x) => x.id === subscriptionId);
   const father: Teacher | undefined = db.teachers.find((t) => t.id === student.teacherFatherId);
 
+  /**
+   * L'EMPLOI DU TEMPS TEL QUE LE PÈRE LE LIRA SUR SA PAIE.
+   *
+   * `label` est l'intitulé court de la feuille de présence — celui du reçu de
+   * la famille. L'écran de paie de l'enseignant, lui, nomme un emploi du temps
+   * en entier (classe · module · salle · enseignant), et c'est CE nom-là qui
+   * sera figé sur la retenue. Le guichet doit donc voir le même, sans quoi il
+   * promet un intitulé que l'enseignant ne retrouvera pas.
+   */
+  const payslipEmploi = sub ? subscriptionLabel(db, sub) : label;
+
   /** Ses mois EN DETTE sur cet emploi du temps — ce qu'il y a à régler. */
   const owing = enrollmentCycles(db, student.id, subscriptionId).filter((c) => c.balance < 0);
   const current = currentCycleCode(db, student.id, subscriptionId);
@@ -3002,10 +3014,10 @@ function TeacherChildPayModal({
       title: source === "cash" ? "Encaissé auprès de la famille" : "Porté sur le salaire du père",
       message:
         source === "cash"
-          ? `${formatDA(value)} sur ${monthCode} — l'argent entre en caisse, rien n'est retenu sur le salaire de son père.`
+          ? `${formatDA(value)} sur ${label} · ${monthCode} — l'argent entre en caisse, rien n'est retenu sur le salaire de son père.`
           : `${formatDA(value)} sur ${monthCode} — retenus sur le prochain règlement de ${
               father ? `${father.firstName} ${father.lastName}` : "son père"
-            }, et pas une fois de plus.`,
+            }, et pas une fois de plus. Sa paie nommera « ${payslipEmploi} · ${monthCode} ».`,
       studentName: studentName(student),
     });
     // Le reçu ne s'imprime que quand de l'argent a vraiment changé de main.
@@ -3030,8 +3042,23 @@ function TeacherChildPayModal({
           <div className="min-w-0">
             <strong className="block text-sm text-ink">{studentName(student)}</strong>
             <span className="text-[11px] text-muted">
-              N° {registrationNumberOf(db, student)} · {label}
+              N° {registrationNumberOf(db, student)}
               {father ? ` · père : ${father.firstName} ${father.lastName}` : ""}
+            </span>
+            {/* L'EMPLOI DU TEMPS QUE CE RÈGLEMENT PAIE, nommé sur sa propre
+                ligne. C'est lui que le père retrouvera sur sa fiche de paie :
+                le guichet doit voir exactement ce que l'enseignant lira. */}
+            <span className="mt-1 flex flex-wrap items-center gap-1">
+              <Badge
+                tone="primary"
+                className="gap-1 text-[9px]"
+                title="L'emploi du temps réglé — c'est ce nom que son père lira sur sa fiche de paie"
+              >
+                <GraduationCap className="h-3 w-3" /> {payslipEmploi}
+              </Badge>
+              <Badge tone="neutral" className="font-mono text-[9px]">
+                {monthCode}
+              </Badge>
             </span>
           </div>
           <Badge
@@ -3146,6 +3173,8 @@ function TeacherChildPayModal({
                 rapportent à l&apos;enseignant se débloque — et le montant part{" "}
                 <strong>en attente sur la fiche de son père</strong> : aucun mouvement de caisse
                 aujourd&apos;hui, et son prochain règlement le retient sur son net, une seule fois.
+                Sa paie nommera <strong>« {payslipEmploi} · {monthCode} »</strong> : il saura pour
+                quel cours de son fils on le retient.
               </p>
             </div>
             <Button

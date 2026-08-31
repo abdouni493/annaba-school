@@ -35,6 +35,7 @@ import { useData } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
 import { useToast } from "@/lib/store/toast";
 import { Badge, type Tone } from "@/components/ui/Badge";
+import { DeductionLabel } from "@/components/teachers/DeductionLabel";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
@@ -810,7 +811,10 @@ function MonthBoard({
       }
       row.lines.push({
         subscriptionId: d.subscriptionId,
-        label: d.description ?? d.label,
+        // La colonne « Emploi du temps » de la fiche de paie ne doit contenir
+        // QUE l'emploi du temps : le mois et les séances ont leurs propres
+        // colonnes, et les y recopier rendait la ligne illisible.
+        label: d.emploi ?? d.description ?? d.label,
         monthCode: d.monthCode,
         amount: d.amount,
       });
@@ -2107,8 +2111,7 @@ function DeductionLine({
         </Badge>
       </td>
       <td className="px-2 py-2">
-        <strong className="block text-ink">{row.label}</strong>
-        {row.description && <span className="block text-[9px] text-muted">{row.description}</span>}
+        <DeductionLabel row={row} />
       </td>
       <td className="px-2 py-2 text-center">
         <Badge tone={row.paid ? "success" : "warning"} className="text-[9px]">
