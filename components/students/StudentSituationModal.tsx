@@ -42,6 +42,7 @@ import {
   ChevronLeft,
   ChevronRight,
   History,
+  Layers,
   Search,
   Ticket,
   UserMinus,
@@ -68,6 +69,7 @@ import {
   studentCaseLabel,
   studentCaseTone,
   isFreeSub,
+  studentIsMaternelle,
   studentListPrice,
   studentMatches,
   studentName,
@@ -203,6 +205,14 @@ export function StudentSituationModal({
   const [pay, setPay] = useState<PayTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<string | null>(null);
+
+  /** encaissement groupé — réservé à la maternelle (voir plus bas). */
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupDate, setGroupDate] = useState(todayIso());
+  const [groupBusy, setGroupBusy] = useState(false);
+  const [groupSel, setGroupSel] = useState<Record<string, boolean>>({});
+  const [groupAmt, setGroupAmt] = useState<Record<string, number>>({});
+  const [groupMonth, setGroupMonth] = useState<Record<string, string>>({});
 
   const matches = useMemo(() => {
     const q = query.trim();
@@ -380,6 +390,104 @@ export function StudentSituationModal({
     setPay(null);
   };
 
+  /**
+   * ENCAISSEMENT GROUPÉ — RÉSERVÉ À LA MATERNELLE.
+   *
+   * À la maternelle, une famille règle souvent tous les créneaux de l'enfant
+   * d'un coup. On coche les emplois du temps, on ajuste chaque montant, et tout
+   * part sur UN seul reçu qui liste chaque emploi du temps, son prix, et le
+   * total. Les autres niveaux gardent l'encaissement ligne par ligne.
+   */
+  const isMaternelle = !!student && studentIsMaternelle(db, student);
+  /** les emplois du temps qu'il suit ENCORE et qui sont payants */
+  const payableRows = rows.filter((r) => r.active && !r.offered);
+
+  const openGroupPay = () => {
+    if (!student) return;
+    const sel: Record<string, boolean> = {};
+    const amt: Record<string, number> = {};
+    const mon: Record<string, string> = {};
+    for (const r of payableRows) {
+      const code = `M${r.currentIndex + 1}`;
+      const due = Math.max(0, -cycleOf(db, student.id, r.subId, code).balance);
+      sel[r.subId] = due > 0;
+      amt[r.subId] = due || 0;
+      mon[r.subId] = code;
+    }
+    setGroupSel(sel);
+    setGroupAmt(amt);
+    setGroupMonth(mon);
+    setGroupDate(todayIso());
+    setGroupOpen(true);
+  };
+
+  const groupChosen = payableRows.filter(
+    (r) => groupSel[r.subId] && Math.round(groupAmt[r.subId] || 0) > 0,
+  );
+  const groupTotal = groupChosen.reduce((s, r) => s + Math.round(groupAmt[r.subId] || 0), 0);
+
+  const submitGroup = async () => {
+    if (!student) return;
+    if (!canCollect) {
+      addToast({
+        type: "danger",
+        title: "Action non autorisée",
+        message: "Votre compte n'a pas le droit d'encaisser un paiement.",
+      });
+      setGroupOpen(false);
+      return;
+    }
+    if (groupChosen.length === 0) {
+      addToast({
+        type: "danger",
+        title: "Rien à encaisser",
+        message: "Cochez au moins un emploi du temps avec un montant.",
+      });
+      return;
+    }
+    setGroupBusy(true);
+    const lines: { label: string; monthCode: string; amount: number; balanceAfter: number }[] = [];
+    for (const r of groupChosen) {
+      const amount = Math.max(0, Math.round(groupAmt[r.subId] || 0));
+      const res = await addSold({
+        studentId: student.id,
+        subscriptionId: r.subId,
+        amount,
+        monthCode: groupMonth[r.subId],
+        date: groupDate,
+      });
+      if (res.ok) {
+        lines.push({
+          label: r.label,
+          monthCode: res.monthCode ?? groupMonth[r.subId],
+          amount,
+          balanceAfter: res.balance ?? 0,
+        });
+      }
+    }
+    setGroupBusy(false);
+    if (lines.length === 0) {
+      addToast({ type: "danger", title: "Échec", message: "Aucun paiement n'a pu être enregistré." });
+      return;
+    }
+    const total = lines.reduce((s, l) => s + l.amount, 0);
+    addToast({
+      type: "success",
+      title: "Encaissement groupé",
+      message: `${formatDA(total)} encaissés sur ${lines.length} emploi(s) du temps — un seul reçu.`,
+      studentName: studentName(student),
+    });
+    setReceipt(
+      soldReceiptHtml(db, {
+        student,
+        language,
+        title: "Reçu — encaissement groupé",
+        lines,
+      }),
+    );
+    setGroupOpen(false);
+  };
+
   return (
     <>
       <Modal open onClose={onClose} title="Situation d'un élève" full>
@@ -548,6 +656,33 @@ export function StudentSituationModal({
                   </Button>
                 )}
               </div>
+
+              {/* MATERNELLE — encaisser plusieurs emplois du temps sur un seul
+                  reçu. Réservé à ce niveau. */}
+              {isMaternelle && canCollect && payableRows.length > 0 && (
+                <button
+                  onClick={openGroupPay}
+                  className="flex w-full flex-wrap items-center justify-between gap-2 rounded-2xl border-2 border-primary/40 bg-primary-50/50 p-3 text-left transition-colors hover:bg-primary-50"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                      <Layers className="h-4.5 w-4.5" />
+                    </span>
+                    <span>
+                      <strong className="block text-xs text-ink">
+                        Encaisser plusieurs emplois du temps — un seul reçu
+                      </strong>
+                      <span className="block text-[10px] text-muted">
+                        Réservé à la maternelle : cochez les créneaux, ajustez chaque montant, et
+                        tout part sur un reçu unique avec le détail et le total.
+                      </span>
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[10px] font-bold text-white">
+                    <Wallet className="h-3 w-3" /> Encaissement groupé
+                  </span>
+                </button>
+              )}
 
               {/* ---- 3. ses totaux -------------------------------------- */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1010,6 +1145,148 @@ export function StudentSituationModal({
               </Button>
               <Button onClick={submitPay} disabled={busy}>
                 Encaisser
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ---- ENCAISSEMENT GROUPÉ (maternelle) : plusieurs emplois, un reçu ---- */}
+      {groupOpen && student && (
+        <Modal
+          open
+          onClose={() => setGroupOpen(false)}
+          title="Encaissement groupé — un seul reçu"
+          wide
+        >
+          <div className="space-y-3">
+            <div className="rounded-xl bg-primary-50/60 p-3">
+              <strong className="block text-sm text-ink">{studentName(student)}</strong>
+              <span className="text-[11px] text-muted">
+                N° {registrationNumberOf(db, student)} · Maternelle — cochez les emplois du temps à
+                régler, ajustez chaque montant, et tout part sur un reçu unique.
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {payableRows.length === 0 ? (
+                <p className="rounded-xl border border-line bg-canvas/40 p-6 text-center text-xs italic text-muted">
+                  Aucun emploi du temps à encaisser.
+                </p>
+              ) : (
+                payableRows.map((r) => {
+                  const code = groupMonth[r.subId] ?? `M${r.currentIndex + 1}`;
+                  const due = Math.max(0, -cycleOf(db, student.id, r.subId, code).balance);
+                  const checked = !!groupSel[r.subId];
+                  return (
+                    <div
+                      key={r.subId}
+                      className={`rounded-2xl border p-3 transition-colors ${
+                        checked ? "border-primary/50 bg-primary-50/30" : "border-line bg-surface"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <label className="flex min-w-0 cursor-pointer items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setGroupSel((prev) => ({ ...prev, [r.subId]: e.target.checked }))
+                            }
+                            className="mt-0.5 h-4 w-4 accent-[var(--color-primary,#7c3aed)]"
+                          />
+                          <span className="min-w-0">
+                            <strong className="block text-sm text-ink">{r.label}</strong>
+                            <span className="block text-[10px] text-muted">
+                              Groupe {r.groupName} · {r.teacherName} · séance à{" "}
+                              {formatDA(r.unitPrice)}
+                            </span>
+                            <span className="block text-[10px] text-muted">
+                              {due > 0 ? (
+                                <span className="font-bold text-danger">Reste dû {formatDA(due)}</span>
+                              ) : (
+                                <span className="text-success">à jour</span>
+                              )}
+                            </span>
+                          </span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <label className="mb-0.5 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                              Mois
+                            </label>
+                            <Select
+                              value={code}
+                              onChange={(e) =>
+                                setGroupMonth((prev) => ({ ...prev, [r.subId]: e.target.value }))
+                              }
+                              className="w-[110px]"
+                            >
+                              {Array.from(
+                                { length: Math.max(6, r.currentIndex + 3) },
+                                (_, i) => `M${i + 1}`,
+                              ).map((c) => (
+                                <option key={c} value={c}>
+                                  {monthCodeLabel(c)}
+                                </option>
+                              ))}
+                            </Select>
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                              Montant (DA)
+                            </label>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={groupAmt[r.subId] || ""}
+                              onChange={(e) =>
+                                setGroupAmt((prev) => ({
+                                  ...prev,
+                                  [r.subId]: Number(e.target.value) || 0,
+                                }))
+                              }
+                              className="w-[110px]"
+                              placeholder="Ex: 2000"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+                Date du paiement
+              </label>
+              <Input
+                type="date"
+                value={groupDate}
+                onChange={(e) => setGroupDate(e.target.value)}
+                className="w-full sm:w-56"
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary-50/40 p-3">
+              <span className="text-[11px] text-muted">
+                {groupChosen.length} emploi(s) du temps sélectionné(s) — un seul reçu
+              </span>
+              <strong className="font-mono text-base text-primary">{formatDA(groupTotal)}</strong>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-line pt-3">
+              <Button variant="outline" onClick={() => setGroupOpen(false)}>
+                Annuler
+              </Button>
+              <Button
+                onClick={submitGroup}
+                disabled={groupBusy || groupChosen.length === 0}
+                className="gap-1.5"
+              >
+                <Wallet className="h-4 w-4" /> Encaisser {formatDA(groupTotal)} — un seul reçu
               </Button>
             </div>
           </div>

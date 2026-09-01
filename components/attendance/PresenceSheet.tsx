@@ -26,6 +26,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { useData } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
 import { useToast } from "@/lib/store/toast";
@@ -214,6 +215,10 @@ export function PresenceSheet({
   const [passagerOpen, setPassagerOpen] = useState(false);
   /** la séance libre d'un passager que l'on s'apprête à retirer */
   const [passagerToRemove, setPassagerToRemove] = useState<IndependentSession | null>(null);
+  /** l'alerte des dettes n'affiche plus la liste : un clic l'ouvre en modale */
+  const [debtorsOpen, setDebtorsOpen] = useState(false);
+  /** la recherche d'un élève dans la liste des dettes du groupe */
+  const [debtorQuery, setDebtorQuery] = useState("");
 
   // Un tarif ARCHIVÉ (retiré du catalogue) ne pointe plus : la feuille demande
   // qu'on le redéfinisse, comme pour un emploi qui n'en a jamais eu.
@@ -847,89 +852,173 @@ export function PresenceSheet({
           famille est joignable : l'élève est là, devant le comptoir. Chaque
           ligne se règle d'un clic, sans quitter l'écran ni ouvrir de fiche. */}
       {alerts.rows.length > 0 && (
-        <section className="overflow-hidden rounded-2xl border-2 border-danger/40">
-          <div className="flex flex-wrap items-center justify-between gap-2 bg-danger/10 p-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="rounded-xl bg-danger/15 p-2 text-danger">
-                <AlertTriangle className="h-4 w-4" />
+        <motion.button
+          type="button"
+          onClick={() => {
+            setDebtorQuery("");
+            setDebtorsOpen(true);
+          }}
+          initial={{ opacity: 0, y: -6 }}
+          animate={{
+            opacity: 1,
+            y: 0,
+            boxShadow: [
+              "0 0 0 0 rgba(220,38,38,0.35)",
+              "0 0 0 8px rgba(220,38,38,0)",
+              "0 0 0 0 rgba(220,38,38,0)",
+            ],
+          }}
+          transition={{
+            boxShadow: { duration: 2, repeat: Infinity, ease: "easeOut" },
+            default: { duration: 0.3 },
+          }}
+          className="flex w-full flex-wrap items-center justify-between gap-2 rounded-2xl border-2 border-danger/50 bg-danger/10 p-3 text-left transition-colors hover:bg-danger/15"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <motion.span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-danger/15 text-danger"
+              animate={{ scale: [1, 1.15, 1] }}
+              transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <AlertTriangle className="h-4.5 w-4.5" />
+            </motion.span>
+            <div className="min-w-0">
+              <strong className="block text-xs text-ink">
+                {alerts.rows.length} élève(s) de ce groupe doivent de l&apos;argent
+              </strong>
+              <span className="block text-[10px] text-muted">
+                Cliquez pour voir la liste, chercher un élève et encaisser — scolarité, frais et
+                avances de l&apos;école, à la date de votre choix.
               </span>
-              <div className="min-w-0">
-                <strong className="block text-xs text-ink">
-                  {alerts.rows.length} élève(s) de ce groupe doivent de l&apos;argent
-                </strong>
-                <span className="block text-[10px] text-muted">
-                  Scolarité, frais divers et dettes avancées par l&apos;école — encaissables ici
-                  même, à la date de votre choix, en totalité ou en partie.
-                </span>
-              </div>
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-              <Badge tone="danger" className="font-mono text-[11px]">
-                {formatDA(alerts.total)} au total
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <Badge tone="danger" className="font-mono text-[11px]">
+              {formatDA(alerts.total)} au total
+            </Badge>
+            {alerts.charges > 0 && (
+              <Badge tone="warning" className="gap-1 font-mono text-[10px]">
+                <Receipt className="h-3 w-3" /> {formatDA(alerts.charges)} de frais
               </Badge>
-              {alerts.charges > 0 && (
-                <Badge tone="warning" className="gap-1 font-mono text-[10px]">
-                  <Receipt className="h-3 w-3" /> {formatDA(alerts.charges)} de frais
-                </Badge>
-              )}
-              {alerts.advances > 0 && (
-                <Badge tone="warning" className="gap-1 font-mono text-[10px]">
-                  <Landmark className="h-3 w-3" /> {formatDA(alerts.advances)} avancés par
-                  l&apos;école
-                </Badge>
-              )}
-            </div>
+            )}
+            {alerts.advances > 0 && (
+              <Badge tone="warning" className="gap-1 font-mono text-[10px]">
+                <Landmark className="h-3 w-3" /> {formatDA(alerts.advances)} avancés par
+                l&apos;école
+              </Badge>
+            )}
+            <span className="flex items-center gap-1 rounded-lg bg-danger px-2 py-1 text-[10px] font-bold text-white">
+              <Users className="h-3 w-3" /> Voir la liste
+            </span>
           </div>
+        </motion.button>
+      )}
 
-          <div className="max-h-56 space-y-1.5 overflow-y-auto p-2.5">
-            {alerts.rows.map((r) => (
-              <div
-                key={r.student.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/25 bg-danger/5 px-3 py-2"
-              >
-                <span className="min-w-0 text-xs">
-                  <span className="font-mono text-[10px] text-muted">
-                    {registrationNumberOf(db, r.student)}
-                  </span>{" "}
-                  <strong className="text-ink">{studentName(r.student)}</strong>
-                  {r.student.phone && (
-                    <span className="text-[10px] text-muted"> · {r.student.phone}</span>
-                  )}
-                  <span className="block text-[10px] text-muted">
-                    {r.school > 0 ? `Scolarité ${formatDA(r.school)}` : "Scolarité à jour"}
-                    {r.charges > 0 ? ` · Frais ${formatDA(r.charges)}` : ""}
-                    {r.advances > 0
-                      ? ` · dont ${formatDA(r.advances)} avancés par l'école`
-                      : ""}
-                  </span>
-                </span>
-                <span className="flex shrink-0 flex-wrap items-center gap-1.5">
-                  <Badge tone="danger" className="font-mono text-[10px]">
-                    {formatDA(r.total)}
+      {/* La liste des dettes du groupe, ouverte depuis l'alerte — cherchable,
+          chaque ligne encaissable sans quitter l'écran. */}
+      {debtorsOpen && (
+        <Modal
+          open
+          onClose={() => setDebtorsOpen(false)}
+          title={`Élèves du groupe en dette (${alerts.rows.length})`}
+          wide
+        >
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-danger/30 bg-danger/5 p-3">
+              <span className="text-[11px] leading-relaxed text-muted">
+                Scolarité, frais divers et dettes avancées par l&apos;école — encaissables ici même,
+                à la date de votre choix, en totalité ou en partie.
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                <Badge tone="danger" className="font-mono text-[10px]">
+                  {formatDA(alerts.total)} au total
+                </Badge>
+                {alerts.charges > 0 && (
+                  <Badge tone="warning" className="gap-1 font-mono text-[10px]">
+                    <Receipt className="h-3 w-3" /> {formatDA(alerts.charges)} de frais
                   </Badge>
-                  {r.school > 0 && (
-                    <button
-                      onClick={() => setDrill({ student: r.student, kind: "all" })}
-                      title="Voir et régler ses mois en dette, emploi par emploi"
-                      className="flex h-7 items-center gap-1 rounded-lg border border-primary/40 bg-primary-50/70 px-2 text-[10px] font-bold text-primary hover:bg-primary hover:text-white"
-                    >
-                      <Wallet className="h-3 w-3" /> Régler la scolarité
-                    </button>
-                  )}
-                  {r.charges > 0 && (
-                    <button
-                      onClick={() => setCharges({ student: r.student, tab: "pay" })}
-                      title="Régler ses frais : livres, tenues, avances de l'école…"
-                      className="flex h-7 items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-2 text-[10px] font-bold text-danger hover:bg-danger hover:text-white"
-                    >
-                      <Receipt className="h-3 w-3" /> Régler les frais
-                    </button>
-                  )}
-                </span>
+                )}
+                {alerts.advances > 0 && (
+                  <Badge tone="warning" className="gap-1 font-mono text-[10px]">
+                    <Landmark className="h-3 w-3" /> {formatDA(alerts.advances)} avancés
+                  </Badge>
+                )}
               </div>
-            ))}
+            </div>
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+              <Input
+                autoFocus
+                value={debtorQuery}
+                onChange={(e) => setDebtorQuery(e.target.value)}
+                placeholder="Rechercher un élève — nom ou n° d'inscription (00001)…"
+                className="pl-9"
+              />
+            </div>
+
+            {(() => {
+              const shownDebtors = alerts.rows.filter((r) => studentMatches(db, r.student, debtorQuery));
+              if (shownDebtors.length === 0) {
+                return (
+                  <p className="rounded-2xl border border-dashed border-line py-8 text-center text-xs italic text-muted">
+                    Aucun élève en dette ne correspond à « {debtorQuery.trim()} ».
+                  </p>
+                );
+              }
+              return (
+                <div className="max-h-[24rem] space-y-1.5 overflow-y-auto pr-1">
+                  {shownDebtors.map((r) => (
+                    <div
+                      key={r.student.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/25 bg-danger/5 px-3 py-2"
+                    >
+                      <span className="min-w-0 text-xs">
+                        <span className="font-mono text-[10px] text-muted">
+                          {registrationNumberOf(db, r.student)}
+                        </span>{" "}
+                        <strong className="text-ink">{studentName(r.student)}</strong>
+                        {r.student.phone && (
+                          <span className="text-[10px] text-muted"> · {r.student.phone}</span>
+                        )}
+                        <span className="block text-[10px] text-muted">
+                          {r.school > 0 ? `Scolarité ${formatDA(r.school)}` : "Scolarité à jour"}
+                          {r.charges > 0 ? ` · Frais ${formatDA(r.charges)}` : ""}
+                          {r.advances > 0
+                            ? ` · dont ${formatDA(r.advances)} avancés par l'école`
+                            : ""}
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+                        <Badge tone="danger" className="font-mono text-[10px]">
+                          {formatDA(r.total)}
+                        </Badge>
+                        {r.school > 0 && (
+                          <button
+                            onClick={() => setDrill({ student: r.student, kind: "all" })}
+                            title="Voir et régler ses mois en dette, emploi par emploi"
+                            className="flex h-7 items-center gap-1 rounded-lg border border-primary/40 bg-primary-50/70 px-2 text-[10px] font-bold text-primary hover:bg-primary hover:text-white"
+                          >
+                            <Wallet className="h-3 w-3" /> Régler la scolarité
+                          </button>
+                        )}
+                        {r.charges > 0 && (
+                          <button
+                            onClick={() => setCharges({ student: r.student, tab: "pay" })}
+                            title="Régler ses frais : livres, tenues, avances de l'école…"
+                            className="flex h-7 items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-2 text-[10px] font-bold text-danger hover:bg-danger hover:text-white"
+                          >
+                            <Receipt className="h-3 w-3" /> Régler les frais
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
-        </section>
+        </Modal>
       )}
 
       {/* ---- the table ----------------------------------------------------- */}
@@ -2479,9 +2568,12 @@ function StudentRow({
   const monthDue = Math.max(0, -cycle.balance);
   const prevDebt =
     monthIndex > 0 ? Math.max(0, -cycleOf(db, student.id, subscriptionId, `M${monthIndex}`).balance) : 0;
-  const otherDebt = studentSoldDebtRows(db, student.id)
-    .filter((r) => r.subscriptionId !== subscriptionId)
-    .reduce((s, r) => s + r.debt, 0);
+  /** ses dettes sur les AUTRES emplois du temps, gardées ligne par ligne :
+   *  chacune porte le NOM de son emploi et se règle d'un clic, ici même. */
+  const otherDebtRows = studentSoldDebtRows(db, student.id).filter(
+    (r) => r.subscriptionId !== subscriptionId,
+  );
+  const otherDebt = otherDebtRows.reduce((s, r) => s + r.debt, 0);
   /** ses frais : livres, tenues, sorties — et ce que l'école lui a avancé */
   const chargeDebt = studentChargeDebt(db, student.id);
   const advanceDebt = studentAdvanceDebt(db, student.id);
@@ -2642,19 +2734,60 @@ function StudentRow({
         )}
       </td>
 
-      {/* other emplois */}
+      {/* AUTRES DETTES — ses mois en dette sur les AUTRES emplois du temps, un
+          par un, chacun nommé et réglable ici même. La famille est au comptoir :
+          on lui réclame CE qu'elle doit, sur QUEL cours, et on l'encaisse. */}
       <td className="px-2 py-2">
-        {otherDebt > 0 ? (
-          <button
-            onClick={() => onDrill("other")}
-            className="rounded-lg border border-warning/40 bg-warning/10 px-2 py-1 text-[10px] font-bold text-warning hover:bg-warning/20"
-          >
-            {formatDA(otherDebt)}
-          </button>
-        ) : (
+        {otherDebtRows.length === 0 ? (
           <span className="text-sm" title="Aucune autre dette">
             ✅
           </span>
+        ) : (
+          <div className="flex min-w-[150px] flex-col gap-1">
+            {otherDebtRows.map((r) => (
+              <div
+                key={`${r.subscriptionId}-${r.code}`}
+                className="flex items-center justify-between gap-1 rounded-lg border border-warning/40 bg-warning/10 px-1.5 py-1"
+              >
+                <span className="min-w-0">
+                  <strong className="block truncate text-[10px] text-ink" title={r.label}>
+                    {r.label}
+                  </strong>
+                  <span className="block text-[9px] text-muted">
+                    {monthCodeLabel(r.code)} · {formatDA(r.debt)}
+                  </span>
+                </span>
+                {onPay && (
+                  <button
+                    onClick={() =>
+                      onPay({
+                        student,
+                        subscriptionId: r.subscriptionId,
+                        label: r.label,
+                        monthCode: r.code,
+                        amount: r.debt,
+                        suggestion: r.debt,
+                        description: `Règlement ${r.code} — ${r.label}`,
+                      })
+                    }
+                    title={`Encaisser ${formatDA(r.debt)} sur ${r.label} (${r.code})`}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-warning text-white transition-colors hover:brightness-110"
+                  >
+                    <Wallet className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {otherDebtRows.length > 1 && (
+              <button
+                onClick={() => onDrill("other")}
+                className="text-[9px] font-bold text-warning hover:underline"
+                title="Tout voir et régler emploi par emploi"
+              >
+                Total {formatDA(otherDebt)} · tout régler
+              </button>
+            )}
+          </div>
         )}
       </td>
 

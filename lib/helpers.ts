@@ -1816,6 +1816,21 @@ export function studentLevelLabel(db: Database, student: Student): string {
   return [...labels].join(" · ") || "-";
 }
 
+/**
+ * EST-IL UN ÉLÈVE DE MATERNELLE ? — vrai dès que l'un des emplois du temps
+ * qu'il suit relève d'une classe de niveau « maternelle ». C'est ce niveau, et
+ * lui seul, qui ouvre l'encaissement de plusieurs emplois du temps sur un seul
+ * reçu : à la maternelle, une famille règle souvent tous ses créneaux d'un coup.
+ */
+export function studentIsMaternelle(db: Database, student: Student): boolean {
+  return student.subscriptionIds.some((subId) => {
+    const sub = db.subscriptions.find((s) => s.id === subId);
+    const sess = sub ? db.sessions.find((se) => se.id === sub.sessionId) : undefined;
+    const cls = sess ? db.classes.find((c) => c.id === sess.classId) : undefined;
+    return cls?.type !== "formation" && cls?.coursLevel === "maternelle";
+  });
+}
+
 /** One search box for the rosters: full name, phone, or registration number
  *  (typing "12" finds 00012). */
 export function studentMatches(db: Database, student: Student, query: string): boolean {
