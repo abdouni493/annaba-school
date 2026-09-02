@@ -20,10 +20,10 @@ import {
   signaturesHtml,
 } from "@/lib/printTemplates";
 import {
-  enrollmentLabel,
   formatDateFr,
   groupName,
   monthCodeLabel,
+  paymentName,
   receiptNumberOf,
   registrationNumberOf,
   salleName,
@@ -536,9 +536,9 @@ export function paymentReceiptHtml(
   const enrollment = payment.enrollmentId
     ? db.enrollments.find((e) => e.id === payment.enrollmentId)
     : undefined;
-  const label = enrollment
-    ? enrollmentLabel(db, enrollment)
-    : payment.description || "Versement";
+  // Le nom imprimé est celui que la liste des anciens paiements affiche : le
+  // guichet ne doit jamais lire deux noms différents du même versement.
+  const label = paymentName(db, payment);
 
   return soldReceiptHtml(db, {
     student,

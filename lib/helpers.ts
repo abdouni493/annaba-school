@@ -1687,6 +1687,40 @@ export function enrollmentLabel(db: Database, enrollment: Enrollment): string {
     : `${moduleName(db, session.moduleId)} · ${groupName(db, session.groupId)}`;
 }
 
+/**
+ * LE NOM D'UN VERSEMENT — celui que la liste des anciens paiements affiche et
+ * celui que le reçu imprime, pour qu'on ne lise jamais deux noms différents
+ * du même papier :
+ *  - un règlement de frais porte le nom du frais (« Livre de maths ») ;
+ *  - un achat de séances porte le nom de l'emploi du temps qu'il crédite, lu
+ *    sur l'inscription, et à défaut sur l'emploi lui-même quand l'inscription
+ *    a été supprimée depuis ;
+ *  - sinon, ce que la saisie a écrit ce jour-là.
+ */
+export function paymentName(db: Database, payment: Payment): string {
+  if (payment.chargeId) {
+    const charge = db.studentCharges.find((c) => c.id === payment.chargeId);
+    if (charge?.name) return charge.name;
+  }
+  const enrollment = payment.enrollmentId
+    ? db.enrollments.find((e) => e.id === payment.enrollmentId)
+    : undefined;
+  if (enrollment) {
+    const label = enrollmentLabel(db, enrollment);
+    if (label !== "—") return label;
+  }
+  const sub = payment.subscriptionId
+    ? db.subscriptions.find((s) => s.id === payment.subscriptionId)
+    : undefined;
+  if (sub) {
+    const label = subscriptionLabel(db, sub);
+    if (label !== "—") return label;
+  }
+  const written = payment.description?.trim();
+  if (written) return written;
+  return payment.type === "debt_payment" ? "Règlement de dette" : "Versement";
+}
+
 // ---- Teacher dues ----
 export function teacherUnpaidSessions(db: Database, teacherId: string) {
   return db.unpaidTeacher.filter((u) => u.teacherId === teacherId && !u.paid);
