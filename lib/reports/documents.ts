@@ -376,9 +376,19 @@ export function soldReceiptHtml(
     language: Language;
     title?: string;
     note?: string;
+    /**
+     * NE PAS AFFICHER LE SOLDE OBTENU.
+     *
+     * Au guichet, la famille repart en sachant le nouveau solde de l'emploi.
+     * Mais quand on RÉIMPRIME un vieux versement (l'historique, la cloche du
+     * tableau de bord), ce solde-là n'est plus celui du jour du versement : le
+     * reçu ne doit alors dire qu'une chose sûre — CE QUE L'ÉLÈVE A VERSÉ ce
+     * jour-là. On masque donc la colonne « Nouveau solde ».
+     */
+    hideBalance?: boolean;
   },
 ): string {
-  const { student, lines, language } = opts;
+  const { student, lines, language, hideBalance } = opts;
   const extraLabel = language === "ar" ? "الرصيد الجديد :" : "Nouveau solde :";
 
   return brandedTicketHtml({
@@ -394,9 +404,13 @@ export function soldReceiptHtml(
       label: l.label,
       meta: monthCodeLabel(l.monthCode),
       amount: l.amount,
-      extraLabel,
-      extra: daTicket(l.balanceAfter, language),
-      extraTone: l.balanceAfter < 0 ? "danger" : "success",
+      ...(hideBalance
+        ? {}
+        : {
+            extraLabel,
+            extra: daTicket(l.balanceAfter, language),
+            extraTone: l.balanceAfter < 0 ? "danger" : "success",
+          }),
     })),
   });
 }
@@ -430,9 +444,11 @@ export function chargeReceiptHtml(
     note?: string;
     /** ce que l'élève doit ENCORE sur TOUS ses frais, celui-ci compris */
     restAfter?: number;
+    /** réimpression : ne dire que ce qui a été versé, pas ce qui reste dû */
+    hideRemaining?: boolean;
   },
 ): string {
-  const { student, lines, language } = opts;
+  const { student, lines, language, hideRemaining } = opts;
   const extraLabel = language === "ar" ? "الباقي على هذا الفرض :" : "Reste sur ce frais :";
   const soldeLabel = language === "ar" ? "مسدد بالكامل" : "Soldé";
 
@@ -444,18 +460,23 @@ export function chargeReceiptHtml(
     name: studentName(student),
     level: studentLevelLabel(db, student),
     date: new Date().toISOString().slice(0, 10),
-    note:
-      opts.note ??
-      (opts.restAfter !== undefined && opts.restAfter > 0
-        ? `${language === "ar" ? "إجمالي الباقي على كل الفرائض" : "Total restant dû, tous frais confondus"} : ${daTicket(opts.restAfter, language)}`
-        : undefined),
+    note: hideRemaining
+      ? opts.note
+      : opts.note ??
+        (opts.restAfter !== undefined && opts.restAfter > 0
+          ? `${language === "ar" ? "إجمالي الباقي على كل الفرائض" : "Total restant dû, tous frais confondus"} : ${daTicket(opts.restAfter, language)}`
+          : undefined),
     rows: lines.map((l) => ({
       label: l.label,
       meta: formatDateFr(l.date),
       amount: l.amount,
-      extraLabel,
-      extra: l.remaining > 0 ? daTicket(l.remaining, language) : soldeLabel,
-      extraTone: l.remaining > 0 ? "danger" : "success",
+      ...(hideRemaining
+        ? {}
+        : {
+            extraLabel,
+            extra: l.remaining > 0 ? daTicket(l.remaining, language) : soldeLabel,
+            extraTone: l.remaining > 0 ? ("danger" as const) : ("success" as const),
+          }),
     })),
   });
 }
@@ -495,6 +516,9 @@ export function paymentReceiptHtml(
         student,
         language,
         title: opts.title,
+        // Réimpression : on ne dit que le versement, jamais un « reste » qui
+        // n'est plus celui du jour du paiement.
+        hideRemaining: true,
         lines: [
           {
             label: charge.name,
@@ -521,14 +545,14 @@ export function paymentReceiptHtml(
     language,
     title: opts.title,
     note: payment.description,
+    // Réimpression d'un vieux versement : le reçu ne dit que CE QUI A ÉTÉ VERSÉ
+    // ce jour-là, pas un solde qui n'est plus celui du jour du paiement.
+    hideBalance: true,
     lines: [
       {
         label,
         monthCode: payment.monthCode ?? "",
         amount: payment.amountPaid,
-        // Le solde d'aujourd'hui, pas celui du jour du versement : c'est le seul
-        // qu'on connaisse encore, et c'est celui qui intéresse la famille quand
-        // elle repart avec le papier.
         balanceAfter: enrollment?.balance ?? 0,
       },
     ],
