@@ -532,6 +532,17 @@ export interface ReceptionStaff extends Authored {
   paymentType: ReceptionPaymentType;
   startDate: string;
   salary: number;
+  /**
+   * LES JOURS DE LA SEMAINE OÙ IL TRAVAILLE (mensuel, journalier, demi-journée).
+   *
+   * Un travailleur ne vient pas sept jours sur sept. Pour un journalier ou un
+   * demi-journalier, l'écran de règlement ne comptait pourtant TOUS les jours du
+   * calendrier comme dus — vendredis et jours de repos compris. Quand cette
+   * liste est renseignée, seules les journées de ces jours-là sont dues ; les
+   * autres ne sont PAS des jours non payés, ils ne comptent tout simplement pas.
+   * Absente ou vide = comportement d'avant (tous les jours).
+   */
+  workDays?: Day[];
   /** le métier — l'identifiant d'un `WorkerJobRole` */
   role?: WorkerRole;
   /** badge used by the worker check-in scanner */

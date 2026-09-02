@@ -121,7 +121,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
   reception: {
     table: "reception_staff", pk: "id", pkField: "id",
     fields: ["id", "firstName", "lastName", "phone", "email", "paymentType",
-             "startDate", "salary", "role", "rfid", "hourlyRate",
+             "startDate", "salary", "role", "rfid", "hourlyRate", "workDays",
              "hasAccount", "username", "navKeys", "actionKeys", "createdAt",
              "createdBy", "createdByName", "createdByRole"],
     notNull: { hasAccount: false },

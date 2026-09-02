@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useData, uid } from "@/lib/store/data";
 import {
+  accountIdForEntity,
+  createAccountForEntity,
   createRoleUser,
   deleteRoleUser,
   resetUserPassword,
@@ -714,29 +716,54 @@ export function TeachersPage() {
   const handleEditTeacher = async () => {
     if (!selectedTeacher) return;
 
-    if (password) {
-      try {
-        await resetUserPassword(selectedTeacher.id, password);
-      } catch (err) {
-        alert(err instanceof Error ? err.message : "Erreur lors du changement de mot de passe.");
-        return;
-      }
-    }
+    // LE COMPTE N'A PAS TOUJOURS L'IDENTIFIANT DE LA FICHE.
+    //
+    // Un enseignant créé AVEC ses accès porte le même identifiant que son
+    // compte (un UUID). Mais un enseignant créé sans accès — ou un passager —
+    // porte un identifiant « tch-… » : ce n'est pas un UUID, et le passer aux
+    // fonctions de compte faisait échouer la modification sur
+    // « invalid input syntax for type uuid ». On vise donc le COMPTE lui-même,
+    // et quand la fiche n'en a pas encore, saisir un email + un mot de passe
+    // revient à lui en ouvrir un.
+    const mail = email.trim();
+    const wantsPassword = password.length > 0;
+    try {
+      const accountId = selectedTeacher.isPassager
+        ? null
+        : await accountIdForEntity(selectedTeacher.id);
 
-    if (email && email !== selectedTeacher.email) {
-      try {
-        await updateUserEmail(selectedTeacher.id, email);
-      } catch (err) {
-        alert(err instanceof Error ? err.message : "Erreur lors du changement d'email.");
+      if (accountId) {
+        if (wantsPassword) await resetUserPassword(accountId, password);
+        if (mail && mail !== selectedTeacher.email) await updateUserEmail(accountId, mail);
+      } else if (mail && wantsPassword) {
+        if (password.length < 6) {
+          alert("Le mot de passe doit contenir au moins 6 caractères.");
+          return;
+        }
+        await createAccountForEntity(selectedTeacher.id, {
+          role: "teacher",
+          email: mail,
+          password,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          phone: phone.trim(),
+        });
+      } else if (mail || wantsPassword) {
+        alert(
+          "Pour ouvrir un compte de connexion à cet enseignant, saisissez à la fois un email et un mot de passe (6 caractères minimum).",
+        );
         return;
       }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erreur lors de la mise à jour du compte.");
+      return;
     }
 
     updateItem("teachers", selectedTeacher.id, {
       firstName,
       lastName,
       phone,
-      email,
+      email: mail,
       paymentType,
       monthlyAmount: paymentType === "monthly" ? monthlyAmount : undefined,
       startDate: paymentType === "monthly" ? startDate : undefined,

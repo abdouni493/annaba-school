@@ -176,6 +176,29 @@ function dayKey(d: Date): string {
   return d.toLocaleDateString("fr-CA");
 }
 
+/** `Date.getDay()` (0 = dimanche) → la clé du jour telle que la fiche l'écrit. */
+const WEEKDAY_KEYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
+
+/**
+ * CE JOUR-LÀ EST-IL UN JOUR TRAVAILLÉ ? — vrai quand la fiche n'a pas choisi de
+ * jours (comportement d'avant : tous les jours), ou quand ce jour de la semaine
+ * fait partie des jours de travail sélectionnés. Un jour de repos n'est donc
+ * jamais compté comme une journée non payée.
+ */
+function isWorkingDay(worker: ReceptionStaff, d: Date): boolean {
+  const days = worker.workDays;
+  if (!days || days.length === 0) return true;
+  return days.includes(WEEKDAY_KEYS[d.getDay()]);
+}
+
 /**
  * LES PÉRIODES QUE CE RÈGLEMENT A DÉJÀ SOLDÉES.
  *
@@ -250,12 +273,14 @@ export function unpaidPeriodsOf(db: Database, worker: ReceptionStaff): WorkerPer
     return out;
   }
 
-  // Journalier / demi-journée : une ligne par jour depuis l'embauche.
+  // Journalier / demi-journée : une ligne par JOUR TRAVAILLÉ depuis l'embauche.
+  // Les jours de repos (hors des jours de travail choisis) ne sont pas des
+  // journées dues — ils ne comptent tout simplement pas.
   const days: WorkerPeriod[] = [];
   const cursor = new Date(start);
   while (cursor <= today) {
     const key = dayKey(cursor);
-    if (!done.has(key) && !legacySettled(db, worker, key)) {
+    if (isWorkingDay(worker, cursor) && !done.has(key) && !legacySettled(db, worker, key)) {
       days.push({
         key,
         label: cursor.toLocaleDateString("fr-FR", {

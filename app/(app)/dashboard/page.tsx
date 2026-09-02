@@ -37,6 +37,7 @@ import { TeacherPages } from "@/components/pages/TeacherPages";
 import { PresenceSheet } from "@/components/attendance/PresenceSheet";
 import { CreateStudentModal } from "@/components/students/CreateStudentModal";
 import { StudentSituationModal } from "@/components/students/StudentSituationModal";
+import { StudentPaymentsPrintModal } from "@/components/students/StudentPaymentsPrintModal";
 import { WorkerPaymentsAlert } from "@/components/dashboard/WorkerPaymentsAlert";
 import { AccessDenied } from "@/components/layout/AccessDenied";
 import { useAccessRights, useCan } from "@/lib/usePermissions";
@@ -77,6 +78,7 @@ import {
   Clock,
   Filter,
   Hourglass,
+  Printer,
   Receipt,
   Search,
   UserPlus,
@@ -139,6 +141,8 @@ function AdminDashboard() {
   const [createOpen, setCreateOpen] = useState(false);
   /** « Situation d'un élève » : le tableau de tous ses emplois du temps. */
   const [situationOpen, setSituationOpen] = useState(false);
+  /** « Imprimer un ancien paiement » : chercher un élève, relire ses versements. */
+  const [payPrintOpen, setPayPrintOpen] = useState(false);
   /** the emploi the create screen arrives pre-ticked on */
   const [createSubIds, setCreateSubIds] = useState<string[]>([]);
 
@@ -515,6 +519,13 @@ function AdminDashboard() {
           {can("student_situation") && (
             <Button variant="outline" onClick={() => setSituationOpen(true)} className="gap-2">
               <UserSearch className="h-4 w-4 text-primary" /> Situation d&apos;un élève
+            </Button>
+          )}
+          {/* Réimprimer le reçu d'un vieux versement : chercher l'élève, lire son
+              historique du plus récent au plus ancien, et sortir le papier. */}
+          {can("student_situation") && (
+            <Button variant="outline" onClick={() => setPayPrintOpen(true)} className="gap-2">
+              <Printer className="h-4 w-4 text-primary" /> Ancien paiement
             </Button>
           )}
           {can("cash_deposit") && (
@@ -1039,6 +1050,9 @@ function AdminDashboard() {
           canCollect={can("collect_payment")}
         />
       )}
+
+      {/* Imprimer un ancien paiement : recherche d'élève + historique + reçu */}
+      {payPrintOpen && <StudentPaymentsPrintModal onClose={() => setPayPrintOpen(false)} />}
 
       {/* Caisse — dépôt / dépense / retrait, la même saisie que l'écran Caisse */}
       {cashKind && (

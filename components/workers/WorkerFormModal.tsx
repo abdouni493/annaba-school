@@ -34,7 +34,9 @@ import {
   updateUserEmail,
   updateUsername,
 } from "@/lib/accounts/users";
-import type { ReceptionPaymentType, ReceptionStaff } from "@/lib/types";
+import type { Day, ReceptionPaymentType, ReceptionStaff } from "@/lib/types";
+import { DAYS } from "@/lib/types";
+import { DAY_LABELS_FR } from "@/lib/helpers";
 import { WORKER_PAYMENT_LABELS } from "@/lib/workers";
 
 const CONTRACTS: ReceptionPaymentType[] = ["monthly", "daily", "half_day", "hourly"];
@@ -72,6 +74,11 @@ export function WorkerFormModal({
   );
   const [salary, setSalary] = useState<number>(worker?.salary ?? 0);
   const [hourlyRate, setHourlyRate] = useState<number>(worker?.hourlyRate ?? 0);
+  // Les jours de la semaine où il travaille — pour un mensuel, un journalier ou
+  // un demi-journalier. Un contrat horaire, lui, est réglé sur ses pointages.
+  const [workDays, setWorkDays] = useState<Day[]>(worker?.workDays ?? []);
+  const toggleWorkDay = (d: Day) =>
+    setWorkDays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]));
   const [startDate, setStartDate] = useState(
     worker?.startDate || new Date().toLocaleDateString("fr-CA"),
   );
@@ -163,6 +170,9 @@ export function WorkerFormModal({
       paymentType,
       salary: paymentType === "hourly" ? 0 : Math.max(0, salary),
       hourlyRate: paymentType === "hourly" ? Math.max(0, hourlyRate) : undefined,
+      // Les jours travaillés ne concernent pas un contrat horaire (piloté par le
+      // pointage) ; ailleurs, une liste vide veut dire « tous les jours ».
+      workDays: paymentType === "hourly" || workDays.length === 0 ? undefined : workDays,
       startDate,
       hasAccount,
       username: hasAccount ? username.trim() || mail : undefined,
@@ -406,6 +416,48 @@ export function WorkerFormModal({
               <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </Field>
           </div>
+
+          {/* Les jours travaillés — un mensuel, un journalier ou un demi-journalier
+              ne vient pas sept jours sur sept. Sans ce réglage, l'écran de
+              règlement comptait tous les jours comme dus (vendredis compris). */}
+          {paymentType !== "hourly" && (
+            <div className="space-y-2 rounded-xl border border-line bg-surface p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-muted">
+                  Jours de travail dans la semaine
+                </span>
+                <span className="text-[10px] text-muted">
+                  {workDays.length === 0
+                    ? "Aucun jour choisi → tous les jours sont comptés"
+                    : `${workDays.length} jour(s) sélectionné(s)`}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {DAYS.map((d) => {
+                  const on = workDays.includes(d);
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => toggleWorkDay(d)}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        on
+                          ? "border-primary bg-primary text-white"
+                          : "border-line bg-canvas text-muted hover:border-primary/40 hover:text-ink"
+                      }`}
+                    >
+                      {DAY_LABELS_FR[d]}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[9px] leading-snug text-muted">
+                {paymentType === "monthly"
+                  ? "Le salaire mensuel reste dû par mois entier ; ces jours servent de repère pour son emploi du temps."
+                  : "Seules les journées de ces jours-là seront dues au règlement. Un jour de repos n'est jamais compté comme une journée non payée."}
+              </p>
+            </div>
+          )}
         </section>
 
         {/* ---- compte de connexion ----------------------------------------- */}

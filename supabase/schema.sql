@@ -714,6 +714,9 @@ create table if not exists public.reception_staff (
   role         text,                            -- un identifiant de worker_roles
   rfid         text,                            -- badge du pointage
   hourly_rate  numeric,                         -- contrat horaire : prix d'une heure
+  -- Les jours de la semaine où il travaille (mensuel / journalier / demi-journée).
+  -- NULL ou vide = tous les jours ; sinon, seules ces journées sont dues à la paie.
+  work_days    text[],
   has_account  boolean not null default false,  -- peut-il se connecter ?
   username     text,
   -- Les écrans de SA barre latérale. NULL = fiche antérieure aux droits (elle
