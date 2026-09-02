@@ -35,8 +35,10 @@ import { useToast } from "@/lib/store/toast";
 import {
   formatDateFr,
   paymentName,
+  paymentSession,
   receiptNumberOf,
   registrationNumberOf,
+  sessionName,
   studentMatches,
   studentName,
 } from "@/lib/helpers";
@@ -96,15 +98,23 @@ export function StudentPaymentsPrintModal({ onClose }: { onClose: () => void }) 
     return db.payments
       .filter((p) => p.studentId === selected.id)
       .sort((a, b) => b.date.localeCompare(a.date))
-      .map((p) => ({
-        payment: p,
+      .map((p) => {
         // Le nom du versement vient du même endroit que celui du reçu.
-        name: paymentName(db, p),
-        kind: kindOf(p),
-        receipt: receiptNumberOf(db, p.id),
-      }));
+        const name = paymentName(db, p);
+        const emploi = sessionName(db, paymentSession(db, p));
+        return {
+          payment: p,
+          name,
+          // L'emploi du temps ne se répète pas quand il EST déjà le nom : il ne
+          // s'affiche que lorsqu'il ajoute quelque chose (un frais porté sur un
+          // créneau, par exemple).
+          emploi: emploi && emploi !== name ? emploi : "",
+          kind: kindOf(p),
+          receipt: receiptNumberOf(db, p.id),
+        };
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, db.payments, db.enrollments, db.subscriptions, db.studentCharges]);
+  }, [selected, db.payments, db.enrollments, db.subscriptions, db.sessions, db.studentCharges]);
 
   // Le filtre de la liste : par nom de versement, mois, date, montant ou
   // numéro de reçu — la réception cherche rarement deux fois la même chose.
@@ -114,6 +124,7 @@ export function StudentPaymentsPrintModal({ onClose }: { onClose: () => void }) 
     return payments.filter((row) =>
       [
         row.name,
+        row.emploi,
         row.kind.label,
         row.receipt,
         row.payment.monthCode ?? "",
@@ -279,7 +290,7 @@ export function StudentPaymentsPrintModal({ onClose }: { onClose: () => void }) 
                 Aucun versement ne correspond à ce filtre.
               </p>
             ) : (
-              shown.map(({ payment: p, name, kind, receipt }) => (
+              shown.map(({ payment: p, name, emploi, kind, receipt }) => (
                 // La ligne entière imprime : au comptoir, viser une icône de
                 // 32 pixels fait perdre le client de vue.
                 <button
@@ -295,8 +306,14 @@ export function StudentPaymentsPrintModal({ onClose }: { onClose: () => void }) 
                       </Badge>
                       <span className="font-mono text-[9px] text-muted">Reçu N° {receipt}</span>
                     </span>
-                    {/* LE NOM DU VERSEMENT — ce que la réception lit d'abord. */}
+                    {/* LE NOM DU VERSEMENT — ce que la réception lit d'abord :
+                        l'emploi du temps payé, ou le frais réglé. */}
                     <strong className="block truncate text-sm text-ink">{name}</strong>
+                    {emploi && (
+                      <span className="block truncate text-[10px] font-semibold text-primary">
+                        Emploi du temps : {emploi}
+                      </span>
+                    )}
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted">
                       <span className="font-mono">
                         {formatDateFr(p.date.substring(0, 10))}

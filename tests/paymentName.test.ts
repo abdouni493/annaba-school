@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildSeed } from "@/tests/fixtures/seed";
-import { enrollmentLabel, paymentName, subscriptionLabel } from "@/lib/helpers";
+import { enrollmentLabel, paymentName, sessionName } from "@/lib/helpers";
 import type { Payment } from "@/lib/types";
 
 /**
@@ -48,18 +48,63 @@ describe("Le nom d'un versement", () => {
 
   it("retombe sur l'emploi du temps quand l'inscription a été supprimée", () => {
     const db = buildSeed();
+    const withEnrollment = paymentName(db, payment({ enrollmentId: "enr-1", subscriptionId: "sub-1" }));
+
     db.enrollments = db.enrollments.filter((e) => e.id !== "enr-1");
-    const sub = db.subscriptions.find((s) => s.id === "sub-1")!;
     const p = payment({
       enrollmentId: "enr-1",
       subscriptionId: "sub-1",
       description: "Pack 12 séances — Mathématiques",
     });
 
-    // Ni « — », ni la description brute : l'emploi du temps, lu sur le
-    // versement lui-même.
-    expect(paymentName(db, p)).toBe(subscriptionLabel(db, sub));
-    expect(paymentName(db, p)).not.toBe("—");
+    // Ni « — », ni la description brute : le MÊME emploi du temps, lu cette
+    // fois sur le versement lui-même.
+    expect(paymentName(db, p)).toBe(withEnrollment);
+    expect(paymentName(db, p)).toContain("Mathématiques");
+  });
+
+  it("porte le nom écrit à la main d'un emploi sans module ni groupe", () => {
+    // Un emploi du temps n'existe que par ses jours : classe, module et groupe
+    // se remplissent plus tard. Tant qu'ils sont vides, seul le nom tapé à la
+    // main dit de quoi il s'agit — et il ne doit JAMAIS se lire « — · — ».
+    const db = buildSeed();
+    const session = db.sessions.find((s) => s.id === "ses-1")!;
+    session.title = "Soutien du samedi";
+    session.moduleId = "";
+    session.groupId = "";
+    session.groupIds = [];
+    session.classGroups = undefined;
+
+    expect(sessionName(db, session)).toBe("Soutien du samedi");
+    expect(paymentName(db, payment({ enrollmentId: "enr-1", subscriptionId: "sub-1" }))).toBe(
+      "Soutien du samedi",
+    );
+  });
+
+  it("ne rend jamais un assemblage de tirets", () => {
+    const db = buildSeed();
+    const session = db.sessions.find((s) => s.id === "ses-1")!;
+    session.title = undefined;
+    session.moduleId = "mod-inconnu";
+    session.groupId = "grp-inconnu";
+    session.groupIds = [];
+    session.classGroups = undefined;
+    session.classId = "";
+    session.classIds = [];
+
+    // Plus rien n'est connu du créneau : on retombe sur ce que la saisie a
+    // écrit, jamais sur « — · — ».
+    expect(sessionName(db, session)).toBe("");
+    expect(
+      paymentName(
+        db,
+        payment({
+          enrollmentId: "enr-1",
+          subscriptionId: "sub-1",
+          description: "Pack 12 séances — Mathématiques",
+        }),
+      ),
+    ).toBe("Pack 12 séances — Mathématiques");
   });
 
   it("nomme un règlement de frais par le frais qu'il solde", () => {

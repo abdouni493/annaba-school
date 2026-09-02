@@ -833,7 +833,7 @@ create table if not exists public.schedule_sessions (
   group_ids    jsonb,
   salle_ids    jsonb,
   open_price   numeric,
-  archived_at  text                              -- emploi SUPPRIMÉ : archivé, jamais effacé,
+  archived_at  text,                             -- emploi SUPPRIMÉ : archivé, jamais effacé
   created_by         text,                       -- qui a écrit la ligne
   created_by_name    text,                       -- son nom, recopié à l'écriture
   created_by_role    text
@@ -861,7 +861,7 @@ create table if not exists public.subscriptions (
   monthly_price      numeric,                    -- prix du pack mensuel
   school_month_share numeric,                    -- part que l'école garde sur le mois
   teacher_per_seance numeric,                    -- part enseignant pour UNE séance
-  archived_at        text                        -- archivé avec son emploi du temps,
+  archived_at        text,                       -- archivé avec son emploi du temps
   created_by         text,                       -- qui a écrit la ligne
   created_by_name    text,                       -- son nom, recopié à l'écriture
   created_by_role    text
@@ -927,7 +927,7 @@ create table if not exists public.students (
   subscription_ids       jsonb not null default '[]'::jsonb,
   subscription_dates     jsonb,                 -- dates + point d'entrée par abonnement
   subscription_discounts jsonb,                 -- remises par abonnement
-  registration_due       numeric                -- frais d'inscription encore dus,
+  registration_due       numeric,               -- frais d'inscription encore dus
   created_by         text,                       -- qui a écrit la ligne
   created_by_name    text,                       -- son nom, recopié à l'écriture
   created_by_role    text
@@ -1100,7 +1100,7 @@ create table if not exists public.attendance_records (
   free_period_id   text,
   pre_start        boolean,                     -- séance avant la date de début
   waived_amount    numeric,                     -- prix NON facturé
-  no_charge        boolean                      -- ne consomme rien, n'avance pas le mois,
+  no_charge        boolean,                     -- ne consomme rien, n'avance pas le mois
   created_by         text,                       -- qui a écrit la ligne
   created_by_name    text,                       -- son nom, recopié à l'écriture
   created_by_role    text
