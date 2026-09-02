@@ -310,6 +310,46 @@ export function sessionGroupsLabel(db: Database, session?: ScheduleSession): str
   return ids.map((id) => groupName(db, id)).join(" · ");
 }
 
+/**
+ * LE NOM D'UN EMPLOI DU TEMPS — celui sous lequel le guichet le connaît.
+ *
+ * Un emploi du temps n'existe QUE par ses jours : l'écran des emplois du temps
+ * le dit en toutes lettres, « classe, module, groupe, salle et enseignant
+ * peuvent être remplis plus tard ». Un créneau n'a donc parfois qu'un nom tapé
+ * à la main, et c'est ce nom-là qu'il faut lire — sans quoi on affichait
+ * « — · — », deux tirets à la place de l'intitulé, sur toutes les fiches qui
+ * en dépendent.
+ *
+ * L'ordre : le nom écrit, puis le module et les groupes, puis les niveaux —
+ * et jamais un assemblage de tirets. Renvoie "" quand rien n'est connu, à
+ * charge de l'appelant de dire ce qu'il veut à la place.
+ */
+export function sessionName(db: Database, session?: ScheduleSession): string {
+  if (!session) return "";
+  const written = session.title?.trim();
+  // Un nom tapé à la main gagne toujours, séance libre ou pas.
+  if (written) return session.isOpen ? `Séance libre — ${written}` : written;
+
+  const parts: string[] = [];
+  const mod = session.moduleId ? moduleName(db, session.moduleId) : "";
+  if (mod && mod !== "—") parts.push(mod);
+  // Un emploi peut réunir plusieurs groupes : on les nomme tous, en laissant
+  // de côté ceux qui ne répondent plus.
+  const groups = sessionGroupIds(session)
+    .map((id) => groupName(db, id))
+    .filter((n) => n && n !== "—");
+  parts.push(...groups);
+  if (parts.length > 0) {
+    const label = parts.join(" · ");
+    return session.isOpen ? `Séance libre — ${label}` : label;
+  }
+
+  // Ni nom, ni module, ni groupe : le niveau dit encore de quoi il s'agit.
+  const classes = sessionClassesLabel(db, session);
+  if (classes && classes !== "—") return classes;
+  return session.isOpen ? "Séance libre" : "";
+}
+
 /** Cet emploi du temps réunit-il ce groupe ? */
 export function sessionHasGroup(session: ScheduleSession, groupId: string): boolean {
   return sessionGroupIds(session).includes(groupId);
@@ -1676,15 +1716,18 @@ export function enrollmentUnitPrice(db: Database, enrollment: Enrollment): numbe
   return netPriceFor(sub?.pricePerSession ?? 0, enrollment.discount);
 }
 
-/** Human label of the module an inscription is for. */
+/** L'emploi du temps sur lequel porte une inscription, sous son nom. */
 export function enrollmentLabel(db: Database, enrollment: Enrollment): string {
+  return sessionName(db, enrollmentSession(db, enrollment)) || "—";
+}
+
+/** L'emploi du temps (le créneau) d'une inscription. */
+export function enrollmentSession(
+  db: Database,
+  enrollment: Enrollment,
+): ScheduleSession | undefined {
   const sub = enrollmentSubscription(db, enrollment);
-  if (!sub) return "—";
-  const session = db.sessions.find((s) => s.id === sub.sessionId);
-  if (!session) return "—";
-  return session.isOpen && session.title
-    ? session.title
-    : `${moduleName(db, session.moduleId)} · ${groupName(db, session.groupId)}`;
+  return sub ? db.sessions.find((s) => s.id === sub.sessionId) : undefined;
 }
 
 /**
@@ -1702,23 +1745,36 @@ export function paymentName(db: Database, payment: Payment): string {
     const charge = db.studentCharges.find((c) => c.id === payment.chargeId);
     if (charge?.name) return charge.name;
   }
-  const enrollment = payment.enrollmentId
-    ? db.enrollments.find((e) => e.id === payment.enrollmentId)
-    : undefined;
-  if (enrollment) {
-    const label = enrollmentLabel(db, enrollment);
-    if (label !== "—") return label;
-  }
-  const sub = payment.subscriptionId
-    ? db.subscriptions.find((s) => s.id === payment.subscriptionId)
-    : undefined;
-  if (sub) {
-    const label = subscriptionLabel(db, sub);
-    if (label !== "—") return label;
-  }
+  const label = sessionName(db, paymentSession(db, payment));
+  if (label) return label;
+
   const written = payment.description?.trim();
   if (written) return written;
   return payment.type === "debt_payment" ? "Règlement de dette" : "Versement";
+}
+
+/**
+ * L'EMPLOI DU TEMPS SUR LEQUEL PORTE UN VERSEMENT, quand il en désigne un.
+ *
+ * On le cherche par l'inscription d'abord, puis sur le versement lui-même —
+ * l'emploi y est écrit, ce qui le retrouve encore quand l'inscription a été
+ * supprimée depuis. Un règlement de frais n'en désigne un que si le frais
+ * lui-même en désigne un (une avance de l'école, par exemple).
+ */
+export function paymentSession(db: Database, payment: Payment): ScheduleSession | undefined {
+  const enrollment = payment.enrollmentId
+    ? db.enrollments.find((e) => e.id === payment.enrollmentId)
+    : undefined;
+  const viaEnrollment = enrollment ? enrollmentSession(db, enrollment) : undefined;
+  if (viaEnrollment) return viaEnrollment;
+
+  const subId =
+    payment.subscriptionId ??
+    (payment.chargeId
+      ? db.studentCharges.find((c) => c.id === payment.chargeId)?.subscriptionId
+      : undefined);
+  const sub = subId ? db.subscriptions.find((s) => s.id === subId) : undefined;
+  return sub ? db.sessions.find((s) => s.id === sub.sessionId) : undefined;
 }
 
 // ---- Teacher dues ----
