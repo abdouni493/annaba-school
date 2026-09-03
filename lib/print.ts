@@ -13,7 +13,7 @@
  * `<script>window.print()</script>` is stripped: this helper drives the print
  * dialog itself so it can also clean the iframe up afterwards.
  */
-export function printHtmlDocument(html: string): void {
+export function printHtmlDocument(html: string, onDone?: () => void): void {
   if (typeof window === "undefined" || typeof document === "undefined") return;
 
   // Remove any self-triggering print scripts so we don't double-fire.
@@ -37,6 +37,10 @@ export function printHtmlDocument(html: string): void {
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
+    // Le document est parti à l'imprimante (ou la boîte a été fermée) : c'est
+    // le seul moment où l'on peut enchaîner sur le suivant sans empiler deux
+    // boîtes de dialogue l'une sur l'autre.
+    if (onDone) window.setTimeout(onDone, 0);
     // Small delay so the browser keeps the document alive while the print
     // dialog is being dismissed.
     window.setTimeout(() => iframe.remove(), 500);
@@ -46,6 +50,7 @@ export function printHtmlDocument(html: string): void {
     const win = iframe.contentWindow;
     if (!win) {
       iframe.remove();
+      if (onDone) onDone();
       return;
     }
     win.onafterprint = cleanup;
@@ -58,6 +63,7 @@ export function printHtmlDocument(html: string): void {
   const doc = iframe.contentWindow?.document;
   if (!doc) {
     iframe.remove();
+    if (onDone) onDone();
     return;
   }
 
@@ -71,4 +77,22 @@ export function printHtmlDocument(html: string): void {
   } else {
     iframe.onload = () => window.setTimeout(triggerPrint, 60);
   }
+}
+
+/**
+ * PLUSIEURS BONS, L'UN APRÈS L'AUTRE.
+ *
+ * Chaque bon reste un document à part entière — c'est ce qui permet de n'en
+ * réimprimer qu'un plus tard. Les lancer tous d'un coup empilerait pourtant N
+ * boîtes de dialogue en même temps : le suivant n'est donc envoyé qu'une fois
+ * le précédent parti à l'imprimante (ou sa boîte refermée).
+ */
+export function printHtmlDocuments(documents: string[]): void {
+  const queue = documents.filter(Boolean);
+  const next = () => {
+    const html = queue.shift();
+    if (!html) return;
+    printHtmlDocument(html, next);
+  };
+  next();
 }

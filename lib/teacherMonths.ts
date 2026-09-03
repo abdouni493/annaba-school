@@ -45,14 +45,15 @@ import {
   formatDays,
   isFreeSub,
   isSchoolOnlySub,
-  moduleName,
   independentTotals,
   monthlyPriceOf,
   passagerLabel,
   netPriceFor,
   registrationNumberOf,
   salleName,
+  seanceChargeOf,
   sessionGroupsLabel,
+  sessionTitleOf,
   sessionTimeLabel,
   studentCaseLabel,
   studentDebtSummary,
@@ -492,7 +493,12 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
     for (let idx = 0; idx <= Math.max(lastMonth, cycles.length - 1, 0); idx++) {
       purse = money(purse + (cycles[idx]?.credited ?? 0));
       for (const rec of byMonth.get(idx) ?? []) {
-        const cost = money(rec.amountDeducted || 0);
+        // Ce que la séance coûte VRAIMENT à l'élève — une séance suivie mais
+        // enregistrée sans prix est reprise au tarif du jour, exactement comme
+        // la feuille de présence l'affiche. Sans cela, une séance à 0 DA se
+        // serait « payée » toute seule et aurait débloqué une part que l'élève
+        // doit pourtant encore.
+        const cost = seanceChargeOf(db, rec, st, sub);
         // Une tolérance d'un centime : la part d'un mois divisé en trois ne
         // tombe pas juste, et un solde à 0,004 près est un solde réglé.
         if (!short && cost <= purse + 0.01) {
@@ -640,9 +646,7 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
   return {
     sessionId: session.id,
     subscriptionId: sub?.id,
-    title: session.isOpen
-      ? session.title || `Séance libre — ${moduleName(db, session.moduleId)}`
-      : moduleName(db, session.moduleId) || "Emploi du temps",
+    title: sessionTitleOf(db, session),
     className: db.classes.find((c) => c.id === session.classId)?.name ?? "—",
     // Un emploi du temps peut réunir PLUSIEURS groupes : la paie les nomme tous.
     groupName: sessionGroupsLabel(db, session),

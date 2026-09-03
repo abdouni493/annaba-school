@@ -10,6 +10,7 @@ import {
   isSchoolOnlySub,
   joinPointFor,
   groupSeanceTotals,
+  soloSeanceTotals,
   independentTotals,
   netPriceFor,
   sessionTimesOn,
@@ -38,6 +39,7 @@ import type {
   FreePeriodStat,
   Group,
   GroupSeance,
+  SoloSeance,
   IndependentSession,
   Module,
   ModuleAbsenceRule,
@@ -134,6 +136,9 @@ export interface Database {
   independent: IndependentSession[];
   /** séances libres vendues à un GROUPE d'élèves, sans nommer personne */
   groupSeances: GroupSeance[];
+  /** séances libres SOLO : des élèves nommés, hors de tout groupe et de tout
+   *  emploi du temps — la part de l'enseignant s'y règle à part */
+  soloSeances: SoloSeance[];
 }
 
 // =============================================================================
@@ -856,6 +861,32 @@ interface DataActions {
   ) => Promise<{ ok: boolean; id?: string }>;
   /** Deletes a séance libre de groupe and both of its cash movements. */
   deleteGroupSeance: (id: string) => Promise<{ ok: boolean }>;
+  /**
+   * CRÉE OU CORRIGE UNE SÉANCE LIBRE **SOLO** — des élèves nommés, hors groupe.
+   *
+   * L'argent des élèves entre en caisse à l'enregistrement. La part de
+   * l'enseignant, elle, ne sort QUE si on dit qu'il l'a touchée : sinon la
+   * séance reste « à régler » et se signale d'elle-même sur le tableau de bord,
+   * sur la carte de l'enseignant et sur sa fiche, jusqu'à ce qu'on la verse.
+   * Elle n'apparaît JAMAIS dans son écran de paie mensuelle : cette séance-là
+   * n'appartient à aucun mois et à aucun emploi du temps.
+   */
+  saveSoloSeance: (
+    input: Omit<SoloSeance, "cashInId" | "cashOutId" | "createdAt"> & { createdAt?: string },
+  ) => Promise<{ ok: boolean; id?: string }>;
+  /** Supprime une séance libre solo et les mouvements de caisse qu'elle portait. */
+  deleteSoloSeance: (id: string) => Promise<{ ok: boolean }>;
+  /**
+   * « L'ENSEIGNANT A TOUCHÉ SA PART » — ou ne l'a plus touchée.
+   *
+   * C'est le geste que l'alerte propose partout où elle s'affiche. Verser
+   * écrit la sortie de caisse et date le règlement ; revenir en arrière la
+   * reprend, pour qu'une erreur de clic se corrige comme le reste.
+   */
+  setSoloSeanceTeacherPaid: (
+    id: string,
+    paid: boolean,
+  ) => Promise<{ ok: boolean; amount?: number }>;
   /**
    * INSCRIRE UN OU PLUSIEURS ÉLÈVES DE PASSAGE SUR UNE SÉANCE.
    *
@@ -4174,6 +4205,128 @@ export const useData = create<DataStore>((set, get) => ({
       cash: state.cash.filter((c) => c.id !== row.cashInId && c.id !== row.cashOutId),
     }));
     return { ok: true };
+  },
+
+  // ---- Les séances libres SOLO ---------------------------------------------
+  saveSoloSeance: async (input) => {
+    const db = get();
+    const teacher = db.teachers.find((t) => t.id === input.teacherId);
+    if (!teacher) return { ok: false };
+
+    const existing = db.soloSeances.find((g) => g.id === input.id);
+    const totals = soloSeanceTotals(input);
+    const when = input.date.length === 10 ? `${input.date}T12:00:00.000Z` : input.date;
+    const label = input.title?.trim() || "Séance libre solo";
+
+    const cashInId = existing?.cashInId ?? uid("csh");
+    const cashOutId = existing?.cashOutId ?? uid("csh");
+    const paid = !!input.teacherPaid;
+
+    const cashIn: CashTransaction = {
+      ...authorStamp(),
+      id: cashInId,
+      type: "student_payment",
+      amount: totals.total,
+      date: when,
+      description: `Séance libre solo : ${label} — ${totals.students} élève(s) × ${formatDA(
+        totals.pricePerStudent,
+      )}`,
+    };
+    const cashOut: CashTransaction = {
+      ...authorStamp(),
+      id: cashOutId,
+      type: "teacher_payment",
+      amount: -totals.teacherTotal,
+      date: when,
+      description: `Séance libre solo : ${label} — ${teacher.firstName} ${teacher.lastName}`,
+    };
+
+    const row: SoloSeance = {
+      ...authorStamp(),
+      ...input,
+      title: label,
+      attendees: totals.attendees,
+      pricePerStudent: totals.pricePerStudent,
+      schoolPerStudent: totals.schoolPerStudent,
+      teacherPaid: paid,
+      // La date du versement n'est posée QUE s'il a bien eu lieu : la reprendre
+      // à zéro quand on décoche évite qu'une séance « à régler » traîne la date
+      // d'un règlement qui n'existe plus.
+      teacherPaidAt: paid ? (input.teacherPaidAt ?? dateKey(new Date())) : undefined,
+      cashInId,
+      cashOutId: paid ? cashOutId : undefined,
+      createdAt: existing?.createdAt ?? input.createdAt ?? new Date().toISOString(),
+    };
+
+    set((state) => {
+      // Les deux mouvements sont réécrits en place : corriger la séance ne peut
+      // pas laisser un vieux montant derrière elle dans la caisse.
+      const cash = state.cash.filter((c) => c.id !== cashInId && c.id !== cashOutId);
+      if (totals.total > 0) cash.push(cashIn);
+      // La sortie n'existe que si l'enseignant a été payé — c'est exactement ce
+      // que l'alerte raconte tant qu'il ne l'a pas été.
+      if (paid && totals.teacherTotal > 0) cash.push(cashOut);
+      return {
+        soloSeances: existing
+          ? state.soloSeances.map((g) => (g.id === row.id ? row : g))
+          : [...state.soloSeances, row],
+        cash,
+      };
+    });
+
+    return { ok: true, id: row.id };
+  },
+
+  deleteSoloSeance: async (id) => {
+    const db = get();
+    const row = db.soloSeances.find((g) => g.id === id);
+    if (!row) return { ok: false };
+    set((state) => ({
+      soloSeances: state.soloSeances.filter((g) => g.id !== id),
+      cash: state.cash.filter((c) => c.id !== row.cashInId && c.id !== row.cashOutId),
+    }));
+    return { ok: true };
+  },
+
+  setSoloSeanceTeacherPaid: async (id, paid) => {
+    const db = get();
+    const row = db.soloSeances.find((g) => g.id === id);
+    if (!row) return { ok: false };
+    const teacher = db.teachers.find((t) => t.id === row.teacherId);
+    const totals = soloSeanceTotals(row);
+    const cashOutId = row.cashOutId ?? uid("csh");
+    const when = row.date.length === 10 ? `${row.date}T12:00:00.000Z` : row.date;
+
+    set((state) => {
+      const cash = state.cash.filter((c) => c.id !== cashOutId);
+      if (paid && totals.teacherTotal > 0) {
+        cash.push({
+          ...authorStamp(),
+          id: cashOutId,
+          type: "teacher_payment",
+          amount: -totals.teacherTotal,
+          date: when,
+          description: `Séance libre solo : ${row.title} — ${
+            teacher ? `${teacher.firstName} ${teacher.lastName}` : "enseignant"
+          }`,
+        } satisfies CashTransaction);
+      }
+      return {
+        soloSeances: state.soloSeances.map((g) =>
+          g.id === id
+            ? {
+                ...g,
+                teacherPaid: paid,
+                teacherPaidAt: paid ? dateKey(new Date()) : undefined,
+                cashOutId: paid ? cashOutId : undefined,
+              }
+            : g,
+        ),
+        cash,
+      };
+    });
+
+    return { ok: true, amount: totals.teacherTotal };
   },
 
   setStudentPassword: async (studentId, password) => {

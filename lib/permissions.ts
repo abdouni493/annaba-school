@@ -160,19 +160,6 @@ export const PERMISSION_PAGES: PermissionPage[] = [
     ],
   },
   {
-    key: "subjects",
-    emoji: "📄",
-    label: "Matières & cours",
-    href: "/subjects",
-    hint: "Les supports de cours publiés aux élèves.",
-    actions: [
-      { id: "create", label: "Publier un support" },
-      { id: "view", label: "Voir un support" },
-      { id: "delete", label: "Supprimer un support" },
-      { id: "bulk_delete", label: "Suppression groupée" },
-    ],
-  },
-  {
     key: "workers",
     emoji: "👥",
     label: "Travailleurs",
@@ -206,6 +193,21 @@ export const PERMISSION_PAGES: PermissionPage[] = [
       { id: "edit", label: "Modifier une séance" },
       { id: "delete", label: "Supprimer une séance" },
       { id: "print", label: "Réimprimer le reçu" },
+    ],
+  },
+  {
+    key: "soloSeances",
+    emoji: "🎟️",
+    label: "Séances libres solo",
+    href: "/solo-seances",
+    hint: "Les séances vendues à un ou plusieurs élèves nommés, hors de tout groupe.",
+    actions: [
+      { id: "create", label: "Créer une séance libre solo" },
+      { id: "view", label: "Voir le détail d'une séance" },
+      { id: "edit", label: "Modifier une séance" },
+      { id: "delete", label: "Supprimer une séance" },
+      { id: "pay_teacher", label: "Marquer la part de l'enseignant comme versée" },
+      { id: "print", label: "Imprimer le reçu / la fiche" },
     ],
   },
   {
@@ -323,7 +325,7 @@ export function allPageKeys(): string[] {
  */
 const LEGACY_RECEPTION_PAGES = [
   "dashboard", "classes", "planner", "subscriptions", "students", "attendance",
-  "subjects", "independent", "parents", "announcements", "expenses", "settings",
+  "independent", "soloSeances", "parents", "announcements", "expenses", "settings",
 ];
 
 export interface AccessRights {

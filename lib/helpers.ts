@@ -13,6 +13,8 @@ import type {
   ScheduleSession,
   School,
   SchoolClass,
+  SoloSeance,
+  SoloSeanceAttendee,
   Student,
   StudentCharge,
   Subscription,
@@ -442,6 +444,35 @@ export function registrationFeeScopeLabel(db: Database, school?: School): string
       return session ? session.title || moduleName(db, session.moduleId) : "—";
     })
     .join(", ");
+}
+
+/**
+ * LE NOM D'UN EMPLOI DU TEMPS — celui que la réception a tapé, sinon son module.
+ *
+ * L'écran de création propose « Nom de l'emploi du temps (optionnel) » et
+ * promet que « ce nom apparaît partout où l'emploi du temps est listé ». Il
+ * n'apparaissait pourtant que sur la grille : la paie de l'enseignant, la fiche
+ * de paie imprimée et l'historique des règlements retombaient tous sur le nom
+ * du module, si bien qu'un enseignant qui donne le même module à trois groupes
+ * lisait trois fois la même ligne.
+ *
+ * Tout ce qui NOMME un emploi du temps passe désormais par ici — un seul
+ * endroit, une seule règle : le titre saisi d'abord, le module ensuite, et un
+ * libellé neutre en dernier recours pour qu'aucun écran n'affiche un vide.
+ */
+export function sessionTitleOf(db: Database, session?: ScheduleSession): string {
+  if (!session) return "—";
+  const typed = session.title?.trim();
+  if (typed) return typed;
+  const mod = moduleName(db, session.moduleId)?.trim();
+  if (mod) return session.isOpen ? `Séance libre — ${mod}` : mod;
+  return session.isOpen ? "Séance libre" : "Emploi du temps";
+}
+
+/** Le nom de l'emploi du temps d'un tarif — la même règle, depuis l'abonnement. */
+export function subscriptionTitleOf(db: Database, subscriptionId?: string): string {
+  const sub = db.subscriptions.find((x) => x.id === subscriptionId);
+  return sessionTitleOf(db, db.sessions.find((s) => s.id === sub?.sessionId));
 }
 
 /** Full session label. `withGroup=false` drops the group (used by the
@@ -943,6 +974,112 @@ export function consumesSeance(a: AttendanceRecord): boolean {
   return a.status !== "cancelled" && !a.noCharge;
 }
 
+/**
+ * CE QU'UNE SÉANCE DÉJÀ POINTÉE COÛTE VRAIMENT À L'ÉLÈVE.
+ *
+ * La ligne de présence porte le prix qui lui a été débité le jour du pointage
+ * (`amountDeducted`). C'est cette valeur-là qui fait foi — sauf dans un cas :
+ * une séance BILLABLE enregistrée à 0 DA alors que RIEN ne l'offrait.
+ *
+ * Cela arrive pour de vrai : le créneau a été pointé avant que son tarif ne
+ * soit saisi (l'abonnement valait encore 0 DA), ou la ligne a été corrigée à la
+ * main depuis l'historique sans que son montant suive. Le mois affichait alors
+ * « 3 séances · consommé 3 000 DA » là où trois séances à 1 500 DA en valent
+ * 4 500 : deux chiffres qui se contredisent sur la même ligne.
+ *
+ * Une séance n'est gratuite que si quelque chose l'a OFFERTE, et la ligne le
+ * dit toujours elle-même :
+ *   · `cancelled` / `noCharge` — la séance n'a pas eu lieu, ou c'est la
+ *     première absence de courtoisie ;
+ *   · `freePeriodId`          — une période portes ouvertes la couvrait ;
+ *   · `preStart` / `waivedAmount` — elle s'est tenue avant son inscription ;
+ *   · emploi du temps offert  — « cas spécial », coché sur cet emploi.
+ * Hors de ces cas, une présence coûte le tarif de l'élève, et c'est ce tarif
+ * qui est repris ici quand la ligne n'en porte aucun.
+ *
+ * Une ABSENCE à 0 DA n'est jamais reprise : la seule absence gratuite est la
+ * première, et elle porte déjà `noCharge`. Reprendre les autres ferait payer
+ * rétroactivement des absences que l'école avait choisi de ne pas facturer.
+ */
+export function seanceChargeOf(
+  db: Database,
+  record: AttendanceRecord,
+  student?: Student,
+  sub?: Subscription,
+): number {
+  if (record.status === "cancelled" || record.noCharge) return 0;
+  const charged = positiveMoney(record.amountDeducted || 0);
+  if (charged > 0) return charged;
+  // Séance délibérément offerte : elle vaut bien zéro.
+  if (record.freePeriodId || record.preStart || (record.waivedAmount ?? 0) > 0) return 0;
+  if (record.status !== "present" && record.status !== "late") return 0;
+
+  const stu = student ?? db.students.find((s) => s.id === record.studentId);
+  const tariff =
+    sub ?? db.subscriptions.find((x) => x.sessionId === record.sessionId);
+  if (!tariff || isFreeSub(stu, tariff.id)) return 0;
+  const discount =
+    db.enrollments.find((e) => e.studentId === record.studentId && e.subscriptionId === tariff.id)
+      ?.discount ?? stu?.subscriptionDiscounts?.[tariff.id];
+  return netPriceFor(studentListPrice(stu, tariff), discount);
+}
+
+/**
+ * L'ÉCART entre ce que les présences ont RÉELLEMENT débité du solde et ce
+ * qu'elles auraient dû débiter (voir `seanceChargeOf`).
+ *
+ * Positif = des séances ont été suivies sans jamais être facturées. Le solde
+ * stocké sur l'inscription est donc trop haut d'autant, et `soldFor` le corrige
+ * pour que « consommé » et « Solde de l'emploi » ne se contredisent plus.
+ * Vaut 0 sur une inscription saine — rien ne bouge alors nulle part.
+ */
+export function unbilledSeanceTotal(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+): number {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return 0;
+  const rows = attendanceOf(db, studentId, sub.sessionId);
+  if (rows.length === 0) return 0;
+  const student = db.students.find((s) => s.id === studentId);
+  let gap = 0;
+  for (const rec of rows) {
+    gap += seanceChargeOf(db, rec, student, sub) - positiveMoney(rec.amountDeducted || 0);
+  }
+  return money(gap);
+}
+
+/**
+ * LES PRÉSENCES D'UN ÉLÈVE SUR UN CRÉNEAU, retrouvées sans relire la table.
+ *
+ * `soldFor` est appelé partout — une fois par élève et par emploi du temps sur
+ * les listes, donc des milliers de fois sur un écran chargé. Balayer toute la
+ * table des présences à chaque appel se paie cher : elles sont donc indexées
+ * une seule fois par tableau, et l'index est jeté dès que le magasin réécrit ce
+ * tableau (toute mutation le remplace, jamais ne le modifie en place).
+ */
+const attendanceIndex = new WeakMap<AttendanceRecord[], Map<string, AttendanceRecord[]>>();
+
+function attendanceOf(
+  db: Database,
+  studentId: string,
+  sessionId: string,
+): AttendanceRecord[] {
+  let index = attendanceIndex.get(db.attendance);
+  if (!index) {
+    index = new Map<string, AttendanceRecord[]>();
+    for (const rec of db.attendance) {
+      const key = `${rec.studentId}|${rec.sessionId}`;
+      const list = index.get(key);
+      if (list) list.push(rec);
+      else index.set(key, [rec]);
+    }
+    attendanceIndex.set(db.attendance, index);
+  }
+  return index.get(`${studentId}|${sessionId}`) ?? [];
+}
+
 /** Every attendance row of ONE student on ONE emploi, oldest first. */
 export function sessionAttendance(
   db: Database,
@@ -1052,6 +1189,7 @@ export function enrollmentCycles(
   const size = cycleSizeOf(sub);
   const records = sub ? cycleRecords(db, studentId, sub.sessionId) : [];
   const start = enrollmentStart(db, studentId, subscriptionId);
+  const student = db.students.find((s) => s.id === studentId);
 
   // Money is attributed to the month reception credited it to.
   const credits: Record<string, number> = {};
@@ -1073,7 +1211,9 @@ export function enrollmentCycles(
     const lead = i < start.monthIndex ? size : i === start.monthIndex ? start.slotIndex : 0;
     const slice = records.slice(clamp(i * size - start.offset), clamp((i + 1) * size - start.offset));
     const code = `M${i + 1}`;
-    const consumed = slice.reduce((t, a) => t + (a.amountDeducted || 0), 0);
+    const consumed = money(
+      slice.reduce((t, a) => t + seanceChargeOf(db, a, student, sub), 0),
+    );
     const credited = credits[code] ?? 0;
     const complete = size - lead > 0 && slice.length >= size - lead;
     out.push({
@@ -1198,9 +1338,18 @@ export function studentEnrollmentFor(
   );
 }
 
-/** Solde of ONE student on ONE emploi du temps. */
+/**
+ * Solde of ONE student on ONE emploi du temps.
+ *
+ * C'est la cagnotte stockée sur l'inscription — MOINS les séances qui ont été
+ * suivies sans être facturées (voir `unbilledSeanceTotal`). Les deux lignes que
+ * la feuille de présence affiche côte à côte, « consommé » et « Solde de
+ * l'emploi », partent donc du même calcul et ne peuvent plus se contredire.
+ * Sur une inscription saine l'écart vaut zéro et le solde est celui d'avant.
+ */
 export function soldFor(db: Database, studentId: string, subscriptionId: string): number {
-  return enrollmentBalance(studentEnrollmentFor(db, studentId, subscriptionId));
+  const stored = enrollmentBalance(studentEnrollmentFor(db, studentId, subscriptionId));
+  return money(stored - unbilledSeanceTotal(db, studentId, subscriptionId));
 }
 
 export type SoldStatus = "ok" | "low" | "empty" | "debt";
@@ -2133,6 +2282,79 @@ export function attendanceOn(
   );
 }
 
+
+/**
+ * CE QU'UNE SÉANCE LIBRE **SOLO** VAUT — pour l'école et pour l'enseignant.
+ *
+ * Le calcul est le même que pour une séance de groupe, à une différence près :
+ * ici les élèves sont NOMMÉS, donc leur nombre n'est pas saisi, il se compte.
+ * Une ligne sans nom et sans fiche n'est pas un élève : elle est ignorée, pour
+ * qu'un champ resté vide ne facture jamais personne.
+ */
+export function soloSeanceTotals(seance: {
+  attendees?: SoloSeanceAttendee[];
+  pricePerStudent: number;
+  schoolPerStudent: number;
+}): SoloSeanceTotals {
+  const attendees = (seance.attendees ?? [])
+    .map((a) => ({ studentId: a.studentId || undefined, name: (a.name ?? "").trim() }))
+    .filter((a) => a.studentId || a.name);
+  const price = positiveMoney(seance.pricePerStudent || 0);
+  const school = Math.min(positiveMoney(seance.schoolPerStudent || 0), price);
+  const teacherPer = money(price - school);
+  const students = attendees.length;
+  return {
+    attendees,
+    students,
+    pricePerStudent: price,
+    schoolPerStudent: school,
+    teacherPerStudent: teacherPer,
+    total: money(students * price),
+    schoolTotal: money(students * school),
+    teacherTotal: money(students * teacherPer),
+  };
+}
+
+export interface SoloSeanceTotals {
+  /** les élèves retenus, nettoyés (les lignes vides sont écartées) */
+  attendees: SoloSeanceAttendee[];
+  students: number;
+  pricePerStudent: number;
+  schoolPerStudent: number;
+  teacherPerStudent: number;
+  total: number;
+  schoolTotal: number;
+  teacherTotal: number;
+}
+
+/**
+ * LES SÉANCES LIBRES SOLO DONT L'ENSEIGNANT N'A PAS ENCORE TOUCHÉ SA PART.
+ *
+ * C'est la source unique de l'alerte — celle du tableau de bord, celle de la
+ * carte de l'enseignant et celle du haut de sa fiche disent donc toutes la
+ * même chose. Sans `teacherId`, ce sont toutes les séances de l'école.
+ */
+export function unpaidSoloSeances(db: Database, teacherId?: string): SoloSeance[] {
+  return db.soloSeances
+    .filter((g) => !g.teacherPaid)
+    .filter((g) => (teacherId ? g.teacherId === teacherId : true))
+    .filter((g) => soloSeanceTotals(g).teacherTotal > 0)
+    .sort((a, b) => `${b.date}${b.createdAt ?? ""}`.localeCompare(`${a.date}${a.createdAt ?? ""}`));
+}
+
+/** Ce que l'école doit encore aux enseignants sur les séances libres solo. */
+export function unpaidSoloSeanceTotal(db: Database, teacherId?: string): number {
+  return money(
+    unpaidSoloSeances(db, teacherId).reduce((t, g) => t + soloSeanceTotals(g).teacherTotal, 0),
+  );
+}
+
+/** Les séances libres solo d'UN élève — celles où sa fiche est nommée. */
+export function studentSoloSeances(db: Database, studentId: string): SoloSeance[] {
+  return db.soloSeances
+    .filter((g) => (g.attendees ?? []).some((a) => a.studentId === studentId))
+    .sort((a, b) => `${b.date}`.localeCompare(`${a.date}`));
+}
 
 // ---- Séances libres de groupe ----------------------------------------------
 /** Everything a "séance libre de groupe" is worth, from the three numbers

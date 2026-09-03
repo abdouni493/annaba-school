@@ -321,6 +321,20 @@ export interface TeacherPayStudentLine {
   withheld: boolean;
   /** l'école a avancé sa dette de sa propre caisse pour débloquer la part */
   schoolCovered: boolean;
+  /**
+   * CE RÈGLEMENT-CI A-T-IL PAYÉ SA PART ?
+   *
+   * La fiche de paie ne montrait QUE les élèves cochés : l'enseignant recevait
+   * une liste amputée, sans moyen de voir qui, dans son groupe, n'avait pas
+   * encore payé — et donc pourquoi son net était plus petit que son mois.
+   * Le mois est désormais figé EN ENTIER, et cette case dit, ligne par ligne,
+   * si la part a été versée avec ce bon (`true`) ou si elle reste à venir
+   * (`false`). Les totaux, eux, ne comptent que les lignes versées.
+   *
+   * ABSENT = règlement figé avant cette colonne : toutes ses lignes ont été
+   * payées, puisque seules celles-là étaient enregistrées.
+   */
+  settledHere?: boolean;
 }
 
 /** Une ligne du tableau des arriérés — une part d'un mois DÉJÀ réglé. */
@@ -1423,4 +1437,64 @@ export interface GroupSeance extends Authored {
   /** the cash movement that paid the teacher */
   cashOutId?: string;
   createdAt: string;
+}
+
+/**
+ * UNE SÉANCE LIBRE **SOLO** — un ou plusieurs élèves NOMMÉS, hors de tout groupe.
+ *
+ * C'est la troisième forme de séance ponctuelle, et elle ne ressemble ni à
+ * l'une ni à l'autre :
+ *
+ *   · `IndependentSession` accroche un passager à un CRÉNEAU existant, et la
+ *     part de l'enseignant se règle avec le mois de cet emploi du temps ;
+ *   · `GroupSeance` vend une séance à un groupe entier sans nommer personne ;
+ *   · **celle-ci** part de zéro : la réception choisit l'enseignant, la salle
+ *     et les horaires, puis désigne les élèves un par un — ceux qui ont une
+ *     fiche comme ceux qui n'en ont pas — et fixe le prix.
+ *
+ * L'ARGENT SE RÈGLE ICI, ET NULLE PART AILLEURS. La part de l'enseignant ne
+ * passe jamais par son écran de paie mensuelle : elle est soit versée tout de
+ * suite (`teacherPaid`), soit signalée en alerte — sur le tableau de bord, sur
+ * la carte de l'enseignant et sur sa fiche — jusqu'à ce qu'on la verse. C'est
+ * ce qui rend cette séance-là indépendante de tout mois et de tout emploi du
+ * temps.
+ *
+ *     part enseignant d'un élève = prix élève − part école
+ *     total encaissé   = élèves × prix élève
+ *     total enseignant = élèves × part enseignant
+ */
+export interface SoloSeance extends Authored {
+  id: string;
+  teacherId: string;
+  /** la salle où elle se tient (facultative — une séance peut se faire ailleurs) */
+  salleId?: string;
+  /** ce que la séance s'appelle sur les documents */
+  title: string;
+  description?: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  /** les élèves de la séance : une fiche de l'école, ou un simple nom */
+  attendees: SoloSeanceAttendee[];
+  /** ce qu'UN élève paie */
+  pricePerStudent: number;
+  /** ce que l'école garde sur ce prix */
+  schoolPerStudent: number;
+  /** l'enseignant a-t-il touché sa part ? Faux = alerte partout où il apparaît */
+  teacherPaid: boolean;
+  /** le jour où sa part lui a été versée */
+  teacherPaidAt?: string;
+  /** le mouvement de caisse qui a encaissé les élèves */
+  cashInId?: string;
+  /** celui qui a payé l'enseignant — écrit le jour où sa part est versée */
+  cashOutId?: string;
+  createdAt: string;
+}
+
+/** Un élève d'une séance libre solo : sa fiche quand il en a une, son nom sinon. */
+export interface SoloSeanceAttendee {
+  /** la fiche de l'élève, quand l'école le connaît déjà */
+  studentId?: string;
+  /** son nom — recopié pour les fiches, tapé à la main pour les autres */
+  name: string;
 }

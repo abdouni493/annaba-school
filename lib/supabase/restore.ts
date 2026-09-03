@@ -102,6 +102,7 @@ export const COLLECTION_LABELS: Partial<Record<CollectionKey, string>> = {
   coursework: "Travaux",
   independent: "Séances libres",
   groupSeances: "Séances libres de groupe",
+  soloSeances: "Séances libres solo",
 };
 
 export function labelOfCollection(key: CollectionKey): string {

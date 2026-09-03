@@ -276,11 +276,27 @@ export interface PayBoard {
  * alors que la famille n'a rien versé — l'école a fait l'avance pour ne pas le
  * faire attendre, et elle a le droit de le voir écrit.
  */
-function schoolCoveredIds(db: Database, subscriptionId?: string): Set<string> {
+function schoolCoveredIds(
+  db: Database,
+  subscriptionId?: string,
+  monthCode?: string,
+): Set<string> {
   const out = new Set<string>();
   for (const p of db.payments) {
     if (p.paidFrom !== "school_cash") continue;
     if (subscriptionId && p.subscriptionId !== subscriptionId) continue;
+    // L'avance appartient AU MOIS qu'elle a débloqué. Sans ce filtre, un élève
+    // avancé en M1 restait « avancé par l'école » sur M2, M3 et tous les mois
+    // suivants — y compris ceux qu'il a réglés lui-même, au comptoir.
+    if (monthCode && p.monthCode && p.monthCode !== monthCode) continue;
+    // ET L'AVANCE REMBOURSÉE N'EST PLUS UNE AVANCE. Chaque avance a écrit un
+    // frais au compte de l'élève (`origin: "school_advance"`) : tant qu'il est
+    // ouvert, la famille doit encore l'argent à l'école et la ligne se signale.
+    // Une fois soldé, l'école a été remboursée — l'alerte n'a plus rien à dire.
+    const advance = db.studentCharges.find(
+      (c) => c.origin === "school_advance" && c.sourcePaymentId === p.id,
+    );
+    if (advance && (advance.paid || (advance.paidAmount ?? 0) >= advance.amount)) continue;
     out.add(p.studentId);
   }
   return out;
@@ -298,7 +314,17 @@ export function buildPayBoard(
   const sub = db.subscriptions.find((s) => s.id === emploi.subscriptionId);
   const monthPrice = monthlyPriceOf(sub);
   const teacherMonthShare = teacherMonthShareOf(sub);
-  const covered = schoolCoveredIds(db, emploi.subscriptionId);
+  // L'avance se lit MOIS PAR MOIS : la table 1 lit celle du mois ouvert, la
+  // table 2 celle du mois d'où l'arriéré vient.
+  const coveredCache = new Map<string, Set<string>>();
+  const coveredOn = (code: string) => {
+    const hit = coveredCache.get(code);
+    if (hit) return hit;
+    const built = schoolCoveredIds(db, emploi.subscriptionId, code);
+    coveredCache.set(code, built);
+    return built;
+  };
+  const covered = coveredOn(monthCode);
   const settlement = settledMonthCodes(db, teacher.id, emploi.sessionId).get(monthCode);
 
   // ---- table 1 : les élèves du mois ---------------------------------------
@@ -336,7 +362,7 @@ export function buildPayBoard(
           debt: st?.debt ?? 0,
           amount: 0,
           withheld: false,
-          schoolCovered: covered.has(d.studentId),
+          schoolCovered: coveredOn(m.code).has(d.studentId),
           monthCode: m.code,
           monthIndex: m.index,
           emploi: emploi.title,
@@ -689,9 +715,14 @@ export function freezeBoard(
     monthPrice: board.monthPrice,
     teacherMonthShare: board.teacherMonthShare,
     perSeance: board.perSeance,
-    students: board.students
-      .filter((r) => picked.studentIds.includes(r.studentId))
-      .map(strip),
+    // LE MOIS EN ENTIER, pas seulement ce qui est versé aujourd'hui.
+    // L'enseignant doit lire, sur son bon, qui a payé et qui n'a pas payé :
+    // c'est ce qui explique l'écart entre son mois et son net. Les lignes non
+    // réglées portent `settledHere: false` et ne comptent dans aucun total.
+    students: board.students.map((r) => ({
+      ...strip(r),
+      settledHere: picked.studentIds.includes(r.studentId) && !r.withheld,
+    })),
     arrears: board.arrears
       .filter((r) => picked.arrearKeys.includes(r.key))
       .map((r) => ({

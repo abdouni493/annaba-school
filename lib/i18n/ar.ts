@@ -39,6 +39,7 @@ export const ar: Dictionary = {
     administration: "الإدارة",
     workers: "العمّال",
     independent: "حصص حرة",
+    soloSeances: "حصص حرة فردية",
     parents: "أولياء الأمور",
     announcements: "الإعلانات",
     expenses: "المصاريف",

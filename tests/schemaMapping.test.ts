@@ -62,7 +62,7 @@ describe("the column map matches supabase/schema.sql", () => {
   it("covers every collection of the store exactly once", () => {
     const tables = specs.map(([, spec]) => spec.table);
     expect(new Set(tables).size).toBe(tables.length);
-    expect(COLLECTION_ORDER.length).toBe(39);
+    expect(COLLECTION_ORDER.length).toBe(40);
   });
 
   for (const [key, spec] of specs) {
@@ -216,6 +216,7 @@ const INTERFACES: Record<string, string> = {
   categories: "ExpenseCategory", expenses: "Expense", cash: "CashTransaction",
   notifications: "Notification", coursework: "Coursework",
   independent: "IndependentSession", groupSeances: "GroupSeance",
+  soloSeances: "SoloSeance",
 };
 
 describe("no write can be refused for a not-null column", () => {

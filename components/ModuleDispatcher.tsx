@@ -10,6 +10,7 @@ import { TeachersPage } from "@/components/pages/TeachersPage";
 import { SubjectsPage } from "@/components/pages/SubjectsPage";
 import { AdministrationPage } from "@/components/pages/AdministrationPage";
 import { IndependentPage } from "@/components/pages/IndependentPage";
+import { SoloSeancePage } from "@/components/pages/SoloSeancePage";
 import { ParentsPage } from "@/components/pages/ParentsPage";
 import { AnnouncementsPage } from "@/components/pages/AnnouncementsPage";
 import { ExpensesPage } from "@/components/pages/ExpensesPage";
@@ -56,7 +57,12 @@ export function ModuleDispatcher({ slug }: { slug: string[] }) {
   // ne lui montre déjà pas les autres, mais une adresse tapée à la main, un
   // signet ou un lien reçu contourneraient le menu : le garde-fou est ici, sur
   // la route elle-même.
-  const guardKey = pageSlug === "administration" ? "workers" : pageSlug;
+  const guardKey =
+    pageSlug === "administration"
+      ? "workers"
+      : pageSlug === "solo-seances"
+        ? "soloSeances"
+        : pageSlug;
   if (guardKey && !canSeePage(rights, guardKey)) {
     return <AccessDenied />;
   }
@@ -81,6 +87,8 @@ export function ModuleDispatcher({ slug }: { slug: string[] }) {
       return <AdministrationPage />;
     case "independent":
       return <IndependentPage />;
+    case "solo-seances":
+      return <SoloSeancePage />;
     case "parents":
       return <ParentsPage />;
     case "announcements":

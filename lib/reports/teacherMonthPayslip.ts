@@ -31,6 +31,7 @@ const LABELS = {
     docTitle: "Fiche de Paie de l'Enseignant",
     receiptNo: "Bon N° :",
     teacherName: "Nom et prénom de l'enseignant",
+    emploi: "Emploi du temps",
     group: "Groupe",
     month: "Mois",
     year: "Année scolaire",
@@ -41,6 +42,10 @@ const LABELS = {
     amountCol: "Montant des séances (DA)",
     total: "Total",
     withheldTag: "Retenu",
+    stateCol: "État",
+    statePaid: "Réglé sur ce bon",
+    stateWithheld: "Retenu — élève en dette",
+    stateLater: "Non réglé sur ce bon",
     noStudents: "Aucun élève sur ce mois.",
     t2title: "Arriérés du mois précédent",
     tStudent: "Élève",
@@ -64,6 +69,7 @@ const LABELS = {
     docTitle: "فيش دفعة الأستاذ",
     receiptNo: "رقم الفيش :",
     teacherName: "اسم ولقب الأستاذ",
+    emploi: "جدول التوقيت",
     group: "المجموعة",
     month: "الشهر",
     year: "السنة الدراسية",
@@ -74,6 +80,10 @@ const LABELS = {
     amountCol: "مبلغ الحصص(دج)",
     total: "المجموع",
     withheldTag: "محجوز",
+    stateCol: "الحالة",
+    statePaid: "مدفوع في هذا الوصل",
+    stateWithheld: "محجوز — التلميذ مدين",
+    stateLater: "غير مدفوع في هذا الوصل",
     noStudents: "لا يوجد تلاميذ على هذا الشهر.",
     t2title: "مخلفات الشهر السابق",
     tStudent: "التلميذ",
@@ -131,6 +141,8 @@ const TP_CSS = `
   .tp-tag { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 0.72em; font-weight: 700; margin-inline-start: 4px; }
   .tp-tag-warn { background: #fef3c7; color: #b45309; }
   .tp-tag-mute { background: #f1f0f7; color: #5c567a; }
+  .tp-tag-ok { background: #dcfce7; color: #166534; }
+  .tp-row-open td { background: #fbfafc; color: #6b6580; }
   /* L'emploi du temps qu'une scolarité d'enfant paie : la seule étiquette de
      la fiche qui répond à « pour quel cours me retient-on cette somme ? ». */
   .tp-tag-emploi { background: #fdf0f5; color: #7a1440; border: 1px solid #e6c3d4; }
@@ -190,7 +202,12 @@ export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string 
         </div>
         <table class="tp-fields">
           <tr><th>${L.teacherName} :</th><td>${esc(teacherFullName)}</td></tr>
-          <tr><th>${L.group} :</th><td>${esc(board.emploi)} — ${esc(board.groupName)}</td></tr>
+          <tr><th>${L.emploi} :</th><td>${esc(board.emploi || "—")}</td></tr>
+          <tr><th>${L.group} :</th><td>${esc(
+            [board.groupName, board.className, board.salleName ? `Salle ${board.salleName}` : ""]
+              .filter((x) => x && x !== "—")
+              .join(" · ") || "—",
+          )}</td></tr>
           <tr><th>${L.month} :</th><td>${esc(monthCodeLabel(board.monthCode))}</td></tr>
           <tr><th>${L.year} :</th><td>${esc(schoolYearLabel(data.paidAt))}</td></tr>
         </table>
@@ -198,23 +215,34 @@ export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string 
     </div>`;
 
   // ---- 1. la liste des élèves et des séances ------------------------------
+  // LA LISTE EST CELLE DU MOIS ENTIER — ceux dont la part est versée par ce
+  // bon ET ceux dont elle ne l'est pas. Un règlement figé avant cette colonne
+  // ne portait que des lignes payées : `settledHere` absent vaut donc « payé ».
+  const settledOn = (r: (typeof board.students)[number]) =>
+    r.settledHere ?? !r.withheld;
   const s1Rows = board.students
     .map((r) => {
+      const paidHere = settledOn(r);
       const tags = [
         r.caseLabel ? `<span class="tp-tag tp-tag-mute">${esc(r.caseLabel)}</span>` : "",
         r.withheld ? `<span class="tp-tag tp-tag-warn">${L.withheldTag}</span>` : "",
       ]
         .filter(Boolean)
         .join(" ");
-      return `<tr>
+      const state = r.withheld ? L.stateWithheld : paidHere ? L.statePaid : L.stateLater;
+      const tone = r.withheld ? "tp-tag-warn" : paidHere ? "tp-tag-ok" : "tp-tag-mute";
+      return `<tr${paidHere ? "" : ' class="tp-row-open"'}>
         <td style="font-family:monospace;">${esc(r.registrationNumber || "—")}</td>
         <td style="text-align:start;"><strong>${esc(r.name)}</strong>${tags ? `<br/>${tags}` : ""}</td>
         <td>${r.seances}</td>
-        <td class="num">${r.withheld ? "—" : da(r.amount)}</td>
+        <td style="font-size:0.8em;"><span class="tp-tag ${tone}">${esc(state)}</span></td>
+        <td class="num">${paidHere ? da(r.amount) : "—"}</td>
       </tr>`;
     })
     .join("");
-  const s1Seances = board.students.reduce((s, r) => s + r.seances, 0);
+  const s1Seances = board.students
+    .filter(settledOn)
+    .reduce((s, r) => s + r.seances, 0);
 
   const section1 = `
     <div class="tp-section">
@@ -223,9 +251,9 @@ export function buildTeacherMonthPayslip(data: TeacherMonthPayslipData): string 
         board.students.length === 0
           ? `<div class="tp-empty">${L.noStudents}</div>`
           : `<table class="tp-table">
-        <thead><tr><th>${L.number}</th><th style="text-align:start;">${L.student}</th><th>${L.seances}</th><th>${L.amountCol}</th></tr></thead>
+        <thead><tr><th>${L.number}</th><th style="text-align:start;">${L.student}</th><th>${L.seances}</th><th>${L.stateCol}</th><th>${L.amountCol}</th></tr></thead>
         <tbody>${s1Rows}</tbody>
-        <tfoot><tr><td colspan="2">${L.total}</td><td>${s1Seances}</td><td class="num">${da(board.studentsTotal)}</td></tr></tfoot>
+        <tfoot><tr><td colspan="2">${L.total}</td><td>${s1Seances}</td><td></td><td class="num">${da(board.studentsTotal)}</td></tr></tfoot>
       </table>`
       }
     </div>`;
