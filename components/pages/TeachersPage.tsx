@@ -11,6 +11,7 @@ import {
   updateUserEmail,
 } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
+import { SoloSeanceAlert } from "@/components/dashboard/SoloSeanceAlert";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
@@ -44,6 +45,7 @@ import { teacherEmplois, unpaidStudents } from "@/lib/teacherMonths";
 import {
   cycleSizeOf,
   groupSeanceTotals,
+  soloSeanceTotals,
   teacherGroupSeances,
   monthlyPriceOf,
   schoolMonthShareOf,
@@ -1101,6 +1103,11 @@ export function TeachersPage() {
                         {t.isPassager && (
                           <Badge tone="warning" className="text-[9px] px-1.5 py-0 mt-0.5">Passager</Badge>
                         )}
+                        {/* Une séance libre solo qu'il n'a pas encore touchée :
+                            l'alerte est sur SA carte, et se règle d'un clic. */}
+                        <div className="mt-1">
+                          <SoloSeanceAlert variant="card" teacherId={t.id} />
+                        </div>
                       </div>
                     </div>
 
@@ -1371,6 +1378,11 @@ export function TeachersPage() {
       <Modal open={isDetailsOpen} onClose={() => setIsDetailsOpen(false)} title="Détails de l'Enseignant" wide>
         {selectedTeacher && (
           <div className="space-y-5">
+            {/* CE QU'ON LUI DOIT ENCORE SUR LES SÉANCES LIBRES SOLO.
+                Elles ne passent par aucun écran de paie : c'est ici, en haut de
+                sa fiche, qu'on les voit et qu'on les règle. */}
+            <SoloSeanceAlert variant="inline" teacherId={selectedTeacher.id} />
+
             {/* Header info */}
             <div className="bg-canvas border border-line p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -1883,8 +1895,34 @@ export function TeachersPage() {
                 color: "text-primary bg-primary/5 border-primary/20",
               }));
 
+              // Les séances libres SOLO : elles ne passent par aucun mois, donc
+              // c'est ici — dans son historique — qu'on lit ce qu'elles lui ont
+              // rapporté, et si la part a été versée ou reste due.
+              const soloRows = db.soloSeances
+                .filter((g) => g.teacherId === selectedTeacher.id)
+                .sort((a, b) => b.date.localeCompare(a.date));
+              const soloLogs = soloRows.map((g) => {
+                const t = soloSeanceTotals(g);
+                return {
+                  id: g.id,
+                  type: "solo" as const,
+                  title: `Séance libre solo — ${g.title}`,
+                  amount: t.teacherTotal,
+                  date: g.date,
+                  description: `${t.students} élève(s) · ${g.startTime} → ${g.endTime} · ${
+                    g.teacherPaid
+                      ? `part versée${g.teacherPaidAt ? ` le ${formatDateFr(g.teacherPaidAt)}` : ""}`
+                      : "PART NON VERSÉE — à régler"
+                  }`,
+                  color: g.teacherPaid
+                    ? "text-primary bg-primary/5 border-primary/20"
+                    : "text-danger bg-danger/5 border-danger/30",
+                };
+              });
+
               const allFinancialLogs = [
                 ...groupLogs,
+                ...soloLogs,
                 ...teacherAcomptes,
                 ...teacherExpenseLogs,
                 ...teacherAbsences,
@@ -1917,7 +1955,12 @@ export function TeachersPage() {
                       <strong className="text-success text-base font-mono">
                         {formatDA(
                           settlementLogs.reduce((t, a) => t + a.amount, 0) +
-                            groupLogs.reduce((t, a) => t + a.amount, 0),
+                            groupLogs.reduce((t, a) => t + a.amount, 0) +
+                            // Seules les séances solo RÉELLEMENT versées comptent
+                            // dans « total payé » : les autres sont encore dues.
+                            soloLogs
+                              .filter((_, i) => soloRows[i].teacherPaid)
+                              .reduce((t, a) => t + a.amount, 0),
                         )}
                       </strong>
                       {groupLogs.length > 0 && (

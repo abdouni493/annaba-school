@@ -37,6 +37,7 @@ import { Input, Select } from "@/components/ui/SearchInput";
 import { formatDA, money } from "@/lib/utils";
 import { printHtmlDocument } from "@/lib/print";
 import { PrintAsk } from "@/components/ui/PrintAsk";
+import { TicketsAsk, type PrintableTicket } from "@/components/ui/TicketsAsk";
 import { SeanceStepper } from "@/components/students/SeanceStepper";
 import {
   ChargeFormModal,
@@ -193,6 +194,8 @@ export function PresenceSheet({
     kind: "previous" | "other" | "all";
   } | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
+  /** les bons de la séance libre qu'on vient de saisir — un par élève */
+  const [tickets, setTickets] = useState<PrintableTicket[]>([]);
   /** the student the desk is about to take off the group */
   const [leaving, setLeaving] = useState<Student | null>(null);
   /** inscrire un élève DÉJÀ dans la base sur cet emploi du temps */
@@ -222,7 +225,19 @@ export function PresenceSheet({
 
   // Un tarif ARCHIVÉ (retiré du catalogue) ne pointe plus : la feuille demande
   // qu'on le redéfinisse, comme pour un emploi qui n'en a jamais eu.
-  const sub = db.subscriptions.find((s) => s.sessionId === session.id && !s.archivedAt);
+  /**
+   * LE TARIF DE CET EMPLOI DU TEMPS — vivant d'abord, archivé ensuite.
+   *
+   * Supprimer un emploi du temps l'ARCHIVE, son tarif avec lui. Sans ce repli,
+   * rouvrir la feuille d'un emploi supprimé n'affichait plus qu'un « pas encore
+   * de tarif » : les présences pointées, les soldes et les dettes de ses élèves
+   * devenaient illisibles alors qu'ils sont toujours en base. On relit donc le
+   * tarif archivé — la feuille reste consultable, et c'est bien là tout ce
+   * qu'on lui demande une fois le cours arrêté.
+   */
+  const sub =
+    db.subscriptions.find((s) => s.sessionId === session.id && !s.archivedAt) ??
+    db.subscriptions.find((s) => s.sessionId === session.id);
   const unitPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
   const schoolOnlyPrice = schoolPerSeanceOf(sub);
   const monthIndex = Math.max(0, monthOrder(monthCode));
@@ -626,26 +641,37 @@ export function PresenceSheet({
         res.teacherTotal ?? 0,
       )} pour ${teacherName(db, session.teacherId)} — réglés avec ${monthCodeLabel(monthCode)}.`,
     });
-    // Le reçu de la séance libre, proposé aussitôt : sans lui, la famille
-    // repartait sans ticket pour un argent bel et bien encaissé.
-    setReceipt(
-      seanceLibreInvoiceHtml(db, {
-        payer: input.student
-          ? studentName(input.student)
-          : input.names.map((n) => n.trim()).filter(Boolean)[0] ||
-            `${input.names.length} passager(s)`,
-        registrationNumber: input.student
-          ? registrationNumberOf(db, input.student)
-          : undefined,
-        classLabel: input.student ? studentCaseLabel(input.student) : undefined,
-        itemLabel: input.label,
-        price: res.total ?? 0,
-        date,
-        time: `${sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).startTime} - ${
-          sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]).endTime
-        }`,
-        language,
-      }),
+    // LES BONS DE LA SÉANCE — UN PAR ÉLÈVE, jamais un seul pour tout le monde.
+    //
+    // Le reçu unique portait le nom du premier passager et le total encaissé :
+    // les autres repartaient sans ticket, et aucun d'eux n'était réimprimable
+    // séparément. Chaque personne saisie a donc désormais SON bon, à son nom et
+    // pour SON prix — imprimable seul, ou tous à la suite.
+    const times = sessionTimesOn(session, JS_DAYS[new Date(`${date}T12:00:00`).getDay()]);
+    const timeLabel = `${times.startTime} - ${times.endTime}`;
+    const payers = input.student
+      ? [studentName(input.student)]
+      : input.names.map((n) => n.trim() || "Passager");
+    const unit = money(input.price || 0);
+    setTickets(
+      (res.ids ?? []).map((id, i) => ({
+        id,
+        title: payers[i] ?? payers[0] ?? "Passager",
+        subtitle: `${input.label} · ${formatDateFr(date)} · ${timeLabel}`,
+        amount: unit,
+        html: seanceLibreInvoiceHtml(db, {
+          payer: payers[i] ?? payers[0] ?? "Passager",
+          registrationNumber: input.student
+            ? registrationNumberOf(db, input.student)
+            : undefined,
+          classLabel: input.student ? studentCaseLabel(input.student) : undefined,
+          itemLabel: input.label,
+          price: unit,
+          date,
+          time: timeLabel,
+          language,
+        }),
+      })),
     );
   };
 
@@ -1547,6 +1573,7 @@ export function PresenceSheet({
       )}
 
       {receipt && <PrintAsk html={receipt} onClose={() => setReceipt(null)} />}
+      {tickets.length > 0 && <TicketsAsk tickets={tickets} onClose={() => setTickets([])} />}
     </div>
   );
 }

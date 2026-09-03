@@ -325,6 +325,17 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
              "cashOutId", "createdAt",
              "createdBy", "createdByName", "createdByRole"],
   },
+  soloSeances: {
+    table: "solo_seances", pk: "id", pkField: "id",
+    fields: ["id", "teacherId", "salleId", "title", "description", "date",
+             "startTime", "endTime", "attendees", "pricePerStudent",
+             "schoolPerStudent", "teacherPaid", "teacherPaidAt", "cashInId",
+             "cashOutId", "createdAt",
+             "createdBy", "createdByName", "createdByRole"],
+    // `teacher_paid` est « not null » : une séance créée « non réglée » doit
+    // écrire `false` explicitement, sinon Postgres refuse la ligne.
+    notNull: { teacherPaid: false, attendees: [] },
+  },
 };
 
 /** Dependency order: safe for inserts, reverse it for deletes. */

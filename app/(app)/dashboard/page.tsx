@@ -39,6 +39,7 @@ import { CreateStudentModal } from "@/components/students/CreateStudentModal";
 import { StudentSituationModal } from "@/components/students/StudentSituationModal";
 import { StudentPaymentsPrintModal } from "@/components/students/StudentPaymentsPrintModal";
 import { WorkerPaymentsAlert } from "@/components/dashboard/WorkerPaymentsAlert";
+import { SoloSeanceAlert } from "@/components/dashboard/SoloSeanceAlert";
 import { AccessDenied } from "@/components/layout/AccessDenied";
 import { useAccessRights, useCan } from "@/lib/usePermissions";
 import { canSeePage } from "@/lib/permissions";
@@ -549,6 +550,10 @@ function AdminDashboard() {
       {/* L'argent encaissé par un travailleur barre l'écran de la direction
           tant qu'elle ne l'a pas lu : une cloche dans un coin se rate. */}
       {isAdmin && <WorkerPaymentsAlert variant="banner" />}
+
+      {/* Une séance libre solo dont l'enseignant n'a pas touché sa part ne se
+          règle nulle part ailleurs : elle barre donc l'écran jusqu'au clic. */}
+      <SoloSeanceAlert variant="banner" />
 
       {/* ---- search & filters ------------------------------------------- */}
       <Card className="border border-line card-shadow">

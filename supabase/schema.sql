@@ -1309,6 +1309,42 @@ create table if not exists public.group_seances (
 
 
 -- =============================================================================
+--  LES SÉANCES LIBRES **SOLO** — des élèves NOMMÉS, hors de tout groupe.
+--
+--  Troisième forme de séance ponctuelle, et la seule qui ne dépende d'aucun
+--  emploi du temps : la réception choisit l'enseignant, la salle et les
+--  horaires, désigne les élèves un par un (fiche de l'école ou simple nom), et
+--  fixe le prix d'un élève ainsi que la part que l'école garde dessus.
+--
+--  `teacher_paid` porte tout le sel de la table : tant qu'il est faux, la part
+--  de l'enseignant est DUE et se signale en alerte sur le tableau de bord, sur
+--  sa carte et sur sa fiche. Elle ne passe JAMAIS par son écran de paie
+--  mensuelle — cette séance-là n'appartient à aucun mois.
+-- =============================================================================
+create table if not exists public.solo_seances (
+  id                 text primary key,
+  teacher_id         text not null references public.teachers (id) on delete cascade,
+  salle_id           text references public.salles (id) on delete set null,
+  title              text not null default '',
+  description        text,
+  date               text not null default '',
+  start_time         text not null default '',
+  end_time           text not null default '',
+  attendees          jsonb not null default '[]'::jsonb,   -- [{studentId?, name}]
+  price_per_student  numeric not null default 0,
+  school_per_student numeric not null default 0,
+  teacher_paid       boolean not null default false,       -- sa part est-elle versée ?
+  teacher_paid_at    text,
+  cash_in_id         text,
+  cash_out_id        text,
+  created_at         text,
+  created_by         text,                       -- qui a écrit la ligne
+  created_by_name    text,                       -- son nom, recopié à l'écriture
+  created_by_role    text
+);
+
+
+-- =============================================================================
 --  QUI A FAIT L'OPÉRATION
 --
 --  Chaque table ci-dessous se termine par les trois mêmes colonnes :
@@ -1362,6 +1398,9 @@ create index if not exists idx_notifications_parent     on public.notifications 
 create index if not exists idx_independent_session      on public.independent_sessions (session_id);
 create index if not exists idx_group_seances_teacher     on public.group_seances (teacher_id);
 create index if not exists idx_group_seances_date        on public.group_seances (date);
+create index if not exists idx_solo_seances_teacher      on public.solo_seances (teacher_id);
+create index if not exists idx_solo_seances_date         on public.solo_seances (date);
+create index if not exists idx_solo_seances_unpaid       on public.solo_seances (teacher_paid);
 create index if not exists idx_profiles_entity          on public.profiles (entity_id);
 
 
@@ -1389,7 +1428,8 @@ declare
     'schedule_sessions','subscriptions','free_periods',
     'module_absence_rules','students','payments','student_charges','absence_penalties',
     'announcements','expense_categories','expenses',
-    'cash_transactions','parents','notifications','coursework','group_seances'
+    'cash_transactions','parents','notifications','coursework','group_seances',
+    'solo_seances'
   ];
   -- L'enseignant remplit la feuille de présence : cela écrit la présence, mais
   -- aussi le solde de l'inscription et sa propre part à payer.

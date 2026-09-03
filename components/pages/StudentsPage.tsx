@@ -94,7 +94,11 @@ import {
   isFreeSub,
   studentFullyFree,
   studentSoldDebt,
+  isArchivedSub,
+  studentSoloSeances,
+  subscriptionTitleOf,
   studentSubscriptionHistory,
+  soloSeanceTotals,
   unsubscribedAtOf,
 } from "@/lib/helpers";
 
@@ -270,10 +274,17 @@ export function StudentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [students]);
 
-  /** Modules assigned to a student (via his subscriptions), for the filters. */
+  /**
+   * Les modules d'un élève, pour les filtres de sa fiche.
+   *
+   * On lit son HISTORIQUE, pas ses seules inscriptions du jour : un emploi du
+   * temps supprimé (ou qu'il a quitté) l'a désinscrit, mais ses présences, ses
+   * paiements et ses dettes de ce cours-là sont toujours affichés en dessous.
+   * Sans ce module dans la liste déroulante, ils devenaient infiltrables.
+   */
   const getStudentModuleOptions = (stu: Student) => {
     const map = new Map<string, string>();
-    stu.subscriptionIds.forEach((subId) => {
+    studentSubscriptionHistory(db, stu).forEach((subId) => {
       const sub = subscriptions.find((s) => s.id === subId);
       const sess = sub ? sessions.find((se) => se.id === sub.sessionId) : undefined;
       if (!sess) return;
@@ -2275,13 +2286,29 @@ export function StudentsPage() {
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <strong className="block text-xs text-ink">
-                                  {getModuleLabel(subId)}
-                                  {gone && (
+                                  {subscriptionTitleOf(db, subId)}
+                                  {/* SUPPRIMER UN EMPLOI DU TEMPS NE L'EFFACE PAS :
+                                      il est archivé, et tout ce qu'il porte —
+                                      présences, absences, dettes, paiements —
+                                      reste lisible ici, sous son nom. */}
+                                  {isArchivedSub(db, subId) && (
+                                    <Badge
+                                      tone="neutral"
+                                      className="ml-1.5 text-[9px]"
+                                      title="Emploi du temps supprimé — son historique reste consultable ici"
+                                    >
+                                      Emploi supprimé
+                                    </Badge>
+                                  )}
+                                  {gone && !isArchivedSub(db, subId) && (
                                     <Badge tone="warning" className="ml-1.5 text-[9px]">
                                       Désinscrit
                                       {leftOn ? ` le ${formatDateFr(leftOn)}` : ""}
                                     </Badge>
                                   )}
+                                  <span className="block text-[10px] font-normal text-muted">
+                                    {getModuleLabel(subId)}
+                                  </span>
                                 </strong>
                                 <span className="block text-[10px] text-muted">
                                   {getTimingLabel(subId)}
@@ -2699,6 +2726,10 @@ export function StudentsPage() {
                   attList.reduce((sum, a) => sum + a.amountDeducted, 0) +
                   penList.reduce((sum, p) => sum + p.amount, 0);
                 const fmtDay = (d: string) => d.split("-").reverse().join("/");
+                // Ses séances libres solo : elles vivent hors des emplois du
+                // temps, donc hors des filtres « module » — elles s'affichent
+                // dans leur propre bloc, toujours en entier.
+                const soloRows = studentSoloSeances(db, selectedStudent.id);
                 const rows = [
                   ...attList.map((att) => ({ kind: "att" as const, id: att.id, when: new Date(att.timestamp), att })),
                   ...penList.map((pen) => ({ kind: "pen" as const, id: pen.id, when: new Date(`${pen.periodEnd}T12:00:00`), pen })),
@@ -2786,6 +2817,46 @@ export function StudentsPage() {
                         <strong className="text-sm text-ink">{formatDA(chargedTotal)}</strong>
                       </div>
                     </div>
+
+                    {/* LES SÉANCES LIBRES SOLO DE CET ÉLÈVE.
+                        Elles ne sont ni un pointage, ni une inscription : elles
+                        n'appartiennent à aucun emploi du temps et à aucun mois.
+                        Elles ont pourtant bien eu lieu, et il les a payées — sa
+                        fiche doit donc les montrer, avec leur date et leur prix. */}
+                    {soloRows.length > 0 && (
+                      <div className="rounded-xl border border-primary/30 bg-primary-50/30 p-3">
+                        <strong className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-primary">
+                          🎟️ Séances libres solo ({soloRows.length})
+                        </strong>
+                        <div className="max-h-40 space-y-1.5 overflow-y-auto">
+                          {soloRows.map((g) => {
+                            const t = soloSeanceTotals(g);
+                            const teach = teachers.find((x) => x.id === g.teacherId);
+                            return (
+                              <div
+                                key={g.id}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs"
+                              >
+                                <span className="min-w-0">
+                                  <strong className="block truncate text-ink">{g.title}</strong>
+                                  <span className="block text-[10px] text-muted">
+                                    {fmtDay(g.date)} · {g.startTime}-{g.endTime}
+                                    {teach ? ` · ${teach.firstName} ${teach.lastName}` : ""}
+                                    {g.salleId ? ` · Salle ${salles.find((sl) => sl.id === g.salleId)?.name ?? "—"}` : ""}
+                                  </span>
+                                  {g.description && (
+                                    <span className="block text-[10px] italic text-muted">{g.description}</span>
+                                  )}
+                                </span>
+                                <Badge tone="success" className="font-mono text-[10px]">
+                                  {formatDA(t.pricePerStudent)}
+                                </Badge>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="space-y-2 max-h-72 overflow-y-auto">
                       {rows.length === 0 ? (

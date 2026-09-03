@@ -35,6 +35,7 @@ import {
   studentMatches,
 } from "@/lib/helpers";
 import { seanceLibreInvoiceHtml } from "@/lib/reports/documents";
+import { TicketsAsk, type PrintableTicket } from "@/components/ui/TicketsAsk";
 import { GroupSeanceSection } from "@/components/independent/GroupSeanceSection";
 import { useSettings } from "@/lib/store/settings";
 import { formatDA, money } from "@/lib/utils";
@@ -136,6 +137,8 @@ export function IndependentPage() {
 
   // Once a séance libre is created, immediately offer to print its receipt.
   const [receiptData, setReceiptData] = useState<CasualReceiptData | null>(null);
+  /** les bons de la saisie qu'on vient de faire — un par élève, imprimables séparément */
+  const [tickets, setTickets] = useState<PrintableTicket[]>([]);
 
   // ---- Helpers --------------------------------------------------------------
 
@@ -377,24 +380,36 @@ export function IndependentPage() {
 
     setIsFormOpen(false);
 
-    // Le reçu nomme le premier payeur et porte le total réellement encaissé :
-    // une seule séance pour six passagers, c'est un seul ticket.
-    const firstName = selectedStudent
-      ? `${selectedStudent.firstName} ${selectedStudent.lastName}`
-      : names[0]?.trim() || "Passager";
-    setReceiptData({
-      personName:
-        names.length > 1 ? `${firstName} + ${names.length - 1} passager(s)` : firstName,
-      registrationNumber: selectedStudent ? registrationNumberOf(db, selectedStudent) : undefined,
-      isRegisteredStudent: !!selectedStudent,
-      itemLabel: selectedItem.label,
-      teacherName: selectedItem.teacherName,
-      classLabel: selectedItem.classLabel,
-      timeLabel: selectedItem.timeLabel,
-      price: res.total ?? price * names.length,
-      date: casualDate,
-      createdAt: new Date().toISOString(),
-    });
+    // UN BON PAR ÉLÈVE — jamais un seul reçu au nom du premier.
+    //
+    // Six passagers saisis d'un coup, c'étaient six séances en base mais un
+    // unique ticket « Karim + 5 passager(s) » pour le total : les cinq autres
+    // repartaient les mains vides et rien ne se réimprimait à l'unité. Chaque
+    // séance créée porte donc son propre bon, à son nom, pour son prix — et la
+    // fenêtre laisse imprimer celui qu'on veut, ou tous à la suite.
+    const item = selectedItem;
+    const registration = selectedStudent ? registrationNumberOf(db, selectedStudent) : undefined;
+    setTickets(
+      (res.ids ?? []).map((id, i) => {
+        const payer = names[i]?.trim() || names[0]?.trim() || "Passager";
+        return {
+          id,
+          title: payer,
+          subtitle: `${item.label} · ${formatDateFr(casualDate)} · ${item.timeLabel}`,
+          amount: price,
+          html: seanceLibreInvoiceHtml(db, {
+            payer,
+            registrationNumber: registration,
+            classLabel: item.classLabel,
+            itemLabel: item.label,
+            price,
+            date: casualDate,
+            time: item.timeLabel,
+            language,
+          }),
+        };
+      }),
+    );
 
     resetForm();
   };
@@ -1293,6 +1308,8 @@ export function IndependentPage() {
       </Modal>
 
       {/* Séance libre created -> propose the receipt right away */}
+      {tickets.length > 0 && <TicketsAsk tickets={tickets} onClose={() => setTickets([])} />}
+
       <Modal open={receiptData !== null} onClose={() => setReceiptData(null)} title="Reçu de la Séance Libre">
         {receiptData && (
           <div className="space-y-6 text-center py-4">

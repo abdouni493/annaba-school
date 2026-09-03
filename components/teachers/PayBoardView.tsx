@@ -83,8 +83,11 @@ export function PayBoardView({ board }: { board: TeacherPayBoard }) {
       <div className="flex flex-wrap items-start justify-between gap-2 rounded-2xl border border-primary/30 bg-primary-50/40 p-3">
         <div className="min-w-0">
           <strong className="block text-sm text-ink">
-            {board.emploi} — Groupe {board.groupName}
+            📚 {board.emploi || "Emploi du temps"}
           </strong>
+          <span className="block text-[11px] font-semibold text-primary">
+            Groupe {board.groupName}
+          </span>
           <span className="block text-[11px] text-muted">
             {board.className} · Salle {board.salleName} · {board.daysLabel} ·{" "}
             <span className="font-mono">{board.timeLabel}</span>
@@ -115,7 +118,7 @@ export function PayBoardView({ board }: { board: TeacherPayBoard }) {
         </div>
         {board.students.length === 0 ? (
           <p className="bg-surface px-3 py-5 text-center text-[11px] italic text-muted">
-            Aucun élève réglé sur ce mois.
+            Aucun élève sur ce mois.
           </p>
         ) : (
           <div className="overflow-x-auto bg-surface">
@@ -134,15 +137,26 @@ export function PayBoardView({ board }: { board: TeacherPayBoard }) {
                   <th className="px-2 py-2 text-right">Part / séance</th>
                   <th className="px-2 py-2 text-right">Versé</th>
                   <th className="px-2 py-2 text-right">Reste dû</th>
+                  <th className="px-2 py-2 text-center">Réglé ici</th>
                   <th className="px-2 py-2 text-right">Part enseignant</th>
                 </tr>
               </thead>
               <tbody>
-                {board.students.map((r) => (
+                {board.students.map((r) => {
+                  // Un règlement figé avant cette colonne ne portait QUE des
+                  // lignes payées : l'absence de `settledHere` vaut « réglé ».
+                  const settledHere = r.settledHere ?? !r.withheld;
+                  return (
                   <tr
                     key={r.studentId}
                     className={`border-t border-line/60 ${
-                      r.schoolCovered ? "bg-danger/10" : r.withheld ? "bg-warning/5" : ""
+                      r.schoolCovered
+                        ? "bg-danger/10"
+                        : r.withheld
+                          ? "bg-warning/5"
+                          : settledHere
+                            ? ""
+                            : "bg-canvas/60 text-muted"
                     }`}
                   >
                     <td className="px-2 py-2 font-mono text-[10px] text-muted">
@@ -185,22 +199,35 @@ export function PayBoardView({ board }: { board: TeacherPayBoard }) {
                         <span className="text-muted">—</span>
                       )}
                     </td>
+                    <td className="px-2 py-2 text-center">
+                      <Badge tone={settledHere ? "success" : r.withheld ? "warning" : "neutral"} className="text-[9px]">
+                        {settledHere ? "Payé" : r.withheld ? "Retenu" : "Non réglé"}
+                      </Badge>
+                    </td>
                     <td className="px-2 py-2 text-right">
-                      {r.withheld ? (
-                        <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold text-warning">
+                      {settledHere ? (
+                        <strong className="font-mono text-success">{formatDA(r.amount)}</strong>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 font-mono text-[10px] font-bold text-warning"
+                          title={
+                            r.withheld
+                              ? "Part retenue : cet élève n'a pas payé les séances qui l'ont produite"
+                              : "Part non versée par ce bon — elle reste à régler"
+                          }
+                        >
                           <Lock className="h-3 w-3" /> {formatDA(r.amount)}
                         </span>
-                      ) : (
-                        <strong className="font-mono text-success">{formatDA(r.amount)}</strong>
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-line bg-canvas/60">
                   <td
-                    colSpan={7 + board.size}
+                    colSpan={8 + board.size}
                     className="px-2 py-2 text-right text-[11px] font-bold text-ink"
                   >
                     Sous-total table 1
