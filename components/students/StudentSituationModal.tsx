@@ -35,7 +35,7 @@ import { Input, Select } from "@/components/ui/SearchInput";
 import { PrintAsk } from "@/components/attendance/PresenceSheet";
 import { SeanceStepper } from "@/components/students/SeanceStepper";
 import { soldReceiptHtml } from "@/lib/reports/documents";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money, positiveMoney } from "@/lib/utils";
 import {
   BookOpen,
   CalendarRange,
@@ -342,7 +342,7 @@ export function StudentSituationModal({
       setPay(null);
       return;
     }
-    const amount = Math.max(0, Math.round(pay.amount || 0));
+    const amount = positiveMoney(pay.amount || 0);
     if (amount <= 0) {
       addToast({ type: "danger", title: "Montant invalide", message: "Saisissez un montant." });
       return;
@@ -381,7 +381,6 @@ export function StudentSituationModal({
             label: pay.label,
             monthCode: res.monthCode ?? pay.monthCode,
             amount,
-            balanceAfter: left,
           },
         ],
         note: pay.description,
@@ -422,9 +421,9 @@ export function StudentSituationModal({
   };
 
   const groupChosen = payableRows.filter(
-    (r) => groupSel[r.subId] && Math.round(groupAmt[r.subId] || 0) > 0,
+    (r) => groupSel[r.subId] && money(groupAmt[r.subId] || 0) > 0,
   );
-  const groupTotal = groupChosen.reduce((s, r) => s + Math.round(groupAmt[r.subId] || 0), 0);
+  const groupTotal = money(groupChosen.reduce((s, r) => s + money(groupAmt[r.subId] || 0), 0));
 
   const submitGroup = async () => {
     if (!student) return;
@@ -448,7 +447,7 @@ export function StudentSituationModal({
     setGroupBusy(true);
     const lines: { label: string; monthCode: string; amount: number; balanceAfter: number }[] = [];
     for (const r of groupChosen) {
-      const amount = Math.max(0, Math.round(groupAmt[r.subId] || 0));
+      const amount = positiveMoney(groupAmt[r.subId] || 0);
       const res = await addSold({
         studentId: student.id,
         subscriptionId: r.subId,
@@ -1046,6 +1045,7 @@ export function StudentSituationModal({
                 </label>
                 <Input
                   type="number"
+                  step="0.01"
                   min={0}
                   autoFocus
                   value={pay.amount || ""}
@@ -1093,7 +1093,7 @@ export function StudentSituationModal({
             {/* Ce que ce versement laisse derrière lui : un élève qui donne 2000
                 sur un mois à 1800 garde 200 sur le solde de CET emploi. */}
             {(() => {
-              const amount = Math.max(0, Math.round(pay.amount || 0));
+              const amount = positiveMoney(pay.amount || 0);
               if (amount <= 0) return null;
               const after = soldFor(db, student.id, pay.subId) + amount;
               const rest = Math.max(0, pay.suggestion - amount);
@@ -1238,6 +1238,7 @@ export function StudentSituationModal({
                             </label>
                             <Input
                               type="number"
+                              step="0.01"
                               min={0}
                               value={groupAmt[r.subId] || ""}
                               onChange={(e) =>
