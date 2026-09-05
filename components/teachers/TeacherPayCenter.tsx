@@ -40,7 +40,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { printHtmlDocument } from "@/lib/print";
-import { formatDA, money } from "@/lib/utils";
+import { formatDA, money, positiveMoney } from "@/lib/utils";
 import {
   formatDateFr,
   monthCodeLabel,
@@ -2261,7 +2261,7 @@ function CashInModal({
   const subId = emploi.subscriptionId ?? "";
   const proposal = subId ? monthProposal(db, row.studentId, subId, monthCode) : null;
   const balance = subId ? soldFor(db, row.studentId, subId) : 0;
-  const [amount, setAmount] = useState(() => Math.max(0, Math.round(row.debt)));
+  const [amount, setAmount] = useState(() => positiveMoney(row.debt));
 
   const after = money(balance + Math.max(0, amount));
   const rest = Math.max(0, money(row.debt - Math.max(0, amount)));
@@ -2292,6 +2292,7 @@ function CashInModal({
           </label>
           <Input
             type="number"
+            step="0.01"
             min={0}
             autoFocus
             value={amount || ""}
@@ -2303,7 +2304,7 @@ function CashInModal({
           {row.debt > 0 && (
             <button
               type="button"
-              onClick={() => setAmount(Math.round(row.debt))}
+              onClick={() => setAmount(money(row.debt))}
               className="rounded-lg border border-line px-2 py-1 text-[10px] font-bold text-primary hover:bg-primary-50"
             >
               Ce qui est dû ({formatDA(row.debt)})
@@ -2312,7 +2313,7 @@ function CashInModal({
           {proposal && proposal.unit > 0 && (
             <button
               type="button"
-              onClick={() => setAmount((v) => Math.round(v + proposal.unit))}
+              onClick={() => setAmount((v) => money(v + proposal.unit))}
               className="rounded-lg border border-line px-2 py-1 text-[10px] font-bold text-primary hover:bg-primary-50"
             >
               + 1 séance ({formatDA(proposal.unit)})
@@ -2321,7 +2322,7 @@ function CashInModal({
           {proposal && proposal.total > 0 && (
             <button
               type="button"
-              onClick={() => setAmount(Math.round(proposal.total))}
+              onClick={() => setAmount(money(proposal.total))}
               className="rounded-lg border border-line px-2 py-1 text-[10px] font-bold text-primary hover:bg-primary-50"
             >
               Le mois entier ({formatDA(proposal.total)})
@@ -2360,7 +2361,7 @@ function CashInModal({
           </Button>
           <Button
             variant="success"
-            onClick={() => onConfirm(Math.max(0, Math.round(amount)))}
+            onClick={() => onConfirm(positiveMoney(amount))}
             disabled={busy || amount <= 0 || !subId}
             className="gap-1.5"
           >

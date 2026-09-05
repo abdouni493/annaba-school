@@ -43,7 +43,20 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-const da = (n: number) => `${Math.round(n).toLocaleString("fr-DZ")} DA`;
+/**
+ * Les décimales ne s'affichent QUE lorsqu'il y en a : « 4 000 DA » reste
+ * « 4 000 DA », et « 437,50 DA » garde sa virgule au lieu d'être arrondi à
+ * 438 DA. Un mois à 3 500 DA sur 8 séances vaut 437,50 DA la séance : arrondir
+ * ici faisait mentir le papier remis à la famille.
+ */
+const da = (n: number) => {
+  const value = Math.round((Number(n) || 0) * 100) / 100;
+  const digits = Number.isInteger(value) ? 0 : 2;
+  return `${value.toLocaleString("fr-DZ", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })} DA`;
+};
 
 /** Identity block reused by every student-facing document. */
 function studentIdentityHtml(db: Database, student: Student): string {
@@ -364,10 +377,18 @@ export interface SoldReceiptLine {
   label: string;
   monthCode: string;
   amount: number;
-  /** solde of that emploi once the money is in */
-  balanceAfter: number;
 }
 
+/**
+ * LE REÇU NE DIT QUE CE QUE L'ÉLÈVE A VERSÉ.
+ *
+ * Il ne porte AUCUN solde d'emploi du temps. Un solde n'est vrai qu'à l'instant
+ * où il est imprimé : réimprimé le lendemain, ou après un autre versement, un
+ * autre pointage ou une correction, il annonçait à la famille un chiffre qui
+ * n'était plus le sien — et deux exemplaires du même reçu se contredisaient.
+ * Le montant versé, lui, ne bouge jamais : c'est la seule chose que le papier
+ * promet. La situation du compte se lit sur la fiche de l'élève, à jour.
+ */
 export function soldReceiptHtml(
   db: Database,
   opts: {
@@ -376,20 +397,9 @@ export function soldReceiptHtml(
     language: Language;
     title?: string;
     note?: string;
-    /**
-     * NE PAS AFFICHER LE SOLDE OBTENU.
-     *
-     * Au guichet, la famille repart en sachant le nouveau solde de l'emploi.
-     * Mais quand on RÉIMPRIME un vieux versement (l'historique, la cloche du
-     * tableau de bord), ce solde-là n'est plus celui du jour du versement : le
-     * reçu ne doit alors dire qu'une chose sûre — CE QUE L'ÉLÈVE A VERSÉ ce
-     * jour-là. On masque donc la colonne « Nouveau solde ».
-     */
-    hideBalance?: boolean;
   },
 ): string {
-  const { student, lines, language, hideBalance } = opts;
-  const extraLabel = language === "ar" ? "الرصيد الجديد :" : "Nouveau solde :";
+  const { student, lines, language } = opts;
 
   return brandedTicketHtml({
     school: db.school,
@@ -404,13 +414,6 @@ export function soldReceiptHtml(
       label: l.label,
       meta: monthCodeLabel(l.monthCode),
       amount: l.amount,
-      ...(hideBalance
-        ? {}
-        : {
-            extraLabel,
-            extra: daTicket(l.balanceAfter, language),
-            extraTone: l.balanceAfter < 0 ? "danger" : "success",
-          }),
     })),
   });
 }
@@ -533,9 +536,6 @@ export function paymentReceiptHtml(
     }
   }
 
-  const enrollment = payment.enrollmentId
-    ? db.enrollments.find((e) => e.id === payment.enrollmentId)
-    : undefined;
   // Le nom imprimé est celui que la liste des anciens paiements affiche : le
   // guichet ne doit jamais lire deux noms différents du même versement.
   const label = paymentName(db, payment);
@@ -545,15 +545,11 @@ export function paymentReceiptHtml(
     language,
     title: opts.title,
     note: payment.description,
-    // Réimpression d'un vieux versement : le reçu ne dit que CE QUI A ÉTÉ VERSÉ
-    // ce jour-là, pas un solde qui n'est plus celui du jour du paiement.
-    hideBalance: true,
     lines: [
       {
         label,
         monthCode: payment.monthCode ?? "",
         amount: payment.amountPaid,
-        balanceAfter: enrollment?.balance ?? 0,
       },
     ],
   });

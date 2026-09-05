@@ -27,7 +27,7 @@ import {
   ChargeFormModal,
   ChargeSettlementPanel,
 } from "@/components/students/StudentCharges";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money, positiveMoney } from "@/lib/utils";
 import { soldReceiptHtml } from "@/lib/reports/documents";
 import {
   ClassTimingPicker,
@@ -177,7 +177,7 @@ export function SoldManagerModal({
 
   const submit = async () => {
     if (!target) return;
-    const amount = Math.max(0, Math.round(target.amount || 0));
+    const amount = positiveMoney(target.amount || 0);
     if (amount <= 0) {
       addToast({ type: "danger", title: "Montant invalide", message: "Saisissez un montant." });
       return;
@@ -212,7 +212,6 @@ export function SoldManagerModal({
             label: target.label,
             monthCode: res.monthCode ?? target.monthCode,
             amount,
-            balanceAfter: res.balance ?? 0,
           },
         ],
         note: target.description || undefined,
@@ -244,9 +243,9 @@ export function SoldManagerModal({
   };
 
   const groupChosen = rows.filter(
-    (r) => !r.offered && groupSel[r.subId] && Math.round(groupAmt[r.subId] || 0) > 0,
+    (r) => !r.offered && groupSel[r.subId] && money(groupAmt[r.subId] || 0) > 0,
   );
-  const groupTotal = groupChosen.reduce((s, r) => s + Math.round(groupAmt[r.subId] || 0), 0);
+  const groupTotal = money(groupChosen.reduce((s, r) => s + money(groupAmt[r.subId] || 0), 0));
 
   const submitGroup = async () => {
     if (groupChosen.length === 0) {
@@ -260,7 +259,7 @@ export function SoldManagerModal({
     setGroupBusy(true);
     const lines: { label: string; monthCode: string; amount: number; balanceAfter: number }[] = [];
     for (const r of groupChosen) {
-      const amount = Math.max(0, Math.round(groupAmt[r.subId] || 0));
+      const amount = positiveMoney(groupAmt[r.subId] || 0);
       const res = await addSold({
         studentId: student.id,
         subscriptionId: r.subId,
@@ -617,6 +616,7 @@ export function SoldManagerModal({
                 </label>
                 <Input
                   type="number"
+                  step="0.01"
                   min={0}
                   autoFocus
                   value={target.amount || ""}
@@ -765,6 +765,7 @@ export function SoldManagerModal({
                               </label>
                               <Input
                                 type="number"
+                                step="0.01"
                                 min={0}
                                 value={groupAmt[r.subId] || ""}
                                 onChange={(e) =>

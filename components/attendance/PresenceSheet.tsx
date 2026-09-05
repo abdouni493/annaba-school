@@ -34,7 +34,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/SearchInput";
-import { formatDA, money } from "@/lib/utils";
+import { formatDA, money, positiveMoney } from "@/lib/utils";
 import { printHtmlDocument } from "@/lib/print";
 import { PrintAsk } from "@/components/ui/PrintAsk";
 import { TicketsAsk, type PrintableTicket } from "@/components/ui/TicketsAsk";
@@ -516,7 +516,7 @@ export function PresenceSheet({
   const submitPay = async () => {
     if (!canCollect) return refuse("encaisser un paiement");
     if (!pay || !sub) return;
-    const amount = Math.max(0, Math.round(pay.amount || 0));
+    const amount = positiveMoney(pay.amount || 0);
     if (amount <= 0) {
       addToast({ type: "danger", title: "Montant invalide", message: "Saisissez un montant." });
       return;
@@ -555,7 +555,6 @@ export function PresenceSheet({
             label: pay.label,
             monthCode: res.monthCode ?? pay.monthCode,
             amount,
-            balanceAfter: res.balance ?? 0,
           },
         ],
         note: pay.description,
@@ -1286,6 +1285,7 @@ export function PresenceSheet({
                 </label>
                 <Input
                   type="number"
+                  step="0.01"
                   min={0}
                   autoFocus
                   value={pay.amount || ""}
@@ -1336,7 +1336,7 @@ export function PresenceSheet({
                 sur un mois à 1800 ne « perd » pas les 200 : ils restent sur le
                 solde de CET emploi du temps et paieront ses séances suivantes. */}
             {(() => {
-              const amount = Math.max(0, Math.round(pay.amount || 0));
+              const amount = positiveMoney(pay.amount || 0);
               if (amount <= 0) return null;
               const balanceNow = soldFor(db, pay.student.id, pay.subscriptionId);
               const after = balanceNow + amount;
@@ -1645,8 +1645,8 @@ function PassagerModal({
   /** « passagers sans fiche » ou « un élève que l'école connaît déjà » */
   const [mode, setMode] = useState<"passagers" | "student">("passagers");
   const [names, setNames] = useState<string[]>(["", ""]);
-  const [price, setPrice] = useState(Math.round(suggestedPrice));
-  const [schoolShare, setSchoolShare] = useState(Math.round(suggestedPrice));
+  const [price, setPrice] = useState(money(suggestedPrice));
+  const [schoolShare, setSchoolShare] = useState(money(suggestedPrice));
   const [label, setLabel] = useState(title);
   const [busy, setBusy] = useState(false);
 
@@ -1912,6 +1912,7 @@ function PassagerModal({
               </label>
               <Input
                 type="number"
+                step="0.01"
                 min={0}
                 value={price || ""}
                 onChange={(e) => setPrice(Math.max(0, Number(e.target.value) || 0))}
@@ -1924,6 +1925,7 @@ function PassagerModal({
               </label>
               <Input
                 type="number"
+                step="0.01"
                 min={0}
                 value={schoolShare || ""}
                 onChange={(e) => setSchoolShare(Math.max(0, Number(e.target.value) || 0))}
@@ -2466,6 +2468,7 @@ export function PaymentHistoryModal({
                 </label>
                 <Input
                   type="number"
+                  step="0.01"
                   min={0}
                   value={amount || ""}
                   onChange={(e) => setAmount(Math.max(0, Number(e.target.value) || 0))}
@@ -3137,7 +3140,7 @@ function TeacherChildPayModal({
   };
 
   const submit = async (source: "cash" | "teacher_debt") => {
-    const value = Math.max(0, Math.round(amount || 0));
+    const value = positiveMoney(amount || 0);
     if (value <= 0) {
       addToast({ type: "danger", title: "Montant invalide", message: "Saisissez un montant." });
       return;
@@ -3187,7 +3190,7 @@ function TeacherChildPayModal({
           student,
           language,
           title: "Reçu de paiement",
-          lines: [{ label, monthCode, amount: value, balanceAfter: res.balance ?? 0 }],
+          lines: [{ label, monthCode, amount: value }],
           note: "Versé par la famille, avant la paie de son père.",
         }),
       );
@@ -3279,6 +3282,7 @@ function TeacherChildPayModal({
             </label>
             <Input
               type="number"
+              step="0.01"
               min={0}
               autoFocus
               value={amount || ""}

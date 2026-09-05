@@ -473,7 +473,7 @@ function StudentFiche({
         // Un montant saisi ici est un VERSEMENT de plus, jamais une réécriture
         // de ce qui a déjà été encaissé. Un emploi offert n’encaisse rien.
         for (const subId of paidSubIds) {
-          const amount = Math.max(0, Math.round(solds[subId] || 0));
+          const amount = positiveMoney(solds[subId] || 0);
           if (amount <= 0) continue;
           await addSold({
             studentId: editing.id,
@@ -599,7 +599,7 @@ function StudentFiche({
       // Les emplois offerts sont sautés : il n'y a rien à encaisser dessus.
       const advanceLines: SoldReceiptLine[] = [];
       for (const subId of paidSubIds) {
-        const amount = Math.max(0, Math.round(solds[subId] || 0));
+        const amount = positiveMoney(solds[subId] || 0);
         if (amount <= 0) continue;
         const code = joinPointOf(subId).monthCode;
         const res = await addSold({
@@ -613,7 +613,6 @@ function StudentFiche({
           label: subLabel(subId),
           monthCode: res.monthCode ?? code,
           amount,
-          balanceAfter: res.balance ?? amount,
         });
       }
 
@@ -653,7 +652,7 @@ function StudentFiche({
             label: offered ? `${subLabel(subId)} (offert)` : subLabel(subId),
             monthSeances: cycleSizeOf(sub),
             unitPrice: offered ? 0 : sub?.pricePerSession ?? 0,
-            sold: offered ? 0 : Math.max(0, Math.round(solds[subId] || 0)),
+            sold: offered ? 0 : positiveMoney(solds[subId] || 0),
             monthCode: joinPointOf(subId).monthCode,
           };
         }),
@@ -922,6 +921,7 @@ function StudentFiche({
                     </label>
                     <Input
                       type="number"
+                      step="0.01"
                       min={0}
                       value={caseRedSchool || ""}
                       onChange={(e) => setCaseRedSchool(Math.max(0, Number(e.target.value) || 0))}
@@ -934,6 +934,7 @@ function StudentFiche({
                     </label>
                     <Input
                       type="number"
+                      step="0.01"
                       min={0}
                       value={caseRedTeacher || ""}
                       onChange={(e) => setCaseRedTeacher(Math.max(0, Number(e.target.value) || 0))}
@@ -1141,6 +1142,7 @@ function StudentFiche({
                               </label>
                               <Input
                                 type="number"
+                                step="0.01"
                                 min={0}
                                 value={paid || ""}
                                 onChange={(e) =>

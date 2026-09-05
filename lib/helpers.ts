@@ -2378,18 +2378,20 @@ export function groupSeanceTotals(seance: {
   pricePerStudent: number;
   schoolPerStudent: number;
 }): GroupSeanceTotals {
+  // Le NOMBRE d'élèves est un entier ; les MONTANTS gardent leurs décimales
+  // (437,50 DA la séance n'est pas 438 DA).
   const students = Math.max(0, Math.round(seance.studentsCount || 0));
-  const price = Math.max(0, Math.round(seance.pricePerStudent || 0));
-  const school = Math.min(Math.max(0, Math.round(seance.schoolPerStudent || 0)), price);
-  const teacherPer = price - school;
+  const price = positiveMoney(seance.pricePerStudent || 0);
+  const school = Math.min(positiveMoney(seance.schoolPerStudent || 0), price);
+  const teacherPer = money(price - school);
   return {
     students,
     pricePerStudent: price,
     schoolPerStudent: school,
     teacherPerStudent: teacherPer,
-    total: students * price,
-    schoolTotal: students * school,
-    teacherTotal: students * teacherPer,
+    total: money(students * price),
+    schoolTotal: money(students * school),
+    teacherTotal: money(students * teacherPer),
   };
 }
 

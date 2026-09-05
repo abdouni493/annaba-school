@@ -67,16 +67,27 @@ export interface MetaTemplateConfig {
   buildVariables: (ctx: TemplateContext) => string[];
 }
 
-const money = (amount: number) => `${Math.round(amount).toLocaleString("fr-FR")} DA`;
+/** Les décimales ne s'affichent QUE lorsqu'il y en a : une dette de 437,50 DA
+ *  garde sa virgule au lieu d'être annoncée à 438 DA à la famille. */
+const money = (amount: number) => {
+  const value = Math.round((Number(amount) || 0) * 100) / 100;
+  const digits = Number.isInteger(value) ? 0 : 2;
+  return `${value.toLocaleString("fr-FR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })} DA`;
+};
 
 /** Montant destiné à une VARIABLE de modèle Meta. Meta rejette les tabulations,
  *  les sauts de ligne et les espaces multiples dans un paramètre : on groupe
  *  donc les milliers avec des espaces simples ordinaires, sans locale exotique. */
 export function formatAmountVar(amount: number): string {
-  const grouped = Math.round(Math.abs(amount))
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  return `${grouped} DA`;
+  // Les décimales sont conservées quand il y en a (437,50 DA), sans jamais
+  // introduire d'espace insécable ni de séparateur exotique.
+  const value = Math.abs(Math.round((Number(amount) || 0) * 100) / 100);
+  const [whole, frac] = (Number.isInteger(value) ? String(value) : value.toFixed(2)).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return `${frac ? `${grouped},${frac}` : grouped} DA`;
 }
 
 /** Formule d'adresse selon le destinataire. Le corps des modèles nomme toujours

@@ -2210,7 +2210,7 @@ export const useData = create<DataStore>((set, get) => ({
      *  - rien n'a été précisé : l'école avance tout ce qui retient la part de
      *    l'enseignant, comme le bouton le promet depuis toujours.
      */
-    const picked = (lines ?? []).filter((l) => Math.round(l.amount || 0) > 0);
+    const picked = (lines ?? []).filter((l) => money(l.amount || 0) > 0);
     const explicit = picked.length > 0 || (otherAmount ?? 0) > 0;
 
     const rows = explicit
@@ -2225,7 +2225,7 @@ export const useData = create<DataStore>((set, get) => ({
             code: l.monthCode,
             // Avancer plus que ce que le mois doit créerait une avance sur le
             // solde payée par l'école : on plafonne au dû.
-            debt: known ? Math.min(Math.round(l.amount), known.debt) : Math.round(l.amount),
+            debt: known ? Math.min(money(l.amount), known.debt) : money(l.amount),
           };
         }).filter((r) => r.debt > 0)
       : summary.soldRows.filter(
@@ -2239,7 +2239,7 @@ export const useData = create<DataStore>((set, get) => ({
     const whole = !subscriptionId && !monthCode;
     const otherDue = summary.rests + summary.registrationDue;
     const otherPaid = explicit
-      ? Math.min(Math.max(0, Math.round(otherAmount ?? 0)), otherDue)
+      ? Math.min(positiveMoney(otherAmount ?? 0), otherDue)
       : whole
         ? otherDue
         : 0;
@@ -2404,7 +2404,7 @@ export const useData = create<DataStore>((set, get) => ({
     const student = db.students.find((s) => s.id === studentId);
     if (!student) return { ok: false, messageKey: "student.notFound" };
 
-    const due = Math.max(0, Math.round(amount || 0));
+    const due = positiveMoney(amount || 0);
     if (due <= 0) return { ok: false, messageKey: "debt.nothingDue" };
 
     // Porter la somme sur un père suppose qu'il y en ait un : sans enseignant
@@ -3778,7 +3778,7 @@ export const useData = create<DataStore>((set, get) => ({
     const owed = db.payments
       .filter((p) => p.studentId === studentId)
       .reduce((s, p) => s + p.rest, 0);
-    const settled = Math.min(Math.max(0, Math.round(amount || 0)), Math.max(owed, 0));
+    const settled = Math.min(positiveMoney(amount || 0), Math.max(owed, 0));
     if (settled <= 0) return { ok: false, settled: 0, remainingDebt: Math.max(owed, 0) };
 
     // Oldest debts first, so the history reads chronologically.
@@ -3840,7 +3840,7 @@ export const useData = create<DataStore>((set, get) => ({
     const monthOwed = db.payments
       .filter((p) => p.studentId === studentId && p.rest > 0 && (p.monthCode || "M1") === monthCode)
       .reduce((s, p) => s + p.rest, 0);
-    const settled = Math.min(Math.max(0, Math.round(amount || 0)), Math.max(monthOwed, 0));
+    const settled = Math.min(positiveMoney(amount || 0), Math.max(monthOwed, 0));
     if (settled <= 0) return { ok: false, settled: 0, remainingDebt: Math.max(monthOwed, 0) };
 
     const order = db.payments
@@ -3988,7 +3988,7 @@ export const useData = create<DataStore>((set, get) => ({
     // soldées pour rien. Il se corrige en réencaissant, pas en effaçant.
     if (payment.type === "debt_payment") return { ok: false, messageKey: "payment.debtLocked" };
 
-    const credit = Math.max(0, Math.round(payment.amountPaid || 0));
+    const credit = positiveMoney(payment.amountPaid || 0);
     const enrollment = db.enrollments.find(
       (e) =>
         e.studentId === payment.studentId &&
@@ -4022,8 +4022,8 @@ export const useData = create<DataStore>((set, get) => ({
       return { ok: false, messageKey: "payment.debtLocked" };
     }
 
-    const before = Math.max(0, Math.round(payment.amountPaid || 0));
-    const after = fields.amount === undefined ? before : Math.max(0, Math.round(fields.amount));
+    const before = positiveMoney(payment.amountPaid || 0);
+    const after = fields.amount === undefined ? before : positiveMoney(fields.amount);
     const delta = after - before;
     const enrollment = db.enrollments.find(
       (e) =>
@@ -4044,7 +4044,7 @@ export const useData = create<DataStore>((set, get) => ({
       amountPaid: after,
       // A purchase priced at its net total keeps its arithmetic straight: what
       // is not handed over is exactly what stays owed.
-      rest: Math.max(0, Math.round((payment.netTotal || after) - after)),
+      rest: positiveMoney((payment.netTotal || after) - after),
       monthCode: fields.monthCode ?? payment.monthCode,
       description: fields.description ?? payment.description,
       date: nextDate,

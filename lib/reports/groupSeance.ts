@@ -29,7 +29,16 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-const da = (n: number) => `${Math.round(n).toLocaleString("fr-DZ")} DA`;
+/** Les décimales ne s'affichent QUE lorsqu'il y en a — « 437,50 DA » garde sa
+ *  virgule au lieu d'être arrondi à 438 DA. */
+const da = (n: number) => {
+  const value = Math.round((Number(n) || 0) * 100) / 100;
+  const digits = Number.isInteger(value) ? 0 : 2;
+  return `${value.toLocaleString("fr-DZ", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })} DA`;
+};
 
 export function groupSeancePayslipHtml(
   db: Database,
