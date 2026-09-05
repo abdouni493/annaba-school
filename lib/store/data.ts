@@ -1557,12 +1557,16 @@ export const useData = create<DataStore>((set, get) => ({
     const isFreePeriod = !!freePeriod;
 
     const freeHere = isFreeSub(student, markedSub?.id);
-    const offered = isFreePeriod || beforeStart;
+    // Une présence manuelle se facture comme le badge : l'élève est venu. « Avant
+    // inscription » ne l'offre plus (cela laissait une séance suivie à 0 DA et
+    // faussait le consommé et le solde du mois) ; seule une gratuité explicite la
+    // laisse à zéro.
+    const offered = isFreePeriod;
     const waived = offered && !freeHere ? price : 0;
     const cost = freeHere || offered ? 0 : price;
 
     const teacherBase =
-      (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
+      isFreePeriod && (freePeriod?.payTeachers ?? true) ? waived : cost;
     const teacherDue = opts?.skipTeacherDue
       ? 0
       : teacherDueFor(db, session, markedSub, teacherBase, student);
@@ -1588,7 +1592,7 @@ export const useData = create<DataStore>((set, get) => ({
       substituteGroup: !ownGroup,
       freePeriodId: isFreePeriod ? freePeriod!.id : undefined,
       waivedAmount: waived,
-      preStart: beforeStart && !isFreePeriod,
+      preStart: false,
     };
 
     set((state) => {
@@ -1773,7 +1777,14 @@ export const useData = create<DataStore>((set, get) => ({
     const beforeStart = !!startDate && startDate > date;
 
     const noCharge = status === "cancelled" || firstAbsence;
-    const offered = !noCharge && (!!freePeriod || beforeStart || isFreeSub(student, sub?.id));
+    // Une PRÉSENCE (présent / en retard) se facture TOUJOURS : l'élève est venu au
+    // cours. « Avant inscription » n'offre donc plus une séance réellement suivie
+    // — elle comptait pour le mois mais restait à 0 DA, si bien que la feuille
+    // affichait « 2/4 · consommé 1 500 » là où deux séances à 1 500 en valent
+    // 3 000. Seule une ABSENCE antérieure au début reste sans frais.
+    const isPresence = status === "present" || status === "late";
+    const offered =
+      !noCharge && (!!freePeriod || (beforeStart && !isPresence) || isFreeSub(student, sub?.id));
     const netPrice = netPriceFor(listPrice, discount);
     const charge = noCharge || offered ? 0 : netPrice;
     const waived = offered ? netPrice : 0;
@@ -1794,7 +1805,7 @@ export const useData = create<DataStore>((set, get) => ({
       substituteGroup: !ownGroup,
       freePeriodId: freePeriod && !noCharge ? freePeriod.id : undefined,
       waivedAmount: waived,
-      preStart: beforeStart && !freePeriod && !noCharge,
+      preStart: beforeStart && !isPresence && !freePeriod && !noCharge,
       noCharge: noCharge || undefined,
     };
 
