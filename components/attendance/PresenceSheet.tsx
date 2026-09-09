@@ -34,7 +34,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/SearchInput";
-import { formatDA, money, positiveMoney } from "@/lib/utils";
+import { cn, formatDA, money, positiveMoney } from "@/lib/utils";
 import { printHtmlDocument } from "@/lib/print";
 import { PrintAsk } from "@/components/ui/PrintAsk";
 import { TicketsAsk, type PrintableTicket } from "@/components/ui/TicketsAsk";
@@ -136,6 +136,31 @@ const STATUS_STYLE: Record<AttendanceStatus, { label: string; short: string; cls
   absent: { label: "Absent", short: "A", cls: "bg-danger/15 text-danger border-danger/40" },
   cancelled: { label: "Annulée", short: "×", cls: "bg-primary/15 text-primary border-primary/40" },
 };
+
+/**
+ * LE TABLEAU TIENT DANS SA FENÊTRE — sur ordinateur comme sur tablette.
+ *
+ * La feuille est large : autant de colonnes que de séances dans le mois, puis
+ * l'argent, le pointage et la désinscription. Dès qu'on la fait défiler, on
+ * perdait de vue soit le nom des colonnes, soit le nom de l'élève. Deux règles
+ * y répondent, et rien d'autre ne change :
+ *
+ *   * l'en-tête reste collé en haut du tableau quand on descend la liste ;
+ *   * la colonne « Élève » — son numéro et son nom — reste à gauche quand on
+ *     va chercher les colonnes de droite.
+ *
+ * Les traits de séparation sont des ombres et non des bordures : sur une
+ * cellule collée, une bordure de tableau fusionné se décroche au défilement.
+ */
+const TH_CELL = "sticky top-0 z-30 bg-canvas px-2 py-2.5 shadow-[0_1px_0_var(--border)]";
+const TH_NAME = "start-0 z-40 shadow-[1px_0_0_var(--border),-1px_0_0_var(--border),0_1px_0_var(--border)]";
+/** Le fond de la colonne figée doit être opaque — et suivre le survol de la
+ *  ligne au dinar près, sinon la ligne survolée se coupe en deux couleurs.
+ *  Le trait de séparation est porté des DEUX côtés : celui qui tombe au bord
+ *  de la fenêtre est rogné, si bien que l'arabe (de droite à gauche) le voit
+ *  du bon côté sans une règle de plus. */
+const TD_NAME =
+  "sticky start-0 z-10 bg-surface px-2 py-2 shadow-[1px_0_0_var(--border),-1px_0_0_var(--border)] group-hover:bg-[color-mix(in_oklab,var(--primary-50)_30%,var(--surface))]";
 
 export interface PresenceSheetProps {
   session: ScheduleSession;
@@ -729,9 +754,9 @@ export function PresenceSheet({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* ---- header ------------------------------------------------------- */}
-      <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl bg-primary-50/60 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2 rounded-2xl bg-primary-50/60 p-3 sm:p-4">
         <div className="min-w-0">
           <h3 className="text-base font-black text-ink sm:text-lg">{title}</h3>
           <p className="text-[11px] text-muted sm:text-xs">
@@ -748,7 +773,7 @@ export function PresenceSheet({
             )}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <div className="flex items-center gap-1 rounded-xl border border-line bg-surface p-1">
             <button
               onClick={() => onMonthChange(`M${Math.max(1, monthIndex)}`)}
@@ -793,12 +818,26 @@ export function PresenceSheet({
           <Button size="sm" variant="success" onClick={() => setBulkStatus("present")} className="gap-1.5">
             <CheckCheck className="h-3.5 w-3.5" /> Tout présent
           </Button>
-          {/* La séance n'a pas eu lieu : personne ne consomme rien. */}
-          <Button size="sm" variant="outline" onClick={() => setBulkStatus("cancelled")} className="gap-1.5">
-            <Slash className="h-3.5 w-3.5 text-primary" /> Séance annulée pour tous
+          {/* La séance n'a pas eu lieu : personne ne consomme rien. Le libellé
+              est court pour que la barre d'outils tienne sur une tablette —
+              la phrase entière reste sur l'infobulle. */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setBulkStatus("cancelled")}
+            className="gap-1.5"
+            title="Séance annulée pour tout le groupe — personne ne consomme de séance"
+          >
+            <Slash className="h-3.5 w-3.5 text-primary" /> Séance annulée
           </Button>
-          <Button size="sm" variant="outline" onClick={printSheet} className="gap-1.5">
-            <Printer className="h-3.5 w-3.5" /> Feuille de présence
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={printSheet}
+            className="gap-1.5"
+            title="Imprimer la feuille de présence du mois affiché"
+          >
+            <Printer className="h-3.5 w-3.5" /> Imprimer
           </Button>
         </div>
       </div>
@@ -827,7 +866,7 @@ export function PresenceSheet({
       </div>
 
       {/* ---- le compte de la journée, mis à jour à chaque clic ------------- */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         <TallyCard
           label="Élèves du groupe"
           value={dayTally.total}
@@ -1046,31 +1085,39 @@ export function PresenceSheet({
         </Modal>
       )}
 
-      {/* ---- the table ----------------------------------------------------- */}
-      <div className="overflow-x-auto rounded-2xl border border-line">
-        <table className="w-full min-w-[1000px] text-xs">
-          <thead className="bg-canvas/60">
+      {/* ---- the table -----------------------------------------------------
+          Le tableau défile dans SA fenêtre à partir de la tablette : l'en-tête
+          des colonnes et la colonne « Élève » restent en place, et le reste de
+          l'écran — le compte du jour, l'alerte des dettes — ne bouge pas non
+          plus. On lit une ligne de bout en bout sans perdre le nom de vue.
+
+          Sa hauteur suit celle de l'écran — ce qui reste une fois l'en-tête et
+          le compte du jour posés — sans jamais descendre sous 20 rem : sur un
+          portable, la feuille entière tient donc dans la fenêtre au lieu de
+          faire défiler deux fois. */}
+      <div className="overflow-auto rounded-2xl border border-line md:max-h-[max(20rem,calc(100vh_-_24rem))]">
+        <table className="w-full min-w-[900px] text-xs">
+          <thead>
             <tr className="text-left text-[10px] uppercase tracking-wide text-muted">
-              <th className="px-2 py-2.5">N°</th>
-              <th className="px-2 py-2.5">Élève</th>
-              <th className="px-2 py-2.5">Téléphone</th>
+              <th className={cn(TH_CELL, TH_NAME)}>Élève</th>
+              <th className={TH_CELL}>Téléphone</th>
               {Array.from({ length: slotCount }, (_, i) => (
-                <th key={i} className="px-1 py-2.5 text-center" title={`Séance ${i + 1} du mois`}>
+                <th key={i} className={cn(TH_CELL, "px-1 text-center")} title={`Séance ${i + 1} du mois`}>
                   S{i + 1}
                 </th>
               ))}
-              <th className="px-2 py-2.5">Versé / Reste {monthCode}</th>
-              <th className="px-2 py-2.5">Mois préc.</th>
-              <th className="px-2 py-2.5">Autres dettes</th>
-              <th className="px-2 py-2.5">Frais &amp; avances</th>
-              <th className="px-2 py-2.5 text-center">Pointage du jour</th>
-              <th className="px-2 py-2.5 text-center">Groupe</th>
+              <th className={TH_CELL}>Versé / Reste {monthCode}</th>
+              <th className={TH_CELL}>Mois préc.</th>
+              <th className={cn(TH_CELL, "w-[124px]")}>Autres dettes</th>
+              <th className={TH_CELL}>Frais &amp; avances</th>
+              <th className={cn(TH_CELL, "text-center")}>Pointage du jour</th>
+              <th className={cn(TH_CELL, "text-center")}>Groupe</th>
             </tr>
           </thead>
           <tbody>
             {shown.length === 0 ? (
               <tr>
-                <td colSpan={slotCount + 9} className="px-3 py-10 text-center text-xs italic text-muted">
+                <td colSpan={slotCount + 8} className="px-3 py-10 text-center text-xs italic text-muted">
                   {roster.length === 0
                     ? notYetHere > 0
                       ? `Aucun élève sur ${monthCode} — les ${notYetHere} inscrit(s) de cet emploi sont arrivés plus tard.`
@@ -2057,12 +2104,12 @@ function TallyCard({
   hint?: string;
 }) {
   return (
-    <div className={`rounded-2xl border p-3 transition-colors ${TALLY_TONE[tone]}`}>
+    <div className={`rounded-2xl border p-2.5 transition-colors sm:p-3 ${TALLY_TONE[tone]}`}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">{label}</span>
         {icon}
       </div>
-      <strong className="mt-0.5 block text-2xl font-black leading-none">{value}</strong>
+      <strong className="mt-0.5 block text-xl font-black leading-none sm:text-2xl">{value}</strong>
       {hint && <span className="mt-1 block text-[10px] opacity-75">{hint}</span>}
     </div>
   );
@@ -2614,12 +2661,15 @@ function StudentRow({
     status === "debt" ? "danger" : status === "empty" ? "warning" : status === "low" ? "warning" : "success";
 
   return (
-    <tr className="border-t border-line/60 align-middle hover:bg-primary-50/30">
-      <td className="px-2 py-2 font-mono text-[11px] text-muted">
-        {registrationNumberOf(db, student)}
-      </td>
-      <td className="px-2 py-2">
-        <strong className="block text-ink">{studentName(student)}</strong>
+    <tr className="group border-t border-line/60 align-middle hover:bg-primary-50/30">
+      {/* LE NUMÉRO ET LE NOM DANS LA MÊME COLONNE — une colonne de moins à
+          faire défiler, et c'est celle-ci qui reste figée à gauche : on lit
+          les colonnes d'argent en sachant toujours de quel élève il s'agit. */}
+      <td className={TD_NAME}>
+        <span className="block font-mono text-[9px] leading-none text-muted">
+          {registrationNumberOf(db, student)}
+        </span>
+        <strong className="block leading-tight text-ink">{studentName(student)}</strong>
         {caseLabel && (
           <Badge tone={studentCaseTone(student)} className="mt-0.5 text-[9px]">
             {caseLabel}
@@ -2765,26 +2815,35 @@ function StudentRow({
       </td>
 
       {/* AUTRES DETTES — ses mois en dette sur les AUTRES emplois du temps, un
-          par un, chacun nommé et réglable ici même. La famille est au comptoir :
-          on lui réclame CE qu'elle doit, sur QUEL cours, et on l'encaisse. */}
+          par un, chacun NOMMÉ et réglable ici même. La famille est au comptoir :
+          on lui réclame CE qu'elle doit, sur QUEL cours, et on l'encaisse.
+
+          La colonne est étroite : elle traversait la feuille alors qu'elle est
+          vide pour la plupart des élèves. Le NOM de l'emploi du temps y reste —
+          c'est tout l'intérêt de la colonne — coupé à la largeur du cadre et
+          rendu en entier par l'infobulle. Au-delà de deux emplois, les suivants
+          se comptent sur une ligne, et « tout régler » les ouvre tous. */}
       <td className="px-2 py-2">
         {otherDebtRows.length === 0 ? (
           <span className="text-sm" title="Aucune autre dette">
             ✅
           </span>
         ) : (
-          <div className="flex min-w-[150px] flex-col gap-1">
-            {otherDebtRows.map((r) => (
+          <div className="flex w-[116px] flex-col gap-1">
+            {otherDebtRows.slice(0, 2).map((r) => (
               <div
                 key={`${r.subscriptionId}-${r.code}`}
-                className="flex items-center justify-between gap-1 rounded-lg border border-warning/40 bg-warning/10 px-1.5 py-1"
+                className="flex items-center justify-between gap-1 rounded-lg border border-warning/40 bg-warning/10 px-1 py-0.5"
               >
-                <span className="min-w-0">
-                  <strong className="block truncate text-[10px] text-ink" title={r.label}>
+                <span className="min-w-0 leading-tight">
+                  <strong
+                    className="block truncate text-[10px] text-ink"
+                    title={`${r.label} · ${monthCodeLabel(r.code)} · ${formatDA(r.debt)}`}
+                  >
                     {r.label}
                   </strong>
-                  <span className="block text-[9px] text-muted">
-                    {monthCodeLabel(r.code)} · {formatDA(r.debt)}
+                  <span className="block truncate font-mono text-[9px] text-muted">
+                    {r.code} · {formatDA(r.debt)}
                   </span>
                 </span>
                 {onPay && (
@@ -2801,17 +2860,22 @@ function StudentRow({
                       })
                     }
                     title={`Encaisser ${formatDA(r.debt)} sur ${r.label} (${r.code})`}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-warning text-white transition-colors hover:brightness-110"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-warning text-white transition-colors hover:brightness-110"
                   >
                     <Wallet className="h-3 w-3" />
                   </button>
                 )}
               </div>
             ))}
+            {otherDebtRows.length > 2 && (
+              <span className="block text-[9px] text-muted">
+                + {otherDebtRows.length - 2} autre(s) emploi(s)
+              </span>
+            )}
             {otherDebtRows.length > 1 && (
               <button
                 onClick={() => onDrill("other")}
-                className="text-[9px] font-bold text-warning hover:underline"
+                className="text-start text-[9px] font-bold text-warning hover:underline"
                 title="Tout voir et régler emploi par emploi"
               >
                 Total {formatDA(otherDebt)} · tout régler
