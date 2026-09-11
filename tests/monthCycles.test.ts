@@ -147,21 +147,35 @@ describe("le solde : de l'argent, débité séance par séance", () => {
     expect(soldStatus(soldFor(useData.getState(), STU, SUB), sub.pricePerSession)).toBe("debt");
   });
 
-  it("une absence coûte une séance — sauf la toute première sur cet emploi", async () => {
+  it("une absence coûte une séance, dès la toute première", async () => {
     const sub = freshBoard(4);
     await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: 2400 });
     const days = scheduledDays(3);
 
-    // He has never attended: his month has not started, the absence is free.
+    // La place était réservée et l'enseignant est venu : même la première
+    // absence prend le prix d'une séance sur le solde de cet emploi du temps.
     await useData.getState().setPresence({ studentId: STU, sessionId: "ses-1", date: days[0], status: "absent" });
-    expect(soldFor(useData.getState(), STU, SUB)).toBe(2400);
-    expect(cycleOf(useData.getState(), STU, SUB, "M1").done).toBe(0);
+    expect(soldFor(useData.getState(), STU, SUB)).toBe(2400 - sub.pricePerSession);
+    expect(cycleOf(useData.getState(), STU, SUB, "M1").done).toBe(1);
 
     await useData.getState().setPresence({ studentId: STU, sessionId: "ses-1", date: days[1], status: "present" });
-    // Now that he is a going student, an absence is billed like a séance.
     await useData.getState().setPresence({ studentId: STU, sessionId: "ses-1", date: days[2], status: "absent" });
-    expect(soldFor(useData.getState(), STU, SUB)).toBe(2400 - 2 * sub.pricePerSession);
-    expect(cycleOf(useData.getState(), STU, SUB, "M1").done).toBe(2);
+    expect(soldFor(useData.getState(), STU, SUB)).toBe(2400 - 3 * sub.pricePerSession);
+    expect(cycleOf(useData.getState(), STU, SUB, "M1").done).toBe(3);
+  });
+
+  it("retirer une absence rend son prix au solde", async () => {
+    const sub = freshBoard(4);
+    await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: 2400 });
+    const [day] = scheduledDays(1);
+
+    await useData.getState().setPresence({ studentId: STU, sessionId: "ses-1", date: day, status: "absent" });
+    expect(soldFor(useData.getState(), STU, SUB)).toBe(2400 - sub.pricePerSession);
+
+    const res = await useData.getState().setPresence({ studentId: STU, sessionId: "ses-1", date: day, status: null });
+    expect(res.refunded).toBe(sub.pricePerSession);
+    expect(soldFor(useData.getState(), STU, SUB)).toBe(2400);
+    expect(cycleOf(useData.getState(), STU, SUB, "M1").done).toBe(0);
   });
 
   it("une séance annulée ne coûte rien et ne fait pas avancer le mois", async () => {

@@ -392,7 +392,7 @@ export function PresenceSheet({
     const bits: string[] = [];
     if (res.charged) bits.push(`−${formatDA(res.charged)} sur son solde`);
     if (res.refunded) bits.push(`+${formatDA(res.refunded)} rendus`);
-    if (res.noCharge && status) bits.push("séance non facturée");
+    if (res.noCharge && status) bits.push("séance annulée — rien débité");
     addToast({
       type: (res.balance ?? 0) < 0 ? "warning" : "success",
       title:
@@ -409,8 +409,8 @@ export function PresenceSheet({
    *
    * C'est l'inverse exact de l'écriture : la ligne s'efface, la séance cesse
    * d'être consommée, et le prix qu'elle avait pris sur le solde de CET emploi
-   * du temps y est RENDU au dinar près (une séance annulée ou non facturée
-   * n'ayant rien coûté, il n'y a rien à rendre). La part que la séance devait à
+   * du temps y est RENDU au dinar près (une séance annulée ou offerte n'ayant
+   * rien coûté, il n'y a rien à rendre). La part que la séance devait à
    * l'enseignant s'en va avec elle, tant qu'elle n'a pas été réglée.
    */
   const removeRecord = async (student: Student, record: AttendanceRecord) => {
@@ -886,7 +886,7 @@ export function PresenceSheet({
           value={dayTally.absent}
           tone="danger"
           icon={<X className="h-4 w-4" />}
-          hint={pctOf(dayTally.absent, dayTally.total)}
+          hint={`${pctOf(dayTally.absent, dayTally.total)} · séance due`}
         />
         <TallyCard
           label="Séance annulée"
@@ -2941,16 +2941,22 @@ function StudentRow({
             active={today?.status === "present"}
             disabled={busy}
             tone="success"
-            title="Présent"
+            title={`Présent — ${formatDA(unit)} pris sur le solde de cet emploi du temps`}
             onClick={() => onWrite(student, "present")}
           >
             <Check className="h-3.5 w-3.5" />
           </MarkButton>
+          {/* ABSENT SE FACTURE. La place était tenue et l'enseignant est venu :
+              la séance est due exactement comme une présence. L'infobulle le dit
+              avec le montant, pour qu'aucun clic ne prenne de l'argent en
+              silence. « Séance annulée » reste le geste gratuit. */}
           <MarkButton
             active={today?.status === "absent"}
             disabled={busy}
             tone="danger"
-            title="Absent"
+            title={`Absent — la séance est due : ${formatDA(
+              unit,
+            )} pris sur le solde de cet emploi du temps`}
             onClick={() => onWrite(student, "absent")}
           >
             <X className="h-3.5 w-3.5" />
@@ -2959,7 +2965,7 @@ function StudentRow({
             active={today?.status === "cancelled"}
             disabled={busy}
             tone="primary"
-            title="Séance annulée"
+            title="Séance annulée — elle n'a pas eu lieu : rien n'est consommé, rien n'est débité"
             onClick={() => onWrite(student, "cancelled")}
           >
             <Slash className="h-3.5 w-3.5" />
@@ -3055,8 +3061,8 @@ function MarkButton({
  *
  * L'écran dit exactement ce qui va se passer avant de le faire, parce que c'est
  * de l'argent : quelle séance part, de quel jour, et combien revient sur le
- * solde. Une séance annulée ou une première absence n'ayant rien coûté, la
- * fenêtre le dit aussi plutôt que d'annoncer un remboursement de 0 DA.
+ * solde. Une séance annulée ou offerte n'ayant rien coûté, la fenêtre le dit
+ * aussi plutôt que d'annoncer un remboursement de 0 DA.
  */
 function RemovePresenceModal({
   student,
@@ -3116,8 +3122,8 @@ function RemovePresenceModal({
           </p>
         ) : (
           <p className="rounded-xl border border-line bg-canvas/50 p-2.5 text-[11px] text-muted">
-            Cette séance n&apos;avait rien débité (séance annulée, offerte, ou première absence sur
-            cet emploi) : il n&apos;y a donc rien à rendre.
+            Cette séance n&apos;avait rien débité (séance annulée, ou offerte par l&apos;école) :
+            il n&apos;y a donc rien à rendre.
           </p>
         )}
 

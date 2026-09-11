@@ -122,8 +122,8 @@ describe("une présence datée avant le début de l'inscription", () => {
     expect(soldFor(db, STU, SUB)).toBe(-3000);
   });
 
-  it("laisse une ABSENCE antérieure au début sans frais", async () => {
-    // Une absence avant le début reste offerte : son mois n'a pas commencé.
+  it("facture une ABSENCE comme une présence, même antérieure au début", async () => {
+    // La séance a bien eu lieu et la place était tenue : l'absence est due.
     const before = scheduledDay(30);
     await useData
       .getState()
@@ -131,8 +131,18 @@ describe("une présence datée avant le début de l'inscription", () => {
 
     const db = useData.getState();
     const row = db.attendance.find((a) => a.studentId === STU && a.sessionId === SES);
-    // Une absence n'ouvre aucune dette (première absence de courtoisie, ou séance
-    // avant inscription) : rien n'est débité.
+    expect(row?.amountDeducted).toBe(1500);
+    expect(soldFor(db, STU, SUB)).toBe(-1500);
+  });
+
+  it("ne facture RIEN quand la séance est annulée", async () => {
+    const day = scheduledDay(6);
+    await useData
+      .getState()
+      .setPresence({ studentId: STU, sessionId: SES, date: day, status: "cancelled" });
+
+    const db = useData.getState();
+    const row = db.attendance.find((a) => a.studentId === STU && a.sessionId === SES);
     expect(row?.amountDeducted ?? 0).toBe(0);
     expect(soldFor(db, STU, SUB)).toBe(0);
   });

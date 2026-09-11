@@ -365,7 +365,7 @@ export interface PresenceResult {
   refunded?: number;
   /** the solde of that emploi once the click is applied */
   balance?: number;
-  /** the row costs nothing (annulée, or a first-ever absence) */
+  /** the row costs nothing — only an annulée does */
   noCharge?: boolean;
   moduleName?: string;
 }
@@ -1476,46 +1476,26 @@ export const useData = create<DataStore>((set, get) => ({
       (a) => a.studentId === studentId && a.sessionId === sessionId && dateKey(a.timestamp) === date,
     );
 
+    // « ABSENT » SE FACTURE, ICI COMME SUR LA FEUILLE DE PRÉSENCE.
+    //
+    // La place était réservée et l'enseignant est venu : la séance est due, et
+    // son prix part du solde de CET emploi du temps. Une seule règle de
+    // facturation existe dans l'application — celle de `setPresence` — et cette
+    // porte d'entrée-là s'y adresse plutôt que de la réécrire.
     if (status === "absent") {
-      if (!existing) {
-        return { ok: true, messageKey: "attendance.alreadyAbsent", cost: 0, refunded: 0 };
-      }
-      // Marking someone absent gives the séance back — never money.
-      const enrollment = enrollmentFor(db, student, session, date);
-      const refundSeance =
-        !existing.preStart &&
-        !existing.freePeriodId &&
-        !isFreeSub(student, db.subscriptions.find((x) => x.sessionId === sessionId)?.id) &&
-        !!enrollment?.enrollmentId;
-      set((state) => ({
-        attendance: state.attendance.filter((a) => a.id !== existing.id),
-        unpaidTeacher: state.unpaidTeacher.filter(
-          (u) =>
-            !(
-              u.studentId === studentId &&
-              u.sessionId === sessionId &&
-              !u.paid &&
-              dateKey(u.date) === date
-            ),
-        ),
-        enrollments: refundSeance
-          ? state.enrollments.map((e) =>
-              e.id === enrollment!.enrollmentId
-                ? {
-                    ...e,
-                    consumedSeances: Math.max(0, e.consumedSeances - 1),
-                    balance: (e.balance ?? 0) + (existing.amountDeducted || 0),
-                  }
-                : e,
-            )
-          : state.enrollments,
-      }));
+      const res = await get().setPresence({ studentId, sessionId, date, status: "absent" });
+      if (!res.ok) return { ok: false, messageKey: res.messageKey, moduleName, groupName };
+      const after = enrollmentFor(get(), student, session, date);
       return {
         ok: true,
-        messageKey: "attendance.markedAbsent",
-        refunded: refundSeance ? 1 : 0,
-        remaining: enrollment ? Math.max(0, enrollment.remaining + (refundSeance ? 1 : 0)) : undefined,
+        studentId,
+        sessionId,
+        status: "absent",
+        cost: res.charged ?? 0,
+        remaining: after?.remaining,
         moduleName,
+        groupName,
+        messageKey: "attendance.markedAbsent",
       };
     }
 
@@ -1655,9 +1635,8 @@ export const useData = create<DataStore>((set, get) => ({
    * The row of `{student, emploi, day}` is upserted, and the student's SOLDE on
    * that emploi moves by exactly the price of one séance:
    *  - `present` / `late` / `absent` -> the séance is burnt and its price is
-   *    taken off the solde,
-   *  - EXCEPT when the absence is the student's very first record on that
-   *    emploi: his month has not opened yet, so it costs him nothing,
+   *    taken off the solde. Une absence coûte le prix plein : la place était
+   *    réservée et l'enseignant est venu,
    *  - `cancelled` -> the séance did not happen: nothing burnt, nothing taken,
    *  - `null` -> the click was a mistake: the row goes and the money comes back.
    */
@@ -1759,32 +1738,22 @@ export const useData = create<DataStore>((set, get) => ({
       return { ok: false, messageKey: "scan.wrongGroup", moduleName };
     }
 
-    // "First séance ever and he is not there": the month has not opened, so the
-    // absence is recorded but never billed.
-    const hasEarlierBillable = db.attendance.some(
-      (a) =>
-        a.studentId === studentId &&
-        a.sessionId === sessionId &&
-        a.id !== existing?.id &&
-        a.status !== "cancelled" &&
-        !a.noCharge &&
-        dateKey(a.timestamp) < date,
-    );
-    const firstAbsence = status === "absent" && !hasEarlierBillable;
-
     const freePeriod = activeFreePeriod(db, [session.classId, ...(session.classIds ?? [])], date);
-    const startDate = enrollment?.startDate ?? student.subscriptionDates?.[sub?.id ?? ""]?.startDate;
-    const beforeStart = !!startDate && startDate > date;
 
-    const noCharge = status === "cancelled" || firstAbsence;
-    // Une PRÉSENCE (présent / en retard) se facture TOUJOURS : l'élève est venu au
-    // cours. « Avant inscription » n'offre donc plus une séance réellement suivie
-    // — elle comptait pour le mois mais restait à 0 DA, si bien que la feuille
-    // affichait « 2/4 · consommé 1 500 » là où deux séances à 1 500 en valent
-    // 3 000. Seule une ABSENCE antérieure au début reste sans frais.
-    const isPresence = status === "present" || status === "late";
-    const offered =
-      !noCharge && (!!freePeriod || (beforeStart && !isPresence) || isFreeSub(student, sub?.id));
+    // UNE SÉANCE MANQUÉE EST UNE SÉANCE VENDUE.
+    //
+    // La place était réservée, l'enseignant est venu, la séance a bien eu lieu :
+    // que l'élève y soit ou non ne change rien à ce qu'elle coûte. « Absent » se
+    // facture donc EXACTEMENT comme « présent » — le prix d'une séance de CET
+    // emploi du temps est pris sur le solde de CET emploi du temps, et le mois
+    // avance d'un cran.
+    //
+    // Une seule chose ne coûte rien : la séance ANNULÉE, celle qui n'a pas eu
+    // lieu du tout. Et une seule chose reste offerte : ce que l'école offre
+    // délibérément — une période portes ouvertes, ou un emploi du temps coché
+    // gratuit sur sa fiche.
+    const noCharge = status === "cancelled";
+    const offered = !noCharge && (!!freePeriod || isFreeSub(student, sub?.id));
     const netPrice = netPriceFor(listPrice, discount);
     const charge = noCharge || offered ? 0 : netPrice;
     const waived = offered ? netPrice : 0;
@@ -1805,7 +1774,6 @@ export const useData = create<DataStore>((set, get) => ({
       substituteGroup: !ownGroup,
       freePeriodId: freePeriod && !noCharge ? freePeriod.id : undefined,
       waivedAmount: waived,
-      preStart: beforeStart && !isPresence && !freePeriod && !noCharge,
       noCharge: noCharge || undefined,
     };
 
@@ -2810,16 +2778,26 @@ export const useData = create<DataStore>((set, get) => ({
         const cost = isFreeSub(student, enr.subscriptionId) ? 0 : enr.price;
         if (cost <= 0) continue;
 
-        const attended = db.attendance.filter((a) => {
+        // UNE SEMAINE DÉJÀ POINTÉE N'EST PLUS UNE SEMAINE OUBLIÉE.
+        //
+        // Cette facturation automatique existe pour les semaines dont PERSONNE
+        // n'a rien dit : l'élève n'est pas venu et nul ne l'a noté. Dès qu'une
+        // ligne existe sur la semaine, quelle qu'elle soit, la semaine est
+        // tranchée et ne doit plus être reprise ici :
+        //   · présent / en retard — il est venu, la séance est déjà facturée ;
+        //   · absent — la réception l'a noté, et depuis, l'absence a PRIS le
+        //     prix de la séance sur son solde : la reprendre une seconde fois
+        //     lui compterait deux séances pour une seule manquée ;
+        //   · annulée — la séance n'a pas eu lieu : rien n'est dû.
+        const pointed = db.attendance.filter((a) => {
           const se = db.sessions.find((s) => s.id === a.sessionId);
           return (
             a.studentId === student.id &&
             se?.moduleId === enr.session.moduleId &&
-            se?.classId === enr.session.classId &&
-            (a.status === "present" || a.status === "late")
+            se?.classId === enr.session.classId
           );
         });
-        const lastAtt = attended.map((a) => dateKey(a.timestamp)).sort().slice(-1)[0];
+        const lastAtt = pointed.map((a) => dateKey(a.timestamp)).sort().slice(-1)[0];
         const lastPen = db.absencePenalties
           .filter(
             (p) => p.studentId === student.id && p.subscriptionId === enr.subscriptionId,
@@ -2881,11 +2859,11 @@ export const useData = create<DataStore>((set, get) => ({
             continue;
           }
 
-          const present = attended.some((a) => {
+          const settled = pointed.some((a) => {
             const k = dateKey(a.timestamp);
             return k >= periodStart && k < periodEnd;
           });
-          if (present) {
+          if (settled) {
             anchor = addDays(anchor, windowDays);
             continue;
           }
