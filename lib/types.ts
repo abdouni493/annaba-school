@@ -1218,9 +1218,9 @@ export interface AttendanceRecord extends Authored {
   waivedAmount?: number;
   /**
    * The row costs NOTHING: no séance consumed, no solde debited, and it does
-   * NOT advance the emploi's month cycle. Set on a cancelled séance and on the
-   * very first record of a student that happens to be an absence (he never
-   * attended this emploi yet, so his month has not started).
+   * NOT advance the emploi's month cycle. Set on a CANCELLED séance — the one
+   * that did not happen at all. An absence never carries it: the place was
+   * held and the teacher came, so it is billed like a présence.
    */
   noCharge?: boolean;
 }

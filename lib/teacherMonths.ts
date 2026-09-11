@@ -291,9 +291,9 @@ const byDate = (a: AttendanceRecord, b: AttendanceRecord) => a.timestamp.localeC
 /**
  * Le mois de CHAQUE ligne de présence d'un emploi du temps.
  *
- * Les lignes qui ne coûtent rien (séance annulée, première absence de
- * courtoisie) n'avancent pas le compteur : elles sont simplement rattachées au
- * mois en cours, exactement comme la feuille de présence les affiche.
+ * Les lignes qui ne coûtent rien (une séance annulée) n'avancent pas le
+ * compteur : elles sont simplement rattachées au mois en cours, exactement
+ * comme la feuille de présence les affiche.
  *
  * `offset` est le point d'entrée de l'élève : inscrit en M2 sur la 3e séance,
  * ses présences sont comptées à partir de là — sa première séance appartient à

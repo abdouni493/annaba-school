@@ -334,6 +334,23 @@ function AdminDashboard() {
   const openSession = sessions.find((s) => s.id === openSessionId) ?? null;
   const openDow = JS_DAYS[new Date(`${openDate}T12:00:00`).getDay()];
 
+  /**
+   * CHANGER DE JOUR SANS FERMER LA FEUILLE.
+   *
+   * On ouvre un groupe pour pointer aujourd'hui, puis on s'aperçoit qu'il
+   * manque la séance de la veille. Refermer la feuille, reculer la date du
+   * tableau de bord et rouvrir le même créneau faisait trois gestes pour une
+   * seule question : les deux flèches de l'entête le font sur place.
+   */
+  const shiftOpenDate = (delta: -1 | 1) => {
+    const [yy, mm, dd] = openDate.split("-").map(Number);
+    const d = new Date(yy, mm - 1, dd);
+    d.setDate(d.getDate() + delta);
+    setOpenDate(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+    );
+  };
+
   const openSheet = (s: ScheduleSession, on: string = date) => {
     // Un travailleur à qui l'on n'a pas ouvert la feuille de présence peut voir
     // la grille du jour sans pouvoir l'ouvrir : le clic ne fait alors rien.
@@ -1019,16 +1036,58 @@ function AdminDashboard() {
       {openSession && (
         <Modal open onClose={() => setOpenSessionId(null)} title="" full>
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Badge tone="primary" className="gap-1">
-                <Calendar className="h-3 w-3" />
-                {DAY_LABELS_FR[openDow]} {formatDateFr(openDate)}
-              </Badge>
+            {/* L'ENTÊTE DE LA FEUILLE RESTE À PORTÉE DE MAIN.
+                La feuille d'un groupe est longue : la barre du jour et la croix
+                de fermeture partaient vers le haut dès qu'on descendait la
+                liste, et il fallait tout remonter pour fermer. Elle est
+                maintenant COLLÉE en haut de la fenêtre, elle NOMME le créneau
+                ouvert (on sait de quel groupe il s'agit sans remonter non
+                plus), et ses deux flèches changent de jour sur place. */}
+            <div className="sticky top-0 z-40 -mx-3 -mt-3 flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface/95 px-3 py-2 backdrop-blur sm:-mx-5 sm:-mt-5 sm:px-5 sm:py-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <div className="flex items-center gap-0.5 rounded-xl border border-line bg-canvas p-0.5">
+                  <button
+                    onClick={() => shiftOpenDate(-1)}
+                    title="Jour précédent"
+                    className="rounded-lg p-1 text-muted hover:bg-primary-50 hover:text-ink"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <Badge tone="primary" className="gap-1">
+                    <Calendar className="h-3 w-3" />
+                    {DAY_LABELS_FR[openDow]} {formatDateFr(openDate)}
+                  </Badge>
+                  <button
+                    onClick={() => shiftOpenDate(1)}
+                    title="Jour suivant"
+                    className="rounded-lg p-1 text-muted hover:bg-primary-50 hover:text-ink"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+                <span className="min-w-0 truncate text-xs font-bold text-ink">
+                  {openSession.title || moduleNameOf(db, openSession.moduleId)}
+                  <span className="font-semibold text-muted">
+                    {" "}
+                    · groupe {groupName(db, openSession.groupId)}
+                  </span>
+                </span>
+                {openDate !== date && (
+                  <button
+                    onClick={() => setOpenDate(date)}
+                    title="Revenir au jour affiché sur le tableau de bord"
+                    className="rounded-lg border border-warning/40 bg-warning/10 px-2 py-1 text-[10px] font-bold text-warning hover:bg-warning/20"
+                  >
+                    Revenir au {formatDateFr(date)}
+                  </button>
+                )}
+              </div>
               <button
                 onClick={() => setOpenSessionId(null)}
-                className="rounded-lg p-1.5 text-muted hover:bg-danger/10 hover:text-danger"
+                title="Fermer la feuille"
+                className="flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-[11px] font-bold text-muted hover:bg-danger/10 hover:text-danger"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" /> Fermer
               </button>
             </div>
             <PresenceSheet

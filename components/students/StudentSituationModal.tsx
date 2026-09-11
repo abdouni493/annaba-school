@@ -11,7 +11,11 @@
  *         ce qu'il traîne des mois précédents et le solde de cet emploi ;
  *      -> deux filtres au-dessus du tableau resserrent la lecture : UN emploi
  *         du temps précis, et UN mois précis ;
- *      -> on encaisse sur place, sur la ligne concernée, avec son reçu.
+ *      -> on encaisse sur place, sur la ligne concernée, avec son reçu ;
+ *      -> et EN DESSOUS, l'autre moitié de la question — « et il vient, au
+ *         moins ? » : ses présences, ses absences et ses séances annulées,
+ *         rangées par emploi du temps puis par mois de cet emploi, chaque
+ *         séance avec son jour et ce qu'elle a coûté.
  *
  * LES DEUX FAÇONS DE CHOISIR UN MOIS, parce que les deux sont vraies.
  *
@@ -33,11 +37,13 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/SearchInput";
 import { PrintAsk } from "@/components/attendance/PresenceSheet";
+import { AttendanceBreakdown } from "@/components/students/AttendanceBreakdown";
 import { SeanceStepper } from "@/components/students/SeanceStepper";
 import { soldReceiptHtml } from "@/lib/reports/documents";
 import { formatDA, money, positiveMoney } from "@/lib/utils";
 import {
   BookOpen,
+  CalendarCheck,
   CalendarRange,
   ChevronLeft,
   ChevronRight,
@@ -942,6 +948,39 @@ export function StudentSituationModal({
                   calendrier.
                 </span>
               </div>
+
+              {/* ---- 5. SES PRÉSENCES, SES ABSENCES ET SES SÉANCES ANNULÉES
+                  Le tableau ci-dessus répond à « combien doit-il ? » sur UN
+                  mois. Il reste l'autre moitié de la question, celle qu'on
+                  pose au parent debout devant le comptoir : « et il vient,
+                  au moins ? ». Elle se lit ici, emploi du temps par emploi du
+                  temps et mois par mois — chaque séance avec son statut, son
+                  jour et ce qu'elle a coûté.
+
+                  Le filtre « emploi du temps » du haut vaut aussi pour ce
+                  bloc ; le filtre de MOIS, lui, ne s'y applique pas : on veut
+                  ici tout son parcours d'un coup d'œil, pas une tranche. */}
+              <section className="overflow-hidden rounded-2xl border border-primary/25">
+                <div className="flex flex-wrap items-center gap-1.5 bg-primary-50/60 p-3">
+                  <CalendarCheck className="h-4 w-4 text-primary" />
+                  <strong className="text-xs text-ink">
+                    Ses présences, ses absences et ses séances annulées
+                  </strong>
+                  <span className="text-[10px] text-muted">
+                    — rangées par emploi du temps, puis par mois de cet emploi.
+                    {emploi === "all"
+                      ? " Tous ses emplois du temps, tout son parcours."
+                      : " Filtré sur l'emploi du temps choisi ci-dessus."}
+                  </span>
+                </div>
+                <div className="bg-surface p-3">
+                  <AttendanceBreakdown
+                    student={student}
+                    subscriptionIds={emploi === "all" ? undefined : [emploi]}
+                    emptyHint="Aucune séance n'a encore été pointée pour cet élève."
+                  />
+                </div>
+              </section>
 
               {/* ---- ses séances libres : suivies sans y être inscrit ------
                   Elles n'ouvrent ni solde ni ligne dans le tableau ci-dessus —

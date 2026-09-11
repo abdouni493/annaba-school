@@ -69,6 +69,7 @@ import { isSendablePhone } from "@/lib/whatsapp/phone";
 import { buildBalanceAlert } from "@/lib/whatsapp/alert";
 import {
 } from "@/components/students/ClassTimingPicker";
+import { AttendanceBreakdown } from "@/components/students/AttendanceBreakdown";
 import { CreateStudentModal } from "@/components/students/CreateStudentModal";
 import { StudentSituationModal } from "@/components/students/StudentSituationModal";
 import { formatDA } from "@/lib/utils";
@@ -247,7 +248,16 @@ export function StudentsPage() {
   const [attMonth, setAttMonth] = useState("");
   const [attStart, setAttStart] = useState("");
   const [attEnd, setAttEnd] = useState("");
-  const [attKindFilter, setAttKindFilter] = useState<"all" | "present" | "absent">("all");
+  const [attKindFilter, setAttKindFilter] = useState<"all" | "present" | "absent" | "cancelled">(
+    "all",
+  );
+  /**
+   * DEUX FAÇONS DE LIRE LES MÊMES SÉANCES, parce que les deux questions se
+   * posent : « où en est-il, cours par cours ? » — la lecture par emploi du
+   * temps, celle qui s'ouvre en premier — et « que s'est-il passé tel jour ? »
+   * — le journal, chronologique, où chaque ligne se corrige et se supprime.
+   */
+  const [attView, setAttView] = useState<"emploi" | "journal">("emploi");
 
   // Correcting one presence / removing one billed absence
   // ---- correcting a payment straight from the history ----------------------
@@ -2153,7 +2163,7 @@ export function StudentsPage() {
                   detailsTab === "attendance" ? "border-primary text-primary" : "border-transparent text-muted hover:text-ink"
                 }`}
               >
-                <CheckCircle className="h-4 w-4" /> Présences &amp; Absences (
+                <CheckCircle className="h-4 w-4" /> Présences · Absences · Annulées (
                 {attendance.filter((t) => t.studentId === selectedStudent.id).length +
                   absencePenalties.filter((p) => p.studentId === selectedStudent.id).length}
                 )
@@ -2706,8 +2716,18 @@ export function StudentsPage() {
                     const sess = sessions.find((se) => se.id === att.sessionId);
                     if (!sess || sess.moduleId !== attModuleFilter) return false;
                   }
+                  // Les trois statuts se filtrent chacun pour eux-mêmes : une
+                  // séance ANNULÉE n'est ni une présence ni une absence, et se
+                  // rangeait pourtant avec les présences.
                   if (attKindFilter === "absent" && att.status !== "absent") return false;
-                  if (attKindFilter === "present" && att.status === "absent") return false;
+                  if (attKindFilter === "cancelled" && att.status !== "cancelled") return false;
+                  if (
+                    attKindFilter === "present" &&
+                    att.status !== "present" &&
+                    att.status !== "late"
+                  ) {
+                    return false;
+                  }
                   return inDateWindow(new Date(att.timestamp));
                 });
                 // Automatic weekly-absence charges, shown alongside real scans so
@@ -2716,12 +2736,15 @@ export function StudentsPage() {
                 const penList = absencePenalties.filter((pen) => {
                   if (pen.studentId !== selectedStudent.id) return false;
                   if (attModuleFilter !== "all" && pen.moduleId !== attModuleFilter) return false;
-                  if (attKindFilter === "present") return false;
+                  if (attKindFilter === "present" || attKindFilter === "cancelled") return false;
                   return inDateWindow(new Date(`${pen.periodEnd}T12:00:00`));
                 });
-                const presentCount = attList.filter((a) => a.status !== "absent").length;
+                const presentCount = attList.filter(
+                  (a) => a.status === "present" || a.status === "late",
+                ).length;
                 const lateCount = attList.filter((a) => a.status === "late").length;
                 const absentTotal = attList.filter((a) => a.status === "absent").length + penList.length;
+                const cancelledCount = attList.filter((a) => a.status === "cancelled").length;
                 const chargedTotal =
                   attList.reduce((sum, a) => sum + a.amountDeducted, 0) +
                   penList.reduce((sum, p) => sum + p.amount, 0);
@@ -2736,6 +2759,81 @@ export function StudentsPage() {
                 ].sort((a, b) => b.when.getTime() - a.when.getTime());
                 return (
                   <div className="space-y-3">
+                    {/* LES DEUX LECTURES DE SES SÉANCES.
+                        « Par emploi du temps » répond à « où en est-il, cours par
+                        cours ? » : ses présences, ses absences et ses séances
+                        annulées rangées sous chaque emploi du temps, mois par
+                        mois. « Journal » répond à « que s'est-il passé tel
+                        jour ? » : la même matière à plat, dans l'ordre du temps,
+                        où chaque ligne se corrige et se supprime. */}
+                    <div className="flex flex-wrap items-center gap-1 rounded-xl border border-line bg-canvas/40 p-1.5">
+                      {([
+                        ["emploi", "Par emploi du temps"],
+                        ["journal", "Journal chronologique"],
+                      ] as const).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          onClick={() => setAttView(mode)}
+                          className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition-colors ${
+                            attView === mode
+                              ? "bg-primary text-white"
+                              : "text-muted hover:bg-primary-50 hover:text-ink"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      <span className="ms-auto pe-1 text-[10px] text-muted">
+                        {attView === "emploi"
+                          ? "Toutes ses séances, groupées sous leur emploi du temps"
+                          : "Toutes ses séances à plat — corrigeables ligne par ligne"}
+                      </span>
+                    </div>
+
+                    {attView === "emploi" && <AttendanceBreakdown student={selectedStudent} />}
+
+                    {/* LES SÉANCES LIBRES SOLO DE CET ÉLÈVE.
+                        Elles ne sont ni un pointage, ni une inscription : elles
+                        n'appartiennent à aucun emploi du temps et à aucun mois.
+                        Elles ont pourtant bien eu lieu, et il les a payées — sa
+                        fiche doit donc les montrer, avec leur date et leur prix. */}
+                    {soloRows.length > 0 && (
+                      <div className="rounded-xl border border-primary/30 bg-primary-50/30 p-3">
+                        <strong className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-primary">
+                          🎟️ Séances libres solo ({soloRows.length})
+                        </strong>
+                        <div className="max-h-40 space-y-1.5 overflow-y-auto">
+                          {soloRows.map((g) => {
+                            const t = soloSeanceTotals(g);
+                            const teach = teachers.find((x) => x.id === g.teacherId);
+                            return (
+                              <div
+                                key={g.id}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs"
+                              >
+                                <span className="min-w-0">
+                                  <strong className="block truncate text-ink">{g.title}</strong>
+                                  <span className="block text-[10px] text-muted">
+                                    {fmtDay(g.date)} · {g.startTime}-{g.endTime}
+                                    {teach ? ` · ${teach.firstName} ${teach.lastName}` : ""}
+                                    {g.salleId ? ` · Salle ${salles.find((sl) => sl.id === g.salleId)?.name ?? "—"}` : ""}
+                                  </span>
+                                  {g.description && (
+                                    <span className="block text-[10px] italic text-muted">{g.description}</span>
+                                  )}
+                                </span>
+                                <Badge tone="success" className="font-mono text-[10px]">
+                                  {formatDA(t.pricePerStudent)}
+                                </Badge>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+
+                    {attView === "journal" && (<>
                     <div className="flex flex-wrap items-center gap-2 bg-canvas/40 border border-line rounded-xl p-2">
                       <label className="text-[10px] font-bold text-muted uppercase shrink-0">Module :</label>
                       <Select value={attModuleFilter} onChange={(e) => setAttModuleFilter(e.target.value)} className="w-44">
@@ -2785,6 +2883,7 @@ export function StudentsPage() {
                           ["all", "Tout"],
                           ["present", "Présences"],
                           ["absent", "Absences"],
+                          ["cancelled", "Annulées"],
                         ] as const).map(([mode, label]) => (
                           <Button
                             key={mode}
@@ -2799,7 +2898,7 @@ export function StudentsPage() {
                     </div>
 
                     {/* Compte-rendu du filtre courant */}
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                       <div className="rounded-xl border border-success/30 bg-success/5 p-2 text-center">
                         <span className="block text-[10px] font-semibold text-muted">Présences</span>
                         <strong className="text-sm text-success">{presentCount}</strong>
@@ -2812,55 +2911,26 @@ export function StudentsPage() {
                         <span className="block text-[10px] font-semibold text-muted">Absences</span>
                         <strong className="text-sm text-danger">{absentTotal}</strong>
                       </div>
+                      {/* La séance annulée a son propre compteur : elle n'a pas eu
+                          lieu, elle ne coûte rien, et elle se comptait jusqu'ici
+                          avec les présences. */}
+                      <div className="rounded-xl border border-primary/30 bg-primary/5 p-2 text-center">
+                        <span className="block text-[10px] font-semibold text-muted">
+                          Séances annulées
+                        </span>
+                        <strong className="text-sm text-primary">{cancelledCount}</strong>
+                      </div>
                       <div className="rounded-xl border border-line bg-canvas/40 p-2 text-center">
                         <span className="block text-[10px] font-semibold text-muted">Total débité</span>
                         <strong className="text-sm text-ink">{formatDA(chargedTotal)}</strong>
                       </div>
                     </div>
 
-                    {/* LES SÉANCES LIBRES SOLO DE CET ÉLÈVE.
-                        Elles ne sont ni un pointage, ni une inscription : elles
-                        n'appartiennent à aucun emploi du temps et à aucun mois.
-                        Elles ont pourtant bien eu lieu, et il les a payées — sa
-                        fiche doit donc les montrer, avec leur date et leur prix. */}
-                    {soloRows.length > 0 && (
-                      <div className="rounded-xl border border-primary/30 bg-primary-50/30 p-3">
-                        <strong className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-primary">
-                          🎟️ Séances libres solo ({soloRows.length})
-                        </strong>
-                        <div className="max-h-40 space-y-1.5 overflow-y-auto">
-                          {soloRows.map((g) => {
-                            const t = soloSeanceTotals(g);
-                            const teach = teachers.find((x) => x.id === g.teacherId);
-                            return (
-                              <div
-                                key={g.id}
-                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs"
-                              >
-                                <span className="min-w-0">
-                                  <strong className="block truncate text-ink">{g.title}</strong>
-                                  <span className="block text-[10px] text-muted">
-                                    {fmtDay(g.date)} · {g.startTime}-{g.endTime}
-                                    {teach ? ` · ${teach.firstName} ${teach.lastName}` : ""}
-                                    {g.salleId ? ` · Salle ${salles.find((sl) => sl.id === g.salleId)?.name ?? "—"}` : ""}
-                                  </span>
-                                  {g.description && (
-                                    <span className="block text-[10px] italic text-muted">{g.description}</span>
-                                  )}
-                                </span>
-                                <Badge tone="success" className="font-mono text-[10px]">
-                                  {formatDA(t.pricePerStudent)}
-                                </Badge>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
                     <div className="space-y-2 max-h-72 overflow-y-auto">
                       {rows.length === 0 ? (
-                        <p className="text-xs text-muted italic">Aucune présence ni absence pour ces filtres.</p>
+                        <p className="text-xs text-muted italic">
+                          Aucune présence, absence ni séance annulée pour ces filtres.
+                        </p>
                       ) : (
                         rows.map((row) => {
                           if (row.kind === "att") {
@@ -2869,17 +2939,32 @@ export function StudentsPage() {
                             const modName = s ? modules.find((m) => m.id === s.moduleId)?.name : "Module";
                             const grpName = s ? groups.find((g) => g.id === s.groupId)?.name : undefined;
                             const salleName = s ? salles.find((sl) => sl.id === s.salleId)?.name : undefined;
+                            // TROIS STATUTS, TROIS LIGNES DIFFÉRENTES. Une séance
+                            // ANNULÉE n'a pas eu lieu : elle s'affichait pourtant
+                            // « Présence … Absent », le seul statut que la ligne
+                            // ne savait pas dire. Chacun porte maintenant son nom,
+                            // sa couleur et son prix.
                             const isAbsent = att.status === "absent";
+                            const isCancelled = att.status === "cancelled";
+                            const kindLabel = isCancelled
+                              ? "Séance annulée"
+                              : isAbsent
+                                ? "Absence"
+                                : "Présence";
                             return (
                               <div
                                 key={att.id}
                                 className={`flex flex-wrap justify-between items-center gap-2 text-xs p-3 rounded-xl border ${
-                                  isAbsent ? "bg-danger/5 border-danger/30" : "bg-canvas border-line"
+                                  isCancelled
+                                    ? "bg-primary/5 border-primary/30"
+                                    : isAbsent
+                                      ? "bg-danger/5 border-danger/30"
+                                      : "bg-canvas border-line"
                                 }`}
                               >
                                 <div className="min-w-0">
                                   <strong className="text-ink block">
-                                    {isAbsent ? "Absence" : "Présence"}: {modName}
+                                    {kindLabel}: {modName}
                                     {grpName ? <span className="text-muted font-semibold"> — {grpName}</span> : null}
                                     {att.substituteGroup && (
                                       <Badge tone="primary" className="ms-1.5 text-[9px] px-1.5 py-0">
@@ -2894,10 +2979,33 @@ export function StudentsPage() {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
-                                  <Badge tone={att.status === "present" ? "success" : att.status === "late" ? "warning" : "danger"}>
-                                    {att.status === "present" ? "Présent" : att.status === "late" ? "En retard" : "Absent"}
+                                  <Badge
+                                    tone={
+                                      att.status === "present"
+                                        ? "success"
+                                        : att.status === "late"
+                                          ? "warning"
+                                          : att.status === "cancelled"
+                                            ? "primary"
+                                            : "danger"
+                                    }
+                                  >
+                                    {att.status === "present"
+                                      ? "Présent"
+                                      : att.status === "late"
+                                        ? "En retard"
+                                        : att.status === "cancelled"
+                                          ? "Annulée"
+                                          : "Absent"}
                                   </Badge>
-                                  {att.preStart || att.freePeriodId ? (
+                                  {isCancelled ? (
+                                    <span
+                                      className="text-[10px] font-bold text-primary"
+                                      title="La séance n'a pas eu lieu : rien n'est consommé, rien n'est débité"
+                                    >
+                                      Rien débité
+                                    </span>
+                                  ) : att.preStart || att.freePeriodId ? (
                                     <span
                                       className="text-[10px] font-bold text-success"
                                       title={
@@ -2909,7 +3017,16 @@ export function StudentsPage() {
                                       Offert ({att.waivedAmount ?? 0} DA)
                                     </span>
                                   ) : (
-                                    <span className="font-bold text-danger text-[10px]">-{formatDA(att.amountDeducted)}</span>
+                                    <span
+                                      className="font-bold text-danger text-[10px]"
+                                      title={
+                                        isAbsent
+                                          ? "Absence : la place était tenue, la séance est due"
+                                          : "Séance suivie et facturée"
+                                      }
+                                    >
+                                      -{formatDA(att.amountDeducted)}
+                                    </span>
                                   )}
                                   <button
                                     onClick={() => openEditAtt(att)}
@@ -2920,7 +3037,7 @@ export function StudentsPage() {
                                   </button>
                                   <button
                                     onClick={() => setDeletingAtt(att)}
-                                    title="Supprimer cette présence (et rembourser)"
+                                    title="Supprimer ce pointage (et rendre ce qu'il a débité)"
                                     className="p-1.5 rounded-lg text-muted hover:bg-danger/10 hover:text-danger transition-colors"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -2964,6 +3081,7 @@ export function StudentsPage() {
                         })
                       )}
                     </div>
+                    </>)}
                   </div>
                 );
               })()}

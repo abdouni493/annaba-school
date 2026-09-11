@@ -967,8 +967,9 @@ export function cycleSizeOf(sub?: Subscription): number {
 }
 
 /**
- * Does this attendance row move the student's month forward? A cancelled
- * séance and a "courtesy" first absence cost nothing, so they do not.
+ * Does this attendance row move the student's month forward? Only a cancelled
+ * séance — one that did not happen at all — costs nothing and stands still;
+ * an absence burns its séance like a présence, the place having been held.
  */
 export function consumesSeance(a: AttendanceRecord): boolean {
   return a.status !== "cancelled" && !a.noCharge;
@@ -989,17 +990,17 @@ export function consumesSeance(a: AttendanceRecord): boolean {
  *
  * Une séance n'est gratuite que si quelque chose l'a OFFERTE, et la ligne le
  * dit toujours elle-même :
- *   · `cancelled` / `noCharge` — la séance n'a pas eu lieu, ou c'est la
- *     première absence de courtoisie ;
+ *   · `cancelled` / `noCharge` — la séance n'a pas eu lieu ;
  *   · `freePeriodId`          — une période portes ouvertes la couvrait ;
  *   · `preStart` / `waivedAmount` — elle s'est tenue avant son inscription ;
  *   · emploi du temps offert  — « cas spécial », coché sur cet emploi.
  * Hors de ces cas, une présence coûte le tarif de l'élève, et c'est ce tarif
  * qui est repris ici quand la ligne n'en porte aucun.
  *
- * Une ABSENCE à 0 DA n'est jamais reprise : la seule absence gratuite est la
- * première, et elle porte déjà `noCharge`. Reprendre les autres ferait payer
- * rétroactivement des absences que l'école avait choisi de ne pas facturer.
+ * Une ABSENCE à 0 DA n'est jamais reprise. Elle se facture désormais au tarif
+ * plein le jour où elle est saisie ; celles restées à 0 datent des règles
+ * précédentes, et les reprendre ferait payer rétroactivement des absences que
+ * l'école avait alors choisi de ne pas facturer.
  */
 export function seanceChargeOf(
   db: Database,
