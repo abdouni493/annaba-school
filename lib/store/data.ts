@@ -6,6 +6,9 @@ import {
   caseReductionCut,
   cycleSizeOf,
   currentCycleCode,
+  enrollmentCycles,
+  seanceChargeOf,
+  studentSubscriptionHistory,
   isFreeSub,
   isSchoolOnlySub,
   joinPointFor,
@@ -605,8 +608,94 @@ interface DataActions {
       schoolMonthShare?: number;
       /** teacher pay for one séance (teacher month share / monthlySeances) */
       teacherPerSeance?: number;
+      /**
+       * JUSQU'OÙ LE TARIF S'APPLIQUE.
+       *
+       *  - `course` (par défaut) : à TOUS les groupes du même cours — c'est ce
+       *    que promet l'écran « Abonnements » ;
+       *  - `session` : à CET emploi du temps seul — c'est ce que promet l'écran
+       *    « Emploi du temps », dont le bloc s'intitule « Tarif de l'emploi du
+       *    temps ». Sans cette distinction, corriger le prix d'un groupe
+       *    réécrivait celui de son jumeau, et la réception voyait sa
+       *    modification « disparaître » dès qu'elle rouvrait l'autre.
+       */
+      scope?: "course" | "session";
+      /**
+       * APPLIQUER LE NOUVEAU TARIF AUX SÉANCES DÉJÀ POINTÉES ET NON RÉGLÉES.
+       *
+       * Une présence porte le prix qu'elle a débité le jour du pointage. Changer
+       * le tarif en cours de mois laissait donc la moitié du mois à l'ancien
+       * prix et l'autre au nouveau : le mois affiché ne valait plus ce que
+       * l'écran du tarif annonçait. Quand cette option est vraie, les séances
+       * dont la part de l'enseignant N'A PAS ENCORE ÉTÉ RÉGLÉE sont re-tarifées
+       * — solde de l'élève et part due à l'enseignant compris. Celles déjà
+       * réglées gardent le prix auquel elles l'ont été.
+       */
+      repriceUnsettled?: boolean;
     },
-  ) => Promise<{ ok: boolean; groups?: number; created?: number; updated?: number }>;
+  ) => Promise<{
+    ok: boolean;
+    groups?: number;
+    created?: number;
+    updated?: number;
+    /** séances re-tarifées (voir `repriceUnsettled`) */
+    repriced?: number;
+  }>;
+  /**
+   * COMBIEN DE SÉANCES CHANGERAIENT DE PRIX si le tarif de cet emploi du temps
+   * était appliqué aux séances déjà pointées ?
+   *
+   * L'écran s'en sert pour POSER la question plutôt que de décider seul : « 14
+   * séances déjà pointées ne sont pas encore réglées — leur appliquer le
+   * nouveau tarif ? ». Ne modifie rien.
+   */
+  unsettledSeanceCount: (sessionId: string, scope?: "course" | "session") => number;
+  /**
+   * RE-TARIFE LES SÉANCES NON RÉGLÉES de ces emplois du temps, et rend leur
+   * nombre. Le solde de chaque élève est corrigé de l'écart et la part encore
+   * due à l'enseignant suit — les séances déjà réglées ne bougent pas.
+   */
+  repriceSessions: (sessionIds: string[]) => number;
+  /** Idem, mais pour UN élève seulement — ce que la bascule de cas utilise. */
+  repriceStudentSeances: (studentId: string, sessionIds: string[]) => number;
+  /**
+   * CHANGER LE CAS D'UN ÉLÈVE SANS MENTIR SUR SES DETTES.
+   *
+   * Un élève ordinaire qui devient « gratuit », « école seulement » ou
+   * « réduction » traîne ce qu'il devait AU TARIF D'AVANT. L'école doit alors
+   * trancher, et c'est elle qui tranche — jamais l'application :
+   *
+   *  - `clear`   : ce qu'il doit est EFFACÉ. Les séances impayées de chaque
+   *    mois sont passées en offertes (leur prix part en `waivedAmount`, si bien
+   *    que l'école lit ce que le geste lui a coûté), les restes d'anciens
+   *    versements tombent à zéro et les frais d'inscription avec. Ce que la
+   *    famille a déjà versé lui reste acquis ;
+   *  - `reprice` : ses dettes sont GARDÉES mais RECALCULÉES au nouveau cas —
+   *    la réduction s'applique, « école seule » ramène la séance à la part de
+   *    l'école — et la part due à son enseignant suit le même mouvement ;
+   *  - `keep`    : rien ne bouge, l'ancien cas reste facturé tel quel.
+   *
+   * À n'appeler qu'APRÈS avoir écrit le nouveau cas sur la fiche : le calcul
+   * lit l'élève tel qu'il est désormais.
+   */
+  convertStudentCase: (args: {
+    studentId: string;
+    mode: "clear" | "reprice" | "keep";
+  }) => Promise<{ ok: boolean; repriced?: number; waived?: number }>;
+  /**
+   * ENCAISSER LES FRAIS D'INSCRIPTION, en une fois ou en plusieurs.
+   *
+   * L'alerte de la fiche se réglait d'un simple « marquer comme réglés » : rien
+   * n'entrait en caisse, rien n'apparaissait dans l'historique de l'élève, et
+   * un versement partiel était impossible. Le règlement écrit désormais son
+   * mouvement de caisse et sa ligne d'historique, et ce qui reste dû reste dû.
+   */
+  payRegistrationFee: (args: {
+    studentId: string;
+    amount: number;
+    date?: string;
+    description?: string;
+  }) => Promise<{ ok: boolean; paid?: number; left?: number; paymentId?: string }>;
   /**
    * Retire le tarif d'un cours entier (tous ses groupes).
    *
@@ -960,9 +1049,20 @@ export type DataStore = Database & DataActions;
 // Pure selectors over a snapshot — the in-memory replacement for the SQL rules.
 // =============================================================================
 
-/** Identity of a cours: class + module + teacher. A séance libre stands alone. */
+/**
+ * Identity of a cours: class + module + teacher. A séance libre stands alone.
+ *
+ * UN EMPLOI DU TEMPS INCOMPLET N'A PAS DE FRÈRES. Tant que la classe, le module
+ * ou l'enseignant manque, deux créneaux qui n'ont rien à voir partageaient la
+ * même clé vide (« || ») et passaient donc pour deux groupes du même cours :
+ * fixer le tarif de l'un réécrivait celui de l'autre, et la réception voyait
+ * son prix « revenir en arrière » dès qu'elle touchait au second. Un créneau
+ * non renseigné est désormais seul de son espèce.
+ */
 function courseKey(s: ScheduleSession): string {
-  return s.isOpen ? `open-${s.id}` : `${s.classId}|${s.moduleId}|${s.teacherId}`;
+  if (s.isOpen) return `open-${s.id}`;
+  if (!s.classId || !s.moduleId || !s.teacherId) return `solo-${s.id}`;
+  return `${s.classId}|${s.moduleId}|${s.teacherId}`;
 }
 
 function siblingIds(db: Database, sessionId: string): string[] {
@@ -1097,6 +1197,143 @@ function teacherDueFor(
   // celui qui l'affiche sur la paie et qui la retire du prix de l'élève : les
   // deux côtés du partage ne peuvent donc pas diverger.
   return positiveMoney(gross - caseReductionCut(student, "teacher", gross));
+}
+
+/**
+ * UNE SÉANCE DÉJÀ POINTÉE, RELUE AU TARIF D'AUJOURD'HUI.
+ *
+ * Une présence porte le prix qu'elle a débité le jour du pointage : c'est ce
+ * qui rend les mois passés relisables. Mais deux changements légitimes rendent
+ * ce prix faux pour les mois ENCORE OUVERTS :
+ *
+ *   · l'école corrige le tarif de l'emploi du temps en cours de mois ;
+ *   · la réception bascule un élève d'un cas à un autre (gratuit, réduction,
+ *     « école seule »), ce qui change ce que SA séance coûte.
+ *
+ * Le plan dit, séance par séance, ce qui changerait — sans rien écrire. Une
+ * séance dont la part de l'enseignant a DÉJÀ été réglée n'y figure jamais :
+ * elle a été payée à son prix, et le passé ne se réécrit pas.
+ */
+interface RepriceLine {
+  recordId: string;
+  studentId: string;
+  sessionId: string;
+  enrollmentId?: string;
+  /** ce que la séance a coûté */
+  before: number;
+  /** ce qu'elle coûte au tarif et au cas d'aujourd'hui */
+  after: number;
+  /** la ligne de part enseignant encore due, quand il y en a une */
+  dueId?: string;
+  teacherAfter: number;
+}
+
+function repricePlan(
+  db: Database,
+  sessionIds: string[],
+  opts?: { studentId?: string },
+): RepriceLine[] {
+  const wanted = new Set(sessionIds);
+  if (wanted.size === 0) return [];
+  const out: RepriceLine[] = [];
+
+  for (const rec of db.attendance) {
+    if (!wanted.has(rec.sessionId)) continue;
+    if (opts?.studentId && rec.studentId !== opts.studentId) continue;
+    // Une séance qui n'a pas eu lieu, ou que l'école a délibérément offerte,
+    // ne se re-tarife pas : elle vaut zéro pour une raison qui lui est propre.
+    if (rec.status === "cancelled" || rec.noCharge) continue;
+    if (rec.freePeriodId || rec.preStart || (rec.waivedAmount ?? 0) > 0) continue;
+
+    const session = db.sessions.find((x) => x.id === rec.sessionId);
+    const sub = db.subscriptions.find((x) => x.sessionId === rec.sessionId);
+    if (!session || !sub) continue;
+    const student = db.students.find((x) => x.id === rec.studentId);
+    if (!student) continue;
+
+    const day = dateKey(rec.timestamp);
+    const due = db.unpaidTeacher.find(
+      (u) =>
+        u.studentId === rec.studentId &&
+        u.sessionId === rec.sessionId &&
+        dateKey(u.date) === day,
+    );
+    // Part déjà versée : cette séance-là est close.
+    if (due?.paid) continue;
+
+    const enrollment = db.enrollments.find(
+      (e) => e.studentId === rec.studentId && e.subscriptionId === sub.id,
+    );
+    const discount = enrollment?.discount ?? student.subscriptionDiscounts?.[sub.id];
+    const after = netPriceFor(studentListPrice(student, sub, session.openPrice ?? 0), discount);
+    const before = positiveMoney(rec.amountDeducted || 0);
+    const teacherAfter = teacherDueFor(db, session, sub, after, student);
+    const teacherBefore = positiveMoney(due?.amount ?? 0);
+
+    if (Math.abs(after - before) < 0.005 && Math.abs(teacherAfter - teacherBefore) < 0.005) {
+      continue;
+    }
+    out.push({
+      recordId: rec.id,
+      studentId: rec.studentId,
+      sessionId: rec.sessionId,
+      enrollmentId: enrollment?.id,
+      before,
+      after,
+      dueId: due?.id,
+      teacherAfter,
+    });
+  }
+  return out;
+}
+
+/** Tous les emplois du temps qu'un élève a suivis — ceux qu'il a quittés aussi,
+ *  parce que sortir d'un groupe n'efface pas ce qu'on y devait. */
+function studentSubscriptionIdsOf(db: Database, student: Student): string[] {
+  return studentSubscriptionHistory(db, student);
+}
+
+/**
+ * ÉCRIT un plan de re-tarification : le prix de la séance, le solde de l'élève
+ * et la part encore due à l'enseignant bougent ensemble, jamais l'un sans
+ * l'autre. Rend le nombre de séances touchées.
+ */
+function applyReprice(
+  write: (fn: (state: DataStore) => Partial<DataStore>) => void,
+  plan: RepriceLine[],
+): number {
+  const byAttendance = new Map(plan.map((line) => [line.recordId, line]));
+  const balanceDelta = new Map<string, number>();
+  for (const line of plan) {
+    if (!line.enrollmentId) continue;
+    // Le solde a été débité de l'ancien prix : on lui rend l'écart.
+    balanceDelta.set(
+      line.enrollmentId,
+      money((balanceDelta.get(line.enrollmentId) ?? 0) + line.before - line.after),
+    );
+  }
+  const teacherRows = new Map(plan.filter((l) => l.dueId).map((l) => [l.dueId!, l]));
+
+  write((state) => ({
+    attendance: state.attendance.map((a) => {
+      const line = byAttendance.get(a.id);
+      return line ? { ...a, amountDeducted: line.after } : a;
+    }),
+    enrollments: state.enrollments.map((e) => {
+      const delta = balanceDelta.get(e.id);
+      return delta ? { ...e, balance: money((e.balance ?? 0) + delta) } : e;
+    }),
+    unpaidTeacher: state.unpaidTeacher
+      .map((u) => {
+        const line = teacherRows.get(u.id);
+        return line ? { ...u, amount: line.teacherAfter } : u;
+      })
+      // Une part devenue nulle (emploi offert, « école seule ») n'a plus rien à
+      // faire sur la fiche de paie : elle disparaît au lieu d'y peser zéro.
+      .filter((u) => !(teacherRows.has(u.id) && teacherRows.get(u.id)!.teacherAfter <= 0)),
+  }));
+
+  return plan.length;
 }
 
 function teacherShare(db: Database, teacherId: string | undefined, base: number): number {
@@ -2619,19 +2856,35 @@ export const useData = create<DataStore>((set, get) => ({
     const session = db.sessions.find((s) => s.id === sessionId);
     if (!session) return { ok: false };
 
-    const ids = siblingIds(db, sessionId);
+    // « Tarif de l'emploi du temps » ne veut pas dire « tarif du cours » : la
+    // grille des emplois du temps n'écrit que sur le créneau qu'elle montre,
+    // l'écran des abonnements sur tous les groupes du cours.
+    const ids = opts?.scope === "session" ? [sessionId] : siblingIds(db, sessionId);
     // LE PRIX D'UNE SÉANCE GARDE SES DÉCIMALES : un mois à 4 000 DA sur 3
     // séances vaut 1 333,33 DA la séance, pas 1 333. Le même soin s'applique à
     // la part de l'école et à celle de l'enseignant : arrondir chaque division
     // à l'entier faisait dériver la paie de quelques dinars par séance.
-    const clean = positiveMoney(price || 0);
+    const asked = positiveMoney(price || 0);
     const { levelPrice, periodMonths } = opts ?? {};
     // A monthly formula only exists once it holds séances; without them the
     // whole offer is dropped, so an old one never survives its removal.
     const monthlySeances = Math.max(0, Math.round(opts?.monthlySeances ?? 0)) || undefined;
     const monthlyPrice = monthlySeances
-      ? positiveMoney(opts?.monthlyPrice ?? monthlySeances * clean)
+      ? positiveMoney(opts?.monthlyPrice ?? monthlySeances * asked)
       : undefined;
+    /**
+     * LE PRIX D'UNE SÉANCE EST CELUI DU MOIS, DIVISÉ — jamais une valeur à côté.
+     *
+     * Les deux colonnes décrivent le même tarif, et rien ne les tenait
+     * ensemble : un mois passé de 4 000 à 6 000 DA laissait la colonne
+     * « prix d'une séance » à l'ancien chiffre, si bien que la feuille de
+     * présence continuait de débiter l'ancien prix pendant que l'écran du mois
+     * affichait le nouveau. Dès qu'un pack mensuel existe, il fait foi.
+     */
+    const clean =
+      monthlySeances && monthlyPrice != null
+        ? positiveMoney(monthlyPrice / monthlySeances)
+        : asked;
     // The school/teacher split only means something on a monthly formula.
     const schoolMonthShare =
       monthlySeances && opts?.schoolMonthShare != null
@@ -2667,6 +2920,12 @@ export const useData = create<DataStore>((set, get) => ({
       }
     }
 
+    // Une formation garde son prix de niveau et sa durée quand l'appelant ne
+    // les mentionne pas : l'écran des emplois du temps ne parle que du mois, et
+    // il ne doit pas effacer au passage ce que l'écran des abonnements a réglé.
+    const keepLevel = !opts || !("levelPrice" in opts);
+    const keepMonths = !opts || !("periodMonths" in opts);
+
     set((state) => ({
       subscriptions: [
         ...state.subscriptions.map((s) =>
@@ -2676,8 +2935,8 @@ export const useData = create<DataStore>((set, get) => ({
                 // Redéfinir le tarif d'un cours archivé le remet en service.
                 archivedAt: undefined,
                 pricePerSession: clean,
-                levelPrice,
-                periodMonths,
+                levelPrice: keepLevel ? s.levelPrice : levelPrice,
+                periodMonths: keepMonths ? s.periodMonths : periodMonths,
                 monthlySeances,
                 monthlyPrice,
                 schoolMonthShare,
@@ -2692,7 +2951,160 @@ export const useData = create<DataStore>((set, get) => ({
         : state.sessions,
     }));
 
-    return { ok: true, created, updated, groups: created + updated };
+    // Les séances déjà pointées et NON ENCORE RÉGLÉES suivent le nouveau tarif
+    // quand l'écran l'a demandé — sinon le mois en cours resterait à cheval sur
+    // deux prix.
+    const repriced = opts?.repriceUnsettled ? get().repriceSessions(ids) : 0;
+
+    return { ok: true, created, updated, groups: created + updated, repriced };
+  },
+
+  unsettledSeanceCount: (sessionId, scope) => {
+    const db = get();
+    const ids = scope === "session" ? [sessionId] : siblingIds(db, sessionId);
+    return repricePlan(db, ids).length;
+  },
+
+  repriceSessions: (sessionIds) => applyReprice(set, repricePlan(get(), sessionIds)),
+
+  convertStudentCase: async ({ studentId, mode }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    if (!student) return { ok: false };
+    if (mode === "keep") return { ok: true, repriced: 0, waived: 0 };
+
+    // TOUS ses emplois du temps, ceux qu'il a quittés compris : sortir d'un
+    // groupe n'a jamais effacé ce qu'on y devait.
+    const subIds = studentSubscriptionIdsOf(db, student);
+    const sessionIds = subIds
+      .map((id) => db.subscriptions.find((x) => x.id === id)?.sessionId)
+      .filter((id): id is string => !!id);
+
+    if (mode === "reprice") {
+      return { ok: true, repriced: get().repriceStudentSeances(studentId, sessionIds), waived: 0 };
+    }
+
+    // ---- mode "clear" : ce qu'il doit encore est offert --------------------
+    //
+    // On n'efface pas les séances : on les OFFRE. Le mois garde ses présences,
+    // le prix qu'elles ne coûteront plus part en `waivedAmount` — l'école lit
+    // donc ce que sa décision lui a coûté — et le mois cesse d'être en dette.
+    // On remonte du dernier pointage vers le premier : les séances que la
+    // famille a réellement payées restent payées.
+    const offered = new Map<string, { waived: number }>();
+    const balanceBack = new Map<string, number>();
+    let waivedTotal = 0;
+
+    for (const subId of subIds) {
+      const sub = db.subscriptions.find((x) => x.id === subId);
+      if (!sub) continue;
+      const enrollment = db.enrollments.find(
+        (e) => e.studentId === studentId && e.subscriptionId === subId,
+      );
+      for (const cycle of enrollmentCycles(db, studentId, subId)) {
+        let owed = money(-cycle.balance);
+        if (owed <= 0) continue;
+        for (let i = cycle.records.length - 1; i >= 0 && owed > 0; i--) {
+          const rec = cycle.records[i];
+          const charge = seanceChargeOf(db, rec, student, sub);
+          if (charge <= 0) continue;
+          const give = Math.min(charge, owed);
+          owed = money(owed - give);
+          waivedTotal = money(waivedTotal + give);
+          const prev = offered.get(rec.id)?.waived ?? 0;
+          offered.set(rec.id, { waived: money(prev + give) });
+          if (enrollment) {
+            balanceBack.set(enrollment.id, money((balanceBack.get(enrollment.id) ?? 0) + give));
+          }
+        }
+      }
+    }
+
+    set((state) => ({
+      attendance: state.attendance.map((a) => {
+        const gift = offered.get(a.id);
+        if (!gift) return a;
+        const before = positiveMoney(a.amountDeducted || 0);
+        return {
+          ...a,
+          amountDeducted: positiveMoney(before - gift.waived),
+          waivedAmount: money((a.waivedAmount ?? 0) + gift.waived),
+        };
+      }),
+      enrollments: state.enrollments.map((e) => {
+        const back = balanceBack.get(e.id);
+        return back ? { ...e, balance: money((e.balance ?? 0) + back) } : e;
+      }),
+      // Un reste d'ancien versement est de la scolarité impayée : il tombe avec
+      // le reste. Les frais d'inscription aussi — ils font partie de ce que la
+      // famille devait au tarif d'avant.
+      payments: state.payments.map((pay) =>
+        pay.studentId === studentId && pay.rest > 0 ? { ...pay, rest: 0 } : pay,
+      ),
+      students: state.students.map((st) =>
+        st.id === studentId ? { ...st, registrationDue: 0 } : st,
+      ),
+    }));
+
+    return { ok: true, repriced: offered.size, waived: waivedTotal };
+  },
+
+  repriceStudentSeances: (studentId, sessionIds) =>
+    applyReprice(set, repricePlan(get(), sessionIds, { studentId })),
+
+  payRegistrationFee: async ({ studentId, amount, date, description }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    if (!student) return { ok: false };
+
+    const owed = positiveMoney(student.registrationDue ?? 0);
+    // Encaisser au-delà du dû ferait de la monnaie que personne ne réclame.
+    const take = Math.min(positiveMoney(amount || 0), owed);
+    if (take <= 0) return { ok: false };
+
+    const now = isoOn(date);
+    const label = `${student.firstName} ${student.lastName}`.trim();
+    const left = money(owed - take);
+    const payment: Payment = {
+      ...authorStamp(),
+      id: uid("pay"),
+      studentId,
+      seancesPurchased: 0,
+      unitPrice: 0,
+      grossTotal: take,
+      netTotal: take,
+      amountPaid: take,
+      // Ce qui reste dû vit sur la fiche (`registrationDue`), jamais sur le
+      // versement : un `rest` ici serait lu comme une scolarité impayée et
+      // retiendrait la part d'un enseignant qui n'y est pour rien.
+      rest: 0,
+      type: "debt_payment",
+      paidFrom: "cash",
+      date: now,
+      description: description?.trim() || "Frais d'inscription",
+    };
+
+    set((state) => ({
+      payments: [...state.payments, payment],
+      cash: [
+        ...state.cash,
+        {
+          ...authorStamp(),
+          id: uid("csh"),
+          type: "student_payment" as const,
+          amount: take,
+          date: now,
+          description: `Frais d'inscription — ${label}`,
+        },
+      ],
+      students: state.students.map((st) =>
+        st.id === studentId
+          ? { ...st, registrationDue: left, registrationFeeAssessed: true }
+          : st,
+      ),
+    }));
+
+    return { ok: true, paid: take, left, paymentId: payment.id };
   },
 
   deleteSubscriptionPrice: async (sessionId) => {

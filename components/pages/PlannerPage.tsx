@@ -127,6 +127,7 @@ export function PlannerPage() {
     push,
     updateItem,
     setSubscriptionPrice,
+    unsettledSeanceCount,
     archiveSession,
   } = db;
   /**
@@ -244,16 +245,58 @@ export function PlannerPage() {
   /** Un montant saisi à la main : les décimales sont acceptées (1 333,33). */
   const readMoney = (value: string) => positiveMoney(Number(value.replace(",", ".")) || 0);
 
-  /** Writes the tariff of the emploi du temps (and of every group of the same
-   *  cours) once the créneau itself is saved. */
-  const savePricing = (sessionId: string) => {
+  /**
+   * ÉCRIT LE TARIF DE **CET** EMPLOI DU TEMPS — et de lui seul.
+   *
+   * Le bloc s'intitule « Tarif de l'emploi du temps », et c'est bien ce qu'il
+   * fait : il n'écrit que sur le créneau affiché. Auparavant il écrivait sur
+   * TOUS les groupes du même cours, si bien que corriger le prix d'un groupe
+   * réécrivait celui de son jumeau — et la réception, en rouvrant le premier,
+   * y retrouvait le prix du second et croyait sa modification perdue. Le tarif
+   * commun à tous les groupes d'un cours reste réglable depuis l'écran
+   * « Abonnements », qui le dit en toutes lettres.
+   *
+   * ET LE MOIS EN COURS SUIT. Une séance déjà pointée porte le prix qu'elle a
+   * débité ce jour-là : changer le tarif en cours de mois laissait la moitié du
+   * mois à l'ancien prix. L'écran POSE donc la question, dès qu'il reste des
+   * séances non réglées, plutôt que de trancher tout seul.
+   */
+  const savePricing = async (sessionId: string) => {
     if (monthSeances <= 0 || monthPrice <= 0) return;
-    void setSubscriptionPrice(sessionId, pricePerSeance, {
+    const current = subscriptions.find((x) => x.sessionId === sessionId);
+    const changed =
+      !current ||
+      (current.monthlySeances ?? 0) !== monthSeances ||
+      Math.abs(monthlyPriceOf(current) - monthPrice) >= 0.01 ||
+      Math.abs(schoolMonthShareOf(current) - Math.min(schoolShare, monthPrice)) >= 0.01;
+
+    let reprice = false;
+    if (changed) {
+      const pending = unsettledSeanceCount(sessionId, "session");
+      if (pending > 0) {
+        reprice = confirm(
+          `${pending} séance(s) déjà pointée(s) sur cet emploi du temps ne sont pas encore réglées.\n\n` +
+            "OK — leur appliquer le NOUVEAU tarif : le solde des élèves et la part due à " +
+            "l'enseignant sont recalculés.\n" +
+            "Annuler — les laisser au prix auquel elles ont été pointées ; le nouveau tarif ne " +
+            "vaudra que pour les séances à venir.\n\n" +
+            "Les séances déjà réglées à l'enseignant ne bougent dans aucun cas.",
+        );
+      }
+    }
+
+    const res = await setSubscriptionPrice(sessionId, pricePerSeance, {
+      scope: "session",
       monthlySeances: monthSeances,
       monthlyPrice: monthPrice,
       schoolMonthShare: Math.min(schoolShare, monthPrice),
       teacherPerSeance,
+      repriceUnsettled: reprice,
     });
+
+    if (res.ok && (res.repriced ?? 0) > 0) {
+      alert(`Nouveau tarif appliqué à ${res.repriced} séance(s) déjà pointée(s).`);
+    }
   };
 
   // Inline creations
@@ -1145,7 +1188,7 @@ export function PlannerPage() {
       title: title.trim() || undefined,
     };
     push("sessions", newSession);
-    savePricing(newSession.id);
+    void savePricing(newSession.id);
     setIsCreateOpen(false);
     resetForm();
   };
@@ -1169,7 +1212,7 @@ export function PlannerPage() {
       title: title.trim() || undefined,
     };
     updateItem("sessions", selectedSession.id, updated);
-    savePricing(selectedSession.id);
+    void savePricing(selectedSession.id);
     setIsEditOpen(false);
     resetForm();
   };

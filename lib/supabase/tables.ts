@@ -155,8 +155,9 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
              "unpaidTeacherIds", "schoolOnlySubscriptionIds",
              "enrollmentLevel", "enrollmentYear",
              "parentId", "subscriptionIds", "subscriptionDates",
-             "subscriptionDiscounts", "registrationDue",
+             "subscriptionDiscounts", "registrationDue", "registrationFeeAssessed",
              "createdBy", "createdByName", "createdByRole"],
+    notNull: { registrationFeeAssessed: false },
   },
   studentCredentials: {
     table: "student_credentials", pk: "student_id", pkField: "studentId",

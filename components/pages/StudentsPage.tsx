@@ -100,8 +100,134 @@ import {
   subscriptionTitleOf,
   studentSubscriptionHistory,
   soloSeanceTotals,
+  todayIso,
   unsubscribedAtOf,
 } from "@/lib/helpers";
+
+/**
+ * ENCAISSER LES FRAIS D'INSCRIPTION — en une fois, ou en plusieurs.
+ *
+ * L'alerte de la carte ouvre cet écran. La réception saisit ce que la famille
+ * remet aujourd'hui : l'argent entre en caisse, la ligne part dans l'historique
+ * des paiements de l'élève, et ce qui n'a pas été versé RESTE DÛ — l'alerte
+ * demeure alors sur sa carte, avec le solde réduit d'autant. Elle ne disparaît
+ * que le jour où il ne reste plus rien.
+ */
+function RegistrationFeeModal({
+  student,
+  onClose,
+}: {
+  student: Student;
+  onClose: () => void;
+}) {
+  const payRegistrationFee = useData((s) => s.payRegistrationFee);
+  const { addToast } = useToast();
+  const due = Math.max(0, student.registrationDue ?? 0);
+  const [amount, setAmount] = useState<number>(due);
+  const [date, setDate] = useState<string>(todayIso());
+  const [busy, setBusy] = useState(false);
+
+  const take = Math.min(Math.max(0, amount || 0), due);
+  const left = Math.max(0, due - take);
+
+  const submit = async () => {
+    if (take <= 0) return;
+    setBusy(true);
+    const res = await payRegistrationFee({ studentId: student.id, amount: take, date });
+    setBusy(false);
+    if (!res.ok) {
+      addToast({ type: "danger", title: "Encaissement impossible", message: "Rien n'était dû." });
+      return;
+    }
+    addToast({
+      type: "success",
+      title: "Frais d'inscription encaissés",
+      message:
+        (res.left ?? 0) > 0
+          ? `${formatDA(res.paid ?? 0)} encaissés — il reste ${formatDA(res.left ?? 0)} à régler.`
+          : `${formatDA(res.paid ?? 0)} encaissés — plus rien à régler.`,
+      studentName: `${student.firstName} ${student.lastName}`,
+    });
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Frais d'inscription">
+      <div className="space-y-4">
+        <div className="rounded-xl border border-danger/40 bg-danger/5 p-3">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-danger">
+            Encore dus
+          </span>
+          <strong className="block text-xl text-danger">{formatDA(due)}</strong>
+          <span className="block text-[10px] text-muted">
+            {student.firstName} {student.lastName}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Encaissé maintenant (DA)
+            </label>
+            <Input
+              type="number"
+              min={0}
+              max={due}
+              step="0.01"
+              value={amount || ""}
+              onChange={(e) =>
+                setAmount(Math.min(Math.max(0, Number(e.target.value.replace(",", ".")) || 0), due))
+              }
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted">
+              Date du versement
+            </label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => setAmount(due)}
+            className="text-[10px] font-bold text-primary hover:underline"
+          >
+            Tout régler ({formatDA(due)})
+          </button>
+          <button
+            type="button"
+            onClick={() => setAmount(Math.round((due / 2) * 100) / 100)}
+            className="text-[10px] font-bold text-primary hover:underline"
+          >
+            La moitié
+          </button>
+        </div>
+
+        <p
+          className={`rounded-xl p-2.5 text-[11px] font-semibold ${
+            left > 0 ? "bg-warning/10 text-warning" : "bg-success/10 text-success"
+          }`}
+        >
+          {left > 0
+            ? `${formatDA(left)} resteront dus — l'alerte reste sur sa carte jusqu'au solde.`
+            : "Rien ne restera dû : l'alerte disparaît de sa carte."}
+        </p>
+
+        <div className="flex justify-end gap-2 border-t border-line pt-3">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Annuler
+          </Button>
+          <Button onClick={submit} disabled={busy || take <= 0}>
+            {busy ? "Encaissement…" : `Encaisser ${formatDA(take)}`}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 export function StudentsPage() {
   const db = useData();
@@ -126,7 +252,6 @@ export function StudentsPage() {
     studentCredentials,
     push,
     deleteFrom,
-    updateItem,
     scanCard,
     cancelAttendance,
     updateAttendance,
@@ -225,6 +350,16 @@ export function StudentsPage() {
   } | null>(null);
   /** la saisie seule, ouverte en un clic depuis la carte d'un élève */
   const [chargeFormStudent, setChargeFormStudent] = useState<Student | null>(null);
+  /**
+   * L'ENCAISSEMENT DES FRAIS D'INSCRIPTION, ouvert depuis l'alerte de sa carte.
+   *
+   * L'alerte se « réglait » d'un simple « marquer comme réglés » : rien
+   * n'entrait en caisse, rien n'apparaissait dans l'historique de l'élève, et
+   * un versement partiel était impossible. Elle ouvre désormais un vrai
+   * encaissement — tout, ou une partie — et ne disparaît que lorsqu'il ne reste
+   * plus rien à payer.
+   */
+  const [feeStudent, setFeeStudent] = useState<Student | null>(null);
 
   // Scanner state
   const [scanRfidInput, setScanRfidInput] = useState("");
@@ -497,13 +632,11 @@ export function StudentsPage() {
     }
   };
 
-  /** Priced modules the student is NOT on yet: paying one here enrolls him,
-   *  so the renewal screen doubles as a desk sale when needed. */
-  const handleSettleRegistrationCost = (student: Student) => {
+  /** Ouvre l'encaissement des frais d'inscription depuis l'alerte de la carte. */
+  const openRegistrationFee = (student: Student) => {
     if (!student.registrationDue) return;
-    if (confirm(`Marquer les frais d'inscription de ${formatDA(student.registrationDue)} comme réglés ?`)) {
-      updateItem("students", student.id, { registrationDue: 0 });
-    }
+    setFeeStudent(student);
+    setOverlayStudentId(null);
   };
 
   // ---- Correcting the presence history ---------------------------------------
@@ -2038,22 +2171,34 @@ export function StudentsPage() {
                       </button>
                     ) : null}
 
+                    {/* LES FRAIS D'INSCRIPTION — une alerte à part, sur la
+                        carte elle-même, et CLIQUABLE : un clic ouvre
+                        l'encaissement, et l'alerte disparaît dès qu'il ne
+                        reste plus rien à payer. */}
                     {stu.registrationDue && stu.registrationDue > 0 ? (
-                      <div className="flex justify-between items-center bg-danger/10 p-1.5 rounded-lg">
-                        <span className="text-danger text-[10px] font-bold">Frais d&apos;inscription dus: {formatDA(stu.registrationDue)}</span>
-                        <button
-                          onClick={() => handleSettleRegistrationCost(stu)}
-                          className="text-[9px] bg-danger text-white px-2 py-0.5 rounded font-bold hover:bg-danger/80"
-                        >
-                          Régler
-                        </button>
-                      </div>
-                    ) : (
+                      <button
+                        onClick={() => openRegistrationFee(stu)}
+                        title="Encaisser les frais d'inscription — en une fois ou en plusieurs"
+                        className="flex w-full animate-pulse items-center justify-between rounded-xl border border-danger/60 bg-danger/10 px-3 py-2 text-start transition-colors hover:animate-none hover:bg-danger/20"
+                      >
+                        <span>
+                          <span className="block text-[9px] font-semibold uppercase tracking-wide text-muted">
+                            Frais d&apos;inscription dus
+                          </span>
+                          <strong className="block text-sm text-danger">
+                            {formatDA(stu.registrationDue)}
+                          </strong>
+                        </span>
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-danger">
+                          <Receipt className="h-3.5 w-3.5" /> Encaisser
+                        </span>
+                      </button>
+                    ) : stu.registrationFeeAssessed ? (
                       <div className="flex justify-between text-[10px] text-success bg-success/15 px-2 py-0.5 rounded">
                         <span>Frais d&apos;inscription</span>
                         <strong>Payé ✔</strong>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
@@ -3548,6 +3693,14 @@ export function StudentsPage() {
         <ChargeFormModal
           student={students.find((s) => s.id === chargeFormStudent.id) ?? chargeFormStudent}
           onClose={() => setChargeFormStudent(null)}
+        />
+      )}
+
+      {/* Frais d'inscription : l'encaissement ouvert par l'alerte de la carte */}
+      {feeStudent && (
+        <RegistrationFeeModal
+          student={students.find((s) => s.id === feeStudent.id) ?? feeStudent}
+          onClose={() => setFeeStudent(null)}
         />
       )}
     </div>
