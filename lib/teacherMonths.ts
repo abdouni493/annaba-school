@@ -47,6 +47,7 @@ import {
   isSchoolOnlySub,
   independentTotals,
   monthlyPriceOf,
+  seancePriceOf,
   passagerLabel,
   netPriceFor,
   registrationNumberOf,
@@ -409,7 +410,8 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
   const sub = db.subscriptions.find((s) => s.sessionId === session.id);
   const size = cycleSizeOf(sub);
   const perSeance = teacherPerSeanceOf(sub);
-  const listPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
+  // Le prix d'une séance se déduit du mois, jamais d'une colonne parallèle.
+  const listPrice = sub ? seancePriceOf(sub) : session.openPrice ?? 0;
   const roster = rosterOf(db, session, teacherId, sub);
 
   // ---- le mois de chaque présence, élève par élève -------------------------

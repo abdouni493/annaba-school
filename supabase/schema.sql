@@ -928,6 +928,10 @@ create table if not exists public.students (
   subscription_dates     jsonb,                 -- dates + point d'entrée par abonnement
   subscription_discounts jsonb,                 -- remises par abonnement
   registration_due       numeric,               -- frais d'inscription encore dus
+  -- Les frais d'inscription lui ont-ils DÉJÀ été réclamés ? Un élève créé sans
+  -- emploi du temps n'en doit aucun : le jour où la réception lui en coche un,
+  -- l'écran de modification doit les demander — une fois, et une seule.
+  registration_fee_assessed boolean not null default false,
   created_by         text,                       -- qui a écrit la ligne
   created_by_name    text,                       -- son nom, recopié à l'écriture
   created_by_role    text

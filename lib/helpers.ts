@@ -188,9 +188,14 @@ export function classOf(db: Database, id: string): SchoolClass | undefined {
  *  enrolled in any of them may attend any other (rattrapage). A séance libre
  *  timing is a product on its own, so it never merges with anything. */
 export function courseKeyOf(session: ScheduleSession): string {
-  return session.isOpen
-    ? `open-${session.id}`
-    : `${session.classId}|${session.moduleId}|${session.teacherId}`;
+  if (session.isOpen) return `open-${session.id}`;
+  // Un créneau dont la classe, le module ou l'enseignant manque encore n'est le
+  // frère de personne : sans cette garde, tous les emplois incomplets
+  // partageaient la clé vide « || » et se voyaient imposer le même tarif.
+  if (!session.classId || !session.moduleId || !session.teacherId) {
+    return `solo-${session.id}`;
+  }
+  return `${session.classId}|${session.moduleId}|${session.teacherId}`;
 }
 
 /** Every timing of the same cours (i.e. all its groups), week-order sorted. */
@@ -503,7 +508,7 @@ export function sessionLabel(
 }
 
 export function subscriptionPrice(db: Database, sub: Subscription): number {
-  return sub.pricePerSession;
+  return seancePriceOf(sub);
 }
 
 // ---- Monthly formula ----
@@ -524,6 +529,23 @@ export function monthlyPriceOf(sub?: Subscription): number {
 export function monthlySeancesValue(sub?: Subscription): number {
   if (!sub) return 0;
   return positiveMoney((sub.monthlySeances ?? 0) * (sub.pricePerSession ?? 0));
+}
+
+/**
+ * LE TARIF D'UN EMPLOI DU TEMPS EST-IL COHÉRENT AVEC SON MOIS ?
+ *
+ * Le prix d'une séance et le pack mensuel décrivent la même chose. Un tarif
+ * enregistré avant que les deux ne soient tenus ensemble peut encore les
+ * contredire — le mois dit 6 000 DA sur 6 séances, la colonne dit 1 000 DA la
+ * séance — et la feuille de présence facture alors autre chose que ce que
+ * l'écran du mois affiche. La réponse sert à signaler le décalage, jamais à
+ * choisir : `seancePriceOf` fait foi partout.
+ */
+export function tariffIsCoherent(sub?: Subscription): boolean {
+  if (!sub) return true;
+  const n = sub.monthlySeances ?? 0;
+  if (n <= 0) return true;
+  return Math.abs(seancePriceOf(sub) - positiveMoney(sub.pricePerSession ?? 0)) < 0.01;
 }
 
 // ---- School / teacher split of a month ------------------------------------
@@ -776,7 +798,18 @@ export function studentListPrice(
   sub: Subscription | undefined,
   fallback = 0,
 ): number {
-  const base = positiveMoney(sub?.pricePerSession ?? fallback);
+  /**
+   * LE PRIX D'UNE SÉANCE SE DÉDUIT DU MOIS, jamais d'une colonne parallèle.
+   *
+   * `pricePerSession` et le pack mensuel décrivaient tous deux le même tarif,
+   * et rien ne les tenait ensemble : un mois passé de 4 000 à 6 000 DA laissait
+   * la colonne à 1 000 DA la séance, si bien que la feuille de présence
+   * facturait encore l'ancien prix pendant que l'écran du mois affichait le
+   * nouveau. `seancePriceOf` fait le partage à partir du mois — c'est lui qui
+   * fait foi — et retombe sur la colonne seule quand l'emploi n'a pas de pack
+   * (une séance libre, par exemple).
+   */
+  const base = sub ? seancePriceOf(sub) : positiveMoney(fallback);
   if (!student || !sub) return base;
   // Emploi du temps offert : la séance ne coûte rien à la famille.
   if (isFreeSub(student, sub.id)) return 0;
@@ -1863,7 +1896,7 @@ export function enrollmentSubscription(db: Database, enrollment: Enrollment): Su
 /** Net price of one séance on this inscription, reduction applied. */
 export function enrollmentUnitPrice(db: Database, enrollment: Enrollment): number {
   const sub = enrollmentSubscription(db, enrollment);
-  return netPriceFor(sub?.pricePerSession ?? 0, enrollment.discount);
+  return netPriceFor(seancePriceOf(sub), enrollment.discount);
 }
 
 /** L'emploi du temps sur lequel porte une inscription, sous son nom. */

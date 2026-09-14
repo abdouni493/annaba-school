@@ -79,7 +79,11 @@ function normalise(db: Database): Database {
   db.subscriptions = db.subscriptions.map((sub) => {
     if ((sub.monthlySeances ?? 0) > 0) return sub;
     const seances = 8;
-    const monthlyPrice = Math.round(sub.pricePerSession * seances * 0.9);
+    // LE MOIS ET LA SÉANCE DISENT LE MÊME TARIF. Le pack vaut exactement ses
+    // séances : sans cela, un élève présent tout le mois se retrouvait débité
+    // d'un peu plus que ce que le mois lui avait coûté, et finissait chaque
+    // mois en dette sans avoir manqué une séance.
+    const monthlyPrice = sub.pricePerSession * seances;
     const schoolMonthShare = Math.round(monthlyPrice * 0.55);
     return {
       ...sub,
@@ -441,8 +445,13 @@ function rawSeed(): Database {
         sessionId: "ses-1",
         pricePerSession: 600,
         monthlySeances: 8,
-        monthlyPrice: 4200, // au lieu de 4800 à l'unité
-        schoolMonthShare: 2200, // école 2200, enseignant 2000
+        // Le mois vaut EXACTEMENT ses séances : 8 × 600. Un pack vendu moins
+        // cher que ses séances mettait l'élève en dette à la fin de chaque
+        // mois sans qu'il ait manqué une seule fois — la séance se facture
+        // désormais « prix du mois ÷ séances du mois », et les deux chiffres
+        // ne peuvent plus se contredire.
+        monthlyPrice: 4800,
+        schoolMonthShare: 2800, // école 2800, enseignant 2000
         teacherPerSeance: 250, // 2000 ÷ 8
       },
       { id: "sub-2", sessionId: "ses-2", pricePerSession: 600 },
@@ -452,8 +461,8 @@ function rawSeed(): Database {
         sessionId: "ses-4",
         pricePerSession: 500,
         monthlySeances: 8,
-        monthlyPrice: 3600, // au lieu de 4000 à l'unité
-        schoolMonthShare: 1600, // école 1600, enseignant 2000
+        monthlyPrice: 4000, // 8 × 500 : le mois et la séance disent le même prix
+        schoolMonthShare: 2000, // école 2000, enseignant 2000
         teacherPerSeance: 250, // 2000 ÷ 8
       },
       {

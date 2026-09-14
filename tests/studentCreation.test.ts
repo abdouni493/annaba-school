@@ -195,8 +195,10 @@ describe("premier rechargement pris sur l'écran de création", () => {
     // Un mois, jamais un jour de plus — et les 8 séances du pack sont dessus.
     expect(enrollment.expiryDate).toBe(monthlyExpiry(start));
     expect(remainingSeances(enrollment)).toBe(8);
-    // Le pack est vendu 4200 DA, moins cher que ses 8 séances à l'unité.
-    expect(studentPayments(db, "stu-new")[0].grossTotal).toBe(4200);
+    // Le pack vaut exactement ses 8 séances : 8 × 600. Le mois et la séance
+    // disent le même tarif, sinon un élève présent tout le mois finirait en
+    // dette sans avoir manqué une seule séance.
+    expect(studentPayments(db, "stu-new")[0].grossTotal).toBe(4800);
   });
 
   it("le rechargement n'efface pas les autres inscriptions prises à la création", async () => {

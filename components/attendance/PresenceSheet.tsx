@@ -106,6 +106,7 @@ import {
   monthOrder,
   registrationNumberOf,
   schoolPerSeanceOf,
+  seancePriceOf,
   salleName,
   sessionSalleOn,
   sessionTimesOn,
@@ -263,7 +264,15 @@ export function PresenceSheet({
   const sub =
     db.subscriptions.find((s) => s.sessionId === session.id && !s.archivedAt) ??
     db.subscriptions.find((s) => s.sessionId === session.id);
-  const unitPrice = sub?.pricePerSession ?? session.openPrice ?? 0;
+  /**
+   * LE PRIX D'UNE SÉANCE, TEL QUE LA FEUILLE LE FACTURE.
+   *
+   * Il se déduit du mois — prix du mois ÷ séances du mois — et non d'une
+   * colonne parallèle qui pouvait rester sur l'ancien chiffre après une
+   * correction de tarif : l'en-tête annonçait alors un prix, le pointage en
+   * débitait un autre.
+   */
+  const unitPrice = sub ? seancePriceOf(sub) : session.openPrice ?? 0;
   const schoolOnlyPrice = schoolPerSeanceOf(sub);
   const monthIndex = Math.max(0, monthOrder(monthCode));
 

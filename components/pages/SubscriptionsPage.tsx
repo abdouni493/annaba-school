@@ -72,6 +72,7 @@ export function SubscriptionsPage() {
     enrollments,
     payments,
     setSubscriptionPrice,
+    unsettledSeanceCount,
     deleteSubscriptionPrice,
     updateSchool,
   } = useData();
@@ -364,6 +365,25 @@ export function SubscriptionsPage() {
       return false;
     }
 
+    /**
+     * ET LES SÉANCES DÉJÀ POINTÉES ?
+     *
+     * Une présence porte le prix qu'elle a débité ce jour-là. Changer le tarif
+     * en cours de mois laissait donc la moitié du mois à l'ancien prix et
+     * l'autre au nouveau. On POSE la question — l'école tranche — et les
+     * séances déjà réglées à l'enseignant ne bougent dans aucun cas.
+     */
+    const pending = unsettledSeanceCount(sessionId);
+    const reprice =
+      pending > 0 &&
+      confirm(
+        `${pending} séance(s) déjà pointée(s) sur ce cours ne sont pas encore réglées.\n\n` +
+          "OK — leur appliquer le NOUVEAU tarif : le solde des élèves et la part due à " +
+          "l'enseignant sont recalculés.\n" +
+          "Annuler — les laisser au prix auquel elles ont été pointées.\n\n" +
+          "Les séances déjà réglées à l'enseignant ne bougent dans aucun cas.",
+      );
+
     setBusy(true);
     const res = await setSubscriptionPrice(sessionId, pricePerSession, {
       levelPrice: isFormation ? levelPrice : undefined,
@@ -372,12 +392,16 @@ export function SubscriptionsPage() {
       monthlyPrice: monthlyEnabled ? monthlyPrice : undefined,
       schoolMonthShare: monthlyEnabled ? schoolMonthShare : undefined,
       teacherPerSeance: monthlyEnabled ? teacherPerSeanceCalc : undefined,
+      repriceUnsettled: reprice,
     });
     setBusy(false);
 
     if (!res.ok) {
       alert("Enregistrement du tarif impossible. Vérifiez votre connexion et réessayez.");
       return false;
+    }
+    if ((res.repriced ?? 0) > 0) {
+      alert(`Nouveau tarif appliqué à ${res.repriced} séance(s) déjà pointée(s).`);
     }
     return true;
   };

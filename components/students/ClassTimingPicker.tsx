@@ -15,6 +15,7 @@ import {
   isFreeSub,
   moduleName,
   monthlyPriceOf,
+  seancePriceOf,
   salleName,
   sessionTimeLabel,
   soldFor,
@@ -132,7 +133,7 @@ export function useClassTimings() {
             teacherName: t ? `${t.firstName} ${t.lastName}` : "-",
             daysLabel: formatDays(s.days) || "—",
             time: `${s.startTime}-${s.endTime}`,
-            price: isFormation ? sub.levelPrice ?? 0 : sub.pricePerSession,
+            price: isFormation ? sub.levelPrice ?? 0 : seancePriceOf(sub),
             hasMonthly: hasMonthlyPlan(sub),
             monthlySeances: sub.monthlySeances ?? 0,
             monthlyPrice: monthlyPriceOf(sub),
@@ -187,7 +188,7 @@ export function useClassTimings() {
     const session = sessions.find((se) => se.id === sub.sessionId);
     const cls = session && classes.find((c) => c.id === session.classId);
     if (cls?.type === "formation") return sub.levelPrice ?? 0;
-    return sub.pricePerSession;
+    return seancePriceOf(sub);
   };
 
   /**
@@ -284,7 +285,7 @@ export function CurrentInscriptions({
         teacherName: teacherName(db, session.teacherId),
         daysLabel: formatDays(session.days) || "—",
         timeLabel: sessionTimeLabel(session),
-        unitPrice: sub.pricePerSession,
+        unitPrice: seancePriceOf(sub),
         balance: student ? soldFor(db, student.id, subId) : 0,
         offered: student ? isFreeSub(student, subId) : false,
         archived: !!session.archivedAt,

@@ -995,6 +995,24 @@ export interface Student extends Authored {
   subscriptionDiscounts?: Record<string, SubscriptionDiscount>;
   /** outstanding one-time registration cost not yet settled */
   registrationDue?: number;
+  /**
+   * LES FRAIS D'INSCRIPTION LUI ONT-ILS DÉJÀ ÉTÉ RÉCLAMÉS ?
+   *
+   * Un élève se crée très bien SANS emploi du temps : le créneau n'est pas
+   * encore ouvert, la famille hésite. Les frais d'inscription ne portent alors
+   * sur rien et ne sont pas réclamés — mais le jour où la réception rouvre sa
+   * fiche pour lui cocher un emploi du temps, ils le deviennent, et l'écran de
+   * modification doit les demander exactement comme la création l'aurait fait.
+   *
+   * Cette case dit si la question a DÉJÀ été posée. Tant qu'elle est fausse et
+   * qu'aucun emploi coché n'entre dans le périmètre, il n'y a rien à réclamer ;
+   * dès qu'un emploi y entre, la fiche réclame les frais une fois — et une
+   * seule, parce que l'enregistrement la passe à vrai.
+   *
+   * ABSENT = fiche antérieure à cette colonne (voir le script SQL, qui la met à
+   * vrai pour tous les élèves déjà inscrits sur un emploi du temps).
+   */
+  registrationFeeAssessed?: boolean;
 }
 
 /**

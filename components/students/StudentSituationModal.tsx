@@ -50,12 +50,15 @@ import {
   History,
   Layers,
   Search,
+  Receipt,
   Ticket,
   UserMinus,
   Wallet,
 } from "lucide-react";
 import type { AttendanceRecord, AttendanceStatus, Student } from "@/lib/types";
 import {
+  chargePayments,
+  chargeRemaining,
   currentCycleIndex,
   cycleLead,
   cycleOf,
@@ -79,6 +82,7 @@ import {
   studentListPrice,
   studentMatches,
   studentName,
+  studentChargesOf,
   studentPassagerVisits,
   studentSubscriptionHistory,
   teacherName,
@@ -296,6 +300,26 @@ export function StudentSituationModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [student, db.independent],
   );
+
+  /**
+   * SES FRAIS SUPPLÉMENTAIRES — livres, tenues, sorties, transport, dégâts —
+   * et ce que l'école a réglé à sa place.
+   *
+   * Ils naissent du bouton « Nouveau frais » de l'écran des élèves et de la
+   * feuille de présence, ils se règlent en une ou plusieurs fois, et la
+   * situation de l'élève les ignorait complètement : la réception voyait le
+   * détail de sa scolarité sans jamais voir le livre impayé qui pèse sur le
+   * même compte. Ils sont ici, du plus récent au plus ancien, chacun avec ce
+   * qu'il a coûté, ce qui a été versé dessus et ce qui reste dû.
+   */
+  const charges = useMemo(
+    () => (student ? studentChargesOf(db, student.id) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [student, db.studentCharges],
+  );
+  const chargesTotal = charges.reduce((sum, c) => sum + positiveMoney(c.amount), 0);
+  const chargesPaid = charges.reduce((sum, c) => sum + positiveMoney(c.paidAmount ?? 0), 0);
+  const chargesLeft = charges.reduce((sum, c) => sum + chargeRemaining(c), 0);
 
   /**
    * CE QUE LE TABLEAU MONTRE VRAIMENT : tous ses emplois du temps par défaut,
@@ -980,6 +1004,128 @@ export function StudentSituationModal({
                     emptyHint="Aucune séance n'a encore été pointée pour cet élève."
                   />
                 </div>
+              </section>
+
+              {/* ---- SES FRAIS SUPPLÉMENTAIRES -----------------------------
+                  Tout ce qui pèse sur son compte SANS être de la scolarité :
+                  un livre, une tenue, une sortie, un dégât — et les avances que
+                  l'école a réglées à sa place pour ne pas faire attendre
+                  l'enseignant. Ils se créent depuis « Nouveau frais », se
+                  règlent en une ou plusieurs fois, et leur histoire se lit ici,
+                  versement par versement. */}
+              <section className="overflow-hidden rounded-2xl border border-warning/30">
+                <div className="flex flex-wrap items-center gap-1.5 bg-warning/10 p-3">
+                  <Receipt className="h-4 w-4 text-warning" />
+                  <strong className="text-xs text-ink">
+                    Ses frais supplémentaires ({charges.length})
+                  </strong>
+                  <span className="text-[10px] text-muted">
+                    — livres, tenues, sorties, transport, dégâts, et les avances réglées par
+                    l&apos;école à sa place. Ils ne retiennent la paie d&apos;aucun enseignant.
+                  </span>
+                  {charges.length > 0 && (
+                    <span className="ms-auto flex flex-wrap items-center gap-1.5">
+                      <Badge tone="neutral" className="font-mono text-[9px]">
+                        Total {formatDA(chargesTotal)}
+                      </Badge>
+                      <Badge tone="success" className="font-mono text-[9px]">
+                        Versé {formatDA(chargesPaid)}
+                      </Badge>
+                      <Badge
+                        tone={chargesLeft > 0 ? "danger" : "success"}
+                        className="font-mono text-[9px]"
+                      >
+                        Reste {formatDA(chargesLeft)}
+                      </Badge>
+                    </span>
+                  )}
+                </div>
+                {charges.length === 0 ? (
+                  <p className="bg-surface p-3 text-[11px] text-muted">
+                    Aucun frais porté au compte de cet élève.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto bg-surface">
+                    <table className="w-full min-w-[640px] text-[11px]">
+                      <thead className="bg-canvas/60">
+                        <tr className="text-left text-[9px] uppercase tracking-wide text-muted">
+                          <th className="px-2 py-2">Date</th>
+                          <th className="px-2 py-2">Frais</th>
+                          <th className="px-2 py-2">Origine</th>
+                          <th className="px-2 py-2 text-right">Montant</th>
+                          <th className="px-2 py-2 text-right">Versé</th>
+                          <th className="px-2 py-2 text-right">Reste</th>
+                          <th className="px-2 py-2 text-center">État</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {charges.map((charge) => {
+                          const left = chargeRemaining(charge);
+                          const settlements = chargePayments(db, charge.id);
+                          const advance = charge.origin === "school_advance";
+                          return (
+                            <tr key={charge.id} className="border-t border-line/60 align-top">
+                              <td className="px-2 py-2 text-ink">{formatDateFr(charge.date)}</td>
+                              <td className="px-2 py-2">
+                                <strong className="block text-ink">{charge.name}</strong>
+                                {charge.description && (
+                                  <span className="block text-[10px] text-muted">
+                                    {charge.description}
+                                  </span>
+                                )}
+                                {/* Chaque versement, daté : c'est ce qui rend un
+                                    règlement en plusieurs fois relisable. */}
+                                {settlements.length > 0 && (
+                                  <span className="mt-0.5 block text-[10px] text-success">
+                                    {settlements
+                                      .map(
+                                        (pay) =>
+                                          `${formatDateFr(pay.date)} · ${formatDA(pay.amountPaid)}`,
+                                      )
+                                      .join(" — ")}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-muted">
+                                {advance ? "Avance de l'école" : "Saisi au guichet"}
+                                {advance && charge.monthCode && (
+                                  <span className="block text-[10px]">
+                                    {monthCodeLabel(charge.monthCode)}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-right font-mono text-ink">
+                                {formatDA(charge.amount)}
+                              </td>
+                              <td className="px-2 py-2 text-right font-mono text-success">
+                                {formatDA(positiveMoney(charge.paidAmount ?? 0))}
+                              </td>
+                              <td
+                                className={`px-2 py-2 text-right font-mono ${
+                                  left > 0 ? "text-danger" : "text-muted"
+                                }`}
+                              >
+                                {formatDA(left)}
+                              </td>
+                              <td className="px-2 py-2 text-center">
+                                <Badge
+                                  tone={left <= 0 ? "success" : charge.paidAmount ? "warning" : "danger"}
+                                  className="text-[9px]"
+                                >
+                                  {left <= 0
+                                    ? "réglé"
+                                    : charge.paidAmount
+                                      ? "partiel"
+                                      : "impayé"}
+                                </Badge>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </section>
 
               {/* ---- ses séances libres : suivies sans y être inscrit ------

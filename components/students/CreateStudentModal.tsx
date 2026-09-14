@@ -60,6 +60,7 @@ import {
 import {
   cycleSizeOf,
   joinPointFor,
+  studentDebtSummary,
   schoolPerSeanceOf,
   teacherPerSeanceOf,
   registrationFeeFor,
@@ -158,6 +159,7 @@ function StudentFiche({
     updateItem,
     subscribeStudent,
     unsubscribeStudent,
+    convertStudentCase,
   } = db;
   const isEdit = !!editing;
   const { language } = useSettings();
@@ -226,6 +228,20 @@ function StudentFiche({
   const [enrollYear, setEnrollYear] = useState<string>(editing?.enrollmentYear ?? "");
   /** Ce que la famille règle TOUT DE SUITE sur les frais d'inscription. */
   const [feePaidNow, setFeePaidNow] = useState<number>(0);
+  /**
+   * CE QU'ON FAIT DES DETTES QUAND LE CAS DE L'ÉLÈVE CHANGE.
+   *
+   * Un élève ordinaire qui devient « gratuit », « école seulement » ou
+   * « réduction » traîne ce qu'il devait AU TARIF D'AVANT. La question est
+   * posée à la réception, jamais tranchée à sa place :
+   *
+   *  - `keep`    : ses dettes restent telles quelles, au tarif d'avant ;
+   *  - `reprice` : elles sont RECALCULÉES au nouveau cas — la réduction
+   *    s'applique, « école seule » ramène la séance à la part de l'école — et
+   *    la part due à son enseignant suit ;
+   *  - `clear`   : elles sont EFFACÉES : il n'aura pas à les payer.
+   */
+  const [debtMode, setDebtMode] = useState<"keep" | "reprice" | "clear">("keep");
   const [busy, setBusy] = useState(false);
 
   // edit only: the portal login, which a fiche being created does not have yet
@@ -285,12 +301,52 @@ function StudentFiche({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [db.subscriptions, db.sessions, db.classes, school, paidSubIds.join("|")],
   );
+  /**
+   * LES FRAIS N'ONT-ILS JAMAIS ÉTÉ RÉCLAMÉS À CET ÉLÈVE ?
+   *
+   * Un élève se crée très bien SANS emploi du temps : le créneau n'est pas
+   * encore ouvert, la famille hésite. Les frais d'inscription ne portent alors
+   * sur rien, et l'écran n'a rien à réclamer. Mais le jour où la réception
+   * rouvre sa fiche pour lui cocher un emploi du temps, ils deviennent dus — et
+   * l'écran de modification restait muet, si bien que la dette n'apparaissait
+   * jamais, ni sur sa fiche, ni sur sa carte.
+   *
+   * La fiche porte donc une marque (`registrationFeeAssessed`) : tant qu'elle
+   * est absente, la modification pose la question exactement comme la création
+   * l'aurait posée — une fois, et une seule, puisque l'enregistrement la pose.
+   */
+  const feeAlreadyAsked = !!editing?.registrationFeeAssessed;
   /** Le montant réclamé — 0 dès qu'aucun emploi coché n'entre dans le périmètre. */
   const feeRequired = useMemo(
-    () => (isEdit ? 0 : registrationFeeFor(db, school, paidSubIds)),
+    () => (feeAlreadyAsked ? 0 : registrationFeeFor(db, school, paidSubIds)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isEdit, db.subscriptions, db.sessions, db.classes, school, paidSubIds.join("|")],
+    [feeAlreadyAsked, db.subscriptions, db.sessions, db.classes, school, paidSubIds.join("|")],
   );
+  /**
+   * LA QUESTION A-T-ELLE ÉTÉ POSÉE ? Elle l'est dès qu'un emploi coché entre
+   * dans le périmètre, même si l'école ne réclame rien aujourd'hui : relever le
+   * tarif des frais plus tard ne doit pas rattraper les élèves déjà inscrits.
+   */
+  const feeAssessedNow = feeAlreadyAsked || feeSubIds.length > 0;
+
+  /**
+   * LE CAS CHANGE-T-IL, ET QUE TRAÎNE-T-IL DERRIÈRE LUI ?
+   *
+   * La question ne se pose que sur une fiche existante, quand le cas choisi
+   * n'est plus celui qui est enregistré ET que l'élève doit encore quelque
+   * chose en SCOLARITÉ — les mois dans le rouge, les restes d'anciens
+   * versements, les frais d'inscription. Les frais divers (un livre, une
+   * tenue) n'en sont pas : ils ne dépendent d'aucun cas.
+   */
+  const savedCase: StudentCase = editing?.studentCase ?? (editing?.isFree ? "special" : "normal");
+  const caseChanged = isEdit && studentCase !== savedCase;
+  const currentDebt = useMemo(
+    () => (editing ? studentDebtSummary(db, editing.id) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [db.payments, db.attendance, db.enrollments, db.students, editing?.id],
+  );
+  const debtTotal = positiveMoney(currentDebt?.total ?? 0);
+  const asksAboutDebt = caseChanged && debtTotal > 0;
   /** Ce que la famille règle aujourd'hui, plafonné au montant réclamé. */
   const feePaid = Math.min(positiveMoney(feePaidNow), feeRequired);
   /** Ce qui reste en DETTE sur sa fiche — créer l'élève reste toujours possible. */
@@ -457,7 +513,33 @@ function StudentFiche({
               : undefined,
           unpaidTeacherIds:
             studentCase === "school_only" ? derivedUnpaidTeacherIds : undefined,
+          /**
+           * LES FRAIS D'INSCRIPTION NÉS DE CETTE MODIFICATION.
+           *
+           * Un élève créé sans emploi du temps n'en devait aucun. En lui en
+           * cochant un, la réception les déclenche : ce qui n'est pas réglé
+           * tout de suite part en DETTE sur sa fiche, visible sur sa carte et
+           * encaissable d'un clic. La marque empêche que la question se
+           * repose à chaque modification suivante.
+           */
+          ...(feeAlreadyAsked
+            ? {}
+            : {
+                registrationDue: positiveMoney((editing.registrationDue ?? 0) + feeDebt),
+                registrationFeeAssessed: feeAssessedNow,
+              }),
         });
+
+        // Les frais réglés au guichet entrent en caisse comme n'importe quelle
+        // recette : la modification encaisse exactement comme la création.
+        if (feePaid > 0) {
+          db.cashMove(
+            "deposit",
+            feePaid,
+            `Frais d'inscription — ${firstName} ${lastName} (N° ${shownNumber})`,
+            todayIso(),
+          );
+        }
 
         // Emplois du temps cochés/décochés : il ENTRE là où en est le groupe
         // aujourd'hui, et il en SORT sans rien perdre de son historique.
@@ -484,13 +566,36 @@ function StudentFiche({
           });
         }
 
+        /**
+         * LE NOUVEAU CAS S'APPLIQUE À CE QU'IL DEVAIT DÉJÀ — si l'école l'a
+         * demandé. On agit APRÈS avoir écrit le cas et APRÈS les inscriptions,
+         * pour que le recalcul lise l'élève tel qu'il est désormais.
+         */
+        let converted: { repriced?: number; waived?: number } = {};
+        if (asksAboutDebt && debtMode !== "keep") {
+          converted = await convertStudentCase({ studentId: editing.id, mode: debtMode });
+        }
+
+        const feeNote =
+          feeDebt > 0
+            ? ` · frais d'inscription de ${formatDA(feeDebt)} portés à sa fiche`
+            : feePaid > 0
+              ? ` · frais d'inscription de ${formatDA(feePaid)} encaissés`
+              : "";
         addToast({
           type: "success",
           title: "Fiche enregistrée",
           message:
-            totalSold > 0
-              ? `${subIds.length} emploi(s) du temps · ${formatDA(totalSold)} versés en plus.`
-              : `${subIds.length} emploi(s) du temps.`,
+            (totalSold > 0
+              ? `${subIds.length} emploi(s) du temps · ${formatDA(totalSold)} versés en plus`
+              : `${subIds.length} emploi(s) du temps`) +
+            feeNote +
+            (debtMode === "clear" && (converted.waived ?? 0) > 0
+              ? ` · ${formatDA(converted.waived ?? 0)} de dettes effacées`
+              : debtMode === "reprice" && (converted.repriced ?? 0) > 0
+                ? ` · ${converted.repriced} séance(s) recalculée(s) au nouveau cas`
+                : "") +
+            ".",
           studentName: `${firstName} ${lastName}`,
         });
         setBusy(false);
@@ -588,6 +693,8 @@ function StudentFiche({
         subscriptionIds: subIds,
         subscriptionDates,
         registrationDue,
+        // La question a été posée à la création : elle ne se reposera plus.
+        registrationFeeAssessed: feeAssessedNow,
       };
       push("students", student);
       await setStudentPassword(studentId, password);
@@ -892,6 +999,98 @@ function StudentFiche({
                         </button>
                       );
                     })}
+                </div>
+              </div>
+            )}
+
+            {/* -----------------------------------------------------------
+                 LE CAS CHANGE, ET IL RESTE DES DETTES.
+
+                 Un élève ordinaire qui devient gratuit, « école seulement » ou
+                 réduit traîne ce qu'il devait AU TARIF D'AVANT. L'école
+                 tranche — l'application ne décide jamais à sa place — et les
+                 trois réponses possibles sont dites en toutes lettres, avec ce
+                 que chacune fait au compte de l'élève.
+                 ----------------------------------------------------------- */}
+            {asksAboutDebt && (
+              <div className="space-y-2 rounded-xl border border-danger/40 bg-danger/5 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-danger">
+                    ⚠️ Ses dettes du cas précédent
+                  </span>
+                  <Badge tone="danger" className="font-mono font-bold">
+                    {formatDA(debtTotal)}
+                  </Badge>
+                </div>
+                <p className="text-[10px] leading-relaxed text-muted">
+                  Il passe de{" "}
+                  <strong className="text-ink">
+                    {STUDENT_CASE_OPTIONS.find((o) => o.value === savedCase)?.label ?? savedCase}
+                  </strong>{" "}
+                  à{" "}
+                  <strong className="text-ink">
+                    {STUDENT_CASE_OPTIONS.find((o) => o.value === studentCase)?.label ??
+                      studentCase}
+                  </strong>{" "}
+                  et doit encore {formatDA(debtTotal)}{" "}
+                  {currentDebt && currentDebt.soldDebt > 0
+                    ? `(dont ${formatDA(currentDebt.soldDebt)} de scolarité`
+                    : "("}
+                  {currentDebt && currentDebt.registrationDue > 0
+                    ? `, ${formatDA(currentDebt.registrationDue)} de frais d'inscription`
+                    : ""}
+                  ). Que devient cette somme&nbsp;?
+                </p>
+                <div className="space-y-1.5">
+                  {(
+                    [
+                      {
+                        value: "keep" as const,
+                        title: "Garder les dettes telles quelles",
+                        detail:
+                          "Ce qu'il doit reste dû au tarif d'avant. Le nouveau cas ne vaudra que pour les séances à venir.",
+                      },
+                      {
+                        value: "reprice" as const,
+                        title: "Garder les dettes, mais les recalculer au nouveau cas",
+                        detail:
+                          "Ses séances non encore réglées sont re-tarifées : la réduction s'applique, « école seule » ramène la séance à la part de l'école — et la part due à son enseignant suit. Les séances déjà réglées à l'enseignant ne bougent pas.",
+                      },
+                      {
+                        value: "clear" as const,
+                        title: "Effacer les dettes précédentes",
+                        detail:
+                          "Il n'aura rien à payer : ses séances impayées passent en offertes, les restes d'anciens versements et les frais d'inscription tombent à zéro. Ce qu'il a déjà versé lui reste acquis.",
+                      },
+                    ]
+                  ).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setDebtMode(opt.value)}
+                      className={`flex w-full gap-2 rounded-lg border px-2.5 py-2 text-start transition-colors ${
+                        debtMode === opt.value
+                          ? "border-primary bg-primary-50/70"
+                          : "border-line bg-surface hover:bg-primary-50/40"
+                      }`}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                          debtMode === opt.value ? "border-primary bg-primary" : "border-line"
+                        }`}
+                      >
+                        {debtMode === opt.value && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                        )}
+                      </span>
+                      <span className="min-w-0">
+                        <strong className="block text-[11px] text-ink">{opt.title}</strong>
+                        <span className="block text-[10px] leading-relaxed text-muted">
+                          {opt.detail}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
@@ -1206,7 +1405,7 @@ function StudentFiche({
                     qui reste part en DETTE sur la fiche, et la création n'est
                     jamais bloquée pour autant.
                     ------------------------------------------------------- */}
-                {!isEdit && feeRequired > 0 && (
+                {feeRequired > 0 && (
                   <div className="space-y-2 rounded-xl border border-warning/40 bg-warning/5 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-warning">
@@ -1274,7 +1473,7 @@ function StudentFiche({
                   </div>
                 )}
 
-                {!isEdit && feeRequired === 0 && (school?.registrationFee ?? 0) > 0 && paidSubIds.length > 0 && (
+                {!feeAlreadyAsked && feeRequired === 0 && (school?.registrationFee ?? 0) > 0 && paidSubIds.length > 0 && (
                   <p className="text-[10px] text-muted">
                     ℹ️ Aucun frais d&apos;inscription pour cet élève : les emplois du temps cochés
                     n&apos;entrent pas dans le périmètre défini sur la page Abonnements.

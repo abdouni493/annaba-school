@@ -1124,6 +1124,99 @@ Dans la fiche d'un élève, onglet **Paiements**, chaque versement porte un bout
 famille perd son reçu, l'école en veut un double : il se rejoue depuis la ligne elle-même, sur le
 même modèle qu'au guichet.
 
+## Corriger le tarif d'un emploi du temps
+
+Trois choses se contredisaient, et la réception les lisait comme une seule panne : « je change le
+prix, je rouvre, il n'a pas bougé ».
+
+**1. « Tarif de l'emploi du temps » ne veut pas dire « tarif du cours ».** La grille écrivait sur
+TOUS les groupes du même cours — même classe, même module, même enseignant. Corriger le prix du
+groupe A réécrivait celui du groupe B, et rouvrir A y montrait le prix de B. La grille n'écrit
+désormais **que sur le créneau affiché** ; le tarif commun à tous les groupes d'un cours reste
+réglable depuis **Abonnements**, qui le dit en toutes lettres (« pour TOUS les groupes de ce
+cours »). Et un emploi du temps encore incomplet — sans classe, sans module ou sans enseignant —
+n'est plus le frère de personne : ils partageaient tous la même clé vide et se voyaient imposer le
+même tarif.
+
+**2. Le prix d'une séance est celui du mois, divisé.** Deux colonnes décrivaient le même tarif sans
+que rien ne les tienne ensemble. Un mois porté de 4 800 à 6 000 DA laissait `price_per_session` sur
+l'ancien chiffre : la feuille de présence débitait l'ancien prix pendant que l'écran du mois
+affichait le nouveau, et l'élève finissait le mois en dette sans avoir manqué une séance. Dès qu'un
+pack mensuel existe, **c'est lui qui fait foi**, partout — feuille de présence, fiche de l'élève,
+catalogue d'inscription, paie de l'enseignant. Un pack vendu moins cher que ses séances n'était pas
+une remise : c'était une dette de fin de mois.
+
+**3. Et le mois en cours suit — si l'école le demande.** Une présence porte le prix qu'elle a
+débité ce jour-là, ce qui rend les mois passés relisables. Changer le tarif en cours de mois
+laissait donc la moitié du mois à l'ancien prix. Les deux écrans **posent la question** plutôt que
+de trancher :
+
+> *14 séances déjà pointées sur cet emploi du temps ne sont pas encore réglées. Leur appliquer le
+> nouveau tarif ?*
+
+Oui : chaque séance est re-tarifée, **le solde de l'élève est corrigé de l'écart** et **la part due
+à l'enseignant suit**. Non : elles restent au prix auquel elles ont été pointées, et le nouveau
+tarif ne vaut que pour les séances à venir. Dans les deux cas, **une séance déjà réglée à
+l'enseignant ne bouge jamais** : elle a été payée à son prix, et le passé ne se réécrit pas.
+
+## Les frais d'inscription d'un élève inscrit après coup
+
+Un élève se crée très bien **sans emploi du temps** : le créneau n'est pas encore ouvert, la famille
+hésite. Les frais d'inscription ne portent alors sur rien, et l'écran de création ne réclame rien —
+ce qui est juste.
+
+Le jour où la réception rouvre sa fiche pour lui cocher un emploi du temps, ils deviennent dus.
+L'écran de modification restait pourtant muet : la dette n'apparaissait nulle part, ni sur sa fiche,
+ni sur sa carte, et personne ne la réclamait jamais.
+
+La fiche porte donc `students.registration_fee_assessed` : **la question a-t-elle déjà été posée ?**
+Tant qu'elle est fausse et qu'un emploi coché entre dans le périmètre choisi par l'école, l'écran de
+**modification** réclame les frais exactement comme la création l'aurait fait — tout encaisser, une
+partie, ou rien. Une fois posée, elle ne se repose plus : relever le tarif des frais plus tard ne
+rattrape aucun élève déjà inscrit.
+
+**Sur sa carte, l'alerte s'encaisse.** « Frais d'inscription dus : 2 000 DA » se clique et ouvre un
+vrai encaissement : la réception saisit ce que la famille remet aujourd'hui, l'argent entre en
+caisse, la ligne part dans l'historique des paiements de l'élève — et ce qui n'a pas été versé reste
+dû. L'alerte demeure alors, avec le solde réduit d'autant, et **ne disparaît que lorsqu'il ne reste
+plus rien**. Elle se réglait auparavant d'un simple « marquer comme réglés » : rien n'entrait en
+caisse, rien n'apparaissait dans l'historique, et un versement partiel était impossible.
+
+## La situation d'un élève montre aussi ses frais
+
+L'écran **Situation d'un élève** détaillait sa scolarité mois par mois et ses présences séance par
+séance, mais ignorait complètement ses **frais supplémentaires** : la réception voyait tout de sa
+scolarité sans jamais voir le livre impayé qui pèse sur le même compte.
+
+Ils sont désormais là, du plus récent au plus ancien : ce que chacun a coûté, ce qui a été versé
+dessus, **chaque versement daté** (un frais se règle en plusieurs fois), ce qui reste dû, et son
+origine — saisi au guichet, ou **avance de l'école** avec le mois qu'elle a débloqué. Trois totaux
+en tête de bloc : total, versé, reste.
+
+## Changer le cas d'un élève — et ce qu'on fait de ses dettes
+
+Un élève ordinaire qui devient **gratuit**, **école seulement** ou **réduit** traîne ce qu'il devait
+**au tarif d'avant**. Basculer son cas sans rien dire de cette somme laissait une dette calculée sur
+un tarif qui n'existe plus.
+
+L'écran de modification pose donc la question, dès que le cas change **et** qu'il reste de la
+scolarité impayée (les mois dans le rouge, les restes d'anciens versements, les frais
+d'inscription — les frais divers n'en sont pas : ils ne dépendent d'aucun cas) :
+
+| Réponse | Ce qu'elle fait |
+| --- | --- |
+| **Garder les dettes telles quelles** | Ce qu'il doit reste dû au tarif d'avant. Le nouveau cas ne vaut que pour les séances à venir. |
+| **Garder, mais recalculer au nouveau cas** | Ses séances non encore réglées sont re-tarifées : la réduction s'applique, « école seule » ramène la séance à la part de l'école — et la part due à son enseignant suit. |
+| **Effacer les dettes précédentes** | Il n'aura rien à payer : ses séances impayées passent en **offertes**, les restes d'anciens versements et les frais d'inscription tombent à zéro. |
+
+« Effacer » n'efface aucune séance : il les **offre**. Le mois garde ses présences, le prix qu'elles
+ne coûteront plus part en `waived_amount` — l'école lit donc ce que sa décision lui a coûté — et le
+mois cesse d'être en dette. Le calcul remonte du dernier pointage vers le premier, si bien que **les
+séances que la famille a réellement payées restent payées** : ce qu'elle a versé lui reste acquis,
+son solde repart simplement de zéro.
+
+Là encore, **une séance déjà réglée à l'enseignant ne bouge pas**.
+
 ## Structure
 
 | Domaine                          | Fichiers                                                              |
@@ -1134,6 +1227,9 @@ même modèle qu'au guichet.
 | Session / connexion              | `lib/store/session.ts`, `app/(auth)/login/`                            |
 | Types & sélecteurs               | `lib/types.ts`, `lib/helpers.ts`                                       |
 | Élèves (achat, dette, détail)    | `components/pages/StudentsPage.tsx`                                    |
+| Fiche élève (création + modif)   | `components/students/CreateStudentModal.tsx`                            |
+| Situation d'un élève             | `components/students/StudentSituationModal.tsx`                         |
+| Tarif d'un emploi du temps       | `components/pages/PlannerPage.tsx`, `components/pages/SubscriptionsPage.tsx` |
 | Dettes & frais divers d'un élève | `components/students/StudentCharges.tsx`                               |
 | Présence / scan                  | `components/pages/AttendancePage.tsx`, `lib/useScanProcessor.ts`       |
 | Mois d'emploi du temps (paie)    | `lib/teacherMonths.ts`, `components/teachers/`                          |
