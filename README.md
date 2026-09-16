@@ -440,18 +440,28 @@ ensuite ce solde d'avance. La fenêtre d'encaissement porte aussi une **date** :
 parfois pour la veille, et c'est alors CETTE date que portent le reçu, l'historique de l'élève et le
 mouvement de caisse.
 
-**En tête de la feuille : qui doit de l'argent dans ce groupe.** Un bandeau rouge nomme les élèves
+**En tête de la feuille : qui doit de l'argent SUR CE COURS.** Un bandeau rouge nomme les élèves
 en dette — un par ligne, avec son numéro, son téléphone et le détail de ce qu'il doit :
 
 | Ce que le bandeau distingue | Ce que c'est | Ce que fait le bouton |
 | --------------------------- | ------------ | --------------------- |
-| **Scolarité** | ses mois dans le rouge (cet emploi et les autres), les restes d'anciens paiements, les frais d'inscription | ouvre **tout** ce qu'il doit, mois par mois, et l'encaisse ligne par ligne |
+| **Scolarité de ce cours** | ses mois dans le rouge **sur cet emploi du temps**, les restes d'anciens paiements qui y sont portés, les frais d'inscription | ouvre ces mois-là, un par un, et les encaisse ligne par ligne |
 | **Frais** | livre, tenue, sortie, transport — tout ce qui n'est pas de la scolarité | coche, corrige le montant, encaisse : ce qui n'est pas versé reste dû |
 | **Avancé par l'école** | ce que la caisse a réglé À SA PLACE pour ne pas faire attendre l'enseignant | se rembourse comme n'importe quel frais |
+| **Sur d'autres emplois** | ce qu'il doit AILLEURS — dit, **jamais additionné** au total de ce cours | **« Autres emplois »** ouvre ces mois-là, élève par élève, et les encaisse aussi |
+
+**Chaque dette appartient à l'emploi du temps qui l'a produite.** Un mois dans le rouge est du cours
+qui l'a ouvert, un reste d'ancien paiement du cours qu'il a crédité, une avance de l'école du mois
+qu'elle a débloqué. Le bandeau ne réclame donc que ce que CET écran peut encaisser : un élève à jour
+ici n'y figure pas, même s'il doit ailleurs. Ce qui ne nomme aucun emploi du temps — un livre, des
+frais d'inscription — n'appartient à aucun et reste réclamable partout. Le reste est **signalé sans
+être compté** : un badge « X ailleurs » sur le bandeau, une ligne « + X sur N autre(s) emploi(s) »
+sous le nom de l'élève, et son bouton **« Autres emplois »** pour l'ouvrir.
 
 Le bandeau existe parce que c'est le **seul moment où la famille est joignable** : l'élève est là,
-devant le comptoir. Chaque ligne du tableau porte en plus une colonne **« Frais & avances »** — le
-montant dû d'un clic à encaisser, et un bouton pour lui **porter un nouveau frais** sans quitter la
+devant le comptoir. Chaque ligne du tableau porte en plus une colonne **« Autres dettes »** — ses
+mois en dette sur ses AUTRES cours, chacun **nommé** et encaissable d'un clic — et une colonne
+**« Frais & avances »**, avec un bouton pour lui **porter un nouveau frais** sans quitter la
 feuille.
 
 ### La fiche élève
@@ -868,7 +878,7 @@ son **entrée en caisse**, à la date choisie, avec son reçu imprimable.
 | Carte de l'élève (**Étudiants**) | un bandeau rouge **« Dettes & frais divers »** avec le total dû, cliquable pour encaisser ; le filtre **« En dette »** compte ces frais comme le reste |
 | **Fiche détaillée** → onglet Paiements | chaque frais avec ce qu'il a coûté, ce qui a été versé dessus, ce qui reste dû et le détail de ses règlements |
 | **Payer & recharger les soldes** | la liste des frais ouverts, à cocher et à encaisser, sous les soldes des emplois du temps |
-| **Feuille de présence** d'un groupe | le bandeau du groupe et une colonne **« Frais & avances »** par ligne |
+| **Feuille de présence** d'un groupe | le bandeau du groupe — qui ne compte que la dette de CE cours — et une colonne **« Frais & avances »** par ligne |
 
 **Deux origines**, et la différence se lit à l'écran. Un frais **saisi** par la réception, et un
 frais **avancé par l'école** — la dette de scolarité que la caisse a réglée à la place de la famille

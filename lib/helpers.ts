@@ -1899,6 +1899,97 @@ export function studentDebtSummary(db: Database, studentId: string): StudentDebt
 }
 
 /**
+ * CE QU'UN ÉLÈVE DOIT **SUR UN EMPLOI DU TEMPS** — et rien d'autre.
+ *
+ * `studentDebtSummary` répond « tout ce qu'il doit, partout ». C'est la bonne
+ * réponse sur sa fiche, et la mauvaise sur la feuille de présence d'un groupe :
+ * l'alerte du haut annonçait un élève « en dette » parce qu'il devait sur un
+ * AUTRE cours, et réclamait au comptoir une somme que cet écran-là ne pouvait
+ * même pas encaisser.
+ *
+ * Le partage se fait donc EMPLOI PAR EMPLOI :
+ *
+ *   · un MOIS dans le rouge appartient à l'emploi du temps qui l'a ouvert ;
+ *   · un RESTE d'ancien paiement appartient à l'emploi qu'il a crédité ;
+ *   · un FRAIS avancé par l'école pour débloquer un mois appartient à l'emploi
+ *     de ce mois-là.
+ *
+ * Ce qui ne nomme AUCUN emploi du temps — un livre, une tenue, des frais
+ * d'inscription, une ligne d'avant la colonne — n'appartient à aucun et reste
+ * donc réclamable partout : la famille est au comptoir, et cet argent-là lui
+ * sera réclamé de toute façon. Seul ce qui appartient à un AUTRE emploi sort
+ * du compte, et c'est `other` qui le porte, à part, pour être signalé sans
+ * jamais être additionné.
+ */
+export interface EmploiDebt {
+  /** ses mois dans le rouge SUR cet emploi du temps */
+  soldRows: SoldDebtRow[];
+  /** scolarité due ici : ces mois, les restes qui y sont portés, l'inscription */
+  school: number;
+  /** ce que d'anciens paiements de cet emploi ont laissé impayé */
+  rests: number;
+  /** les frais d'inscription encore dus — ils ne relèvent d'aucun emploi */
+  registrationDue: number;
+  /** frais encore ouverts qui relèvent de cet emploi du temps, ou d'aucun */
+  charges: number;
+  /** ceux d'entre eux que l'école a avancés de sa caisse */
+  advances: number;
+  /** scolarité + frais : le seul nombre à afficher pour dire « il doit » */
+  total: number;
+  /** ce qu'il doit sur les AUTRES emplois du temps — signalé, jamais compté */
+  other: number;
+  /** ces autres mois, un par un — ce que le bouton « autres emplois » ouvre */
+  otherRows: SoldDebtRow[];
+}
+
+export function studentEmploiDebt(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+): EmploiDebt {
+  const all = studentSoldDebtRows(db, studentId);
+  const soldRows = all.filter((r) => r.subscriptionId === subscriptionId);
+  const otherRows = all.filter((r) => r.subscriptionId !== subscriptionId);
+
+  const unpaid = studentUnpaidPayments(db, studentId);
+  const mineRest = (subId?: string) => !subId || subId === subscriptionId;
+  const rests = money(
+    unpaid.filter((p) => mineRest(p.subscriptionId)).reduce((s, p) => s + p.rest, 0),
+  );
+  const registrationDue = positiveMoney(
+    db.students.find((s) => s.id === studentId)?.registrationDue ?? 0,
+  );
+
+  const openCharges = studentOpenCharges(db, studentId);
+  const mine = openCharges.filter((c) => mineRest(c.subscriptionId));
+  const charges = money(mine.reduce((t, c) => t + chargeRemaining(c), 0));
+  const advances = money(
+    mine.filter((c) => c.origin === "school_advance").reduce((t, c) => t + chargeRemaining(c), 0),
+  );
+
+  const school = money(soldRows.reduce((s, r) => s + r.debt, 0) + rests + registrationDue);
+  const other = money(
+    otherRows.reduce((s, r) => s + r.debt, 0) +
+      unpaid.filter((p) => !mineRest(p.subscriptionId)).reduce((s, p) => s + p.rest, 0) +
+      openCharges
+        .filter((c) => !mineRest(c.subscriptionId))
+        .reduce((t, c) => t + chargeRemaining(c), 0),
+  );
+
+  return {
+    soldRows,
+    school,
+    rests,
+    registrationDue,
+    charges,
+    advances,
+    total: money(school + charges),
+    other,
+    otherRows,
+  };
+}
+
+/**
  * D'OÙ vient l'argent versé sur UN mois d'UN emploi du temps.
  *
  * Un « fils d'enseignant » peut payer lui-même AVANT que son père ne soit
