@@ -53,8 +53,14 @@
 --  IDEMPOTENT : le relancer ne crée jamais de doublon, et l'application ne
 --  reconstituera plus une part que ce script a écrite.
 --
+--  ⚠️ IL N'ÉCRIT RIEN POUR UN ENSEIGNANT SUPPRIMÉ. `schedule_sessions.teacher_id`
+--     n'est qu'un texte : un emploi du temps peut désigner une fiche effacée
+--     depuis, et la table des parts a, elle, une vraie clé étrangère. L'ÉTAPE 0
+--     BIS liste ces emplois du temps — rendez-leur un enseignant, puis relancez
+--     le script, et leurs séances rentreront dans le rattrapage.
+--
 --  Exécutez-le dans le SQL Editor de Supabase, ÉTAPE PAR ÉTAPE, en LISANT le
---  résultat des étapes 0 et 1 avant d'écrire quoi que ce soit.
+--  résultat des étapes 0, 0 bis et 1 avant d'écrire quoi que ce soit.
 --
 --  NOTE SUR LES DATES : un jour d'école est un jour d'Algérie (UTC+1). Toutes
 --  les comparaisons de date passent donc par `at time zone 'Africa/Algiers'`,
@@ -99,6 +105,13 @@ with seance as (
     join public.schedule_sessions  ses on ses.id = a.session_id
     join public.students           s   on s.id   = a.student_id
     join public.subscriptions      sub on sub.session_id = a.session_id
+    -- L'ENSEIGNANT DOIT EXISTER ENCORE. `schedule_sessions.teacher_id` est un
+    -- simple texte : un emploi du temps peut donc pointer vers une fiche
+    -- SUPPRIMÉE depuis. `unpaid_teacher_sessions.teacher_id`, lui, a une vraie
+    -- clé étrangère — écrire une part pour un enseignant qui n'existe plus
+    -- échouerait sur toute la transaction. Ces emplois-là sont listés par
+    -- l'étape 0 bis : rendez-leur un enseignant, puis relancez le script.
+    join public.teachers           tea on tea.id = ses.teacher_id
    where a.status <> 'cancelled'
      and coalesce(a.no_charge, false) = false
      and a.occurred_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
@@ -159,6 +172,36 @@ select m.emploi,
 
 
 -- -----------------------------------------------------------------------------
+--  ÉTAPE 0 BIS — LES EMPLOIS DU TEMPS SANS ENSEIGNANT VALIDE (lecture seule)
+--
+--  `schedule_sessions.teacher_id` n'est qu'un texte : rien n'empêche un emploi
+--  du temps de désigner une fiche d'enseignant SUPPRIMÉE depuis. La table des
+--  parts, elle, a une vraie clé étrangère — une part ne peut donc pas exister
+--  pour un enseignant qui n'existe plus.
+--
+--  Le script ÉCARTE ces emplois du temps (il ne peut rien y écrire), et
+--  l'application fait déjà pareil : leurs séances n'apparaissent sur l'écran de
+--  paie de personne, puisqu'il n'y a personne à payer.
+--
+--  Une liste vide = rien à faire. Sinon : ouvrez chacun de ces emplois du temps
+--  dans « Emploi du temps », rendez-lui son enseignant, puis RELANCEZ le script
+--  depuis l'étape 0 — ses séances rentreront alors dans le rattrapage.
+-- -----------------------------------------------------------------------------
+select ses.id                                as emploi_id,
+       ses.title                             as emploi,
+       ses.teacher_id                        as enseignant_introuvable,
+       ses.archived_at is not null           as emploi_archive,
+       (select count(*) from public.attendance_records a
+         where a.session_id = ses.id
+           and a.status <> 'cancelled'
+           and coalesce(a.no_charge, false) = false) as seances_tenues
+  from public.schedule_sessions ses
+ where coalesce(ses.teacher_id, '') <> ''
+   and not exists (select 1 from public.teachers t where t.id = ses.teacher_id)
+ order by seances_tenues desc;
+
+
+-- -----------------------------------------------------------------------------
 --  ÉTAPE 1 — LE DÉTAIL, SÉANCE PAR SÉANCE (lecture seule)
 --
 --  Exactement les mêmes lignes que l'étape 0, une par séance : c'est ce que
@@ -192,6 +235,13 @@ with seance as (
     join public.schedule_sessions  ses on ses.id = a.session_id
     join public.students           s   on s.id   = a.student_id
     join public.subscriptions      sub on sub.session_id = a.session_id
+    -- L'ENSEIGNANT DOIT EXISTER ENCORE. `schedule_sessions.teacher_id` est un
+    -- simple texte : un emploi du temps peut donc pointer vers une fiche
+    -- SUPPRIMÉE depuis. `unpaid_teacher_sessions.teacher_id`, lui, a une vraie
+    -- clé étrangère — écrire une part pour un enseignant qui n'existe plus
+    -- échouerait sur toute la transaction. Ces emplois-là sont listés par
+    -- l'étape 0 bis : rendez-leur un enseignant, puis relancez le script.
+    join public.teachers           tea on tea.id = ses.teacher_id
    where a.status <> 'cancelled'
      and coalesce(a.no_charge, false) = false
      and a.occurred_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
@@ -273,6 +323,13 @@ with seance as (
     join public.schedule_sessions  ses on ses.id = a.session_id
     join public.students           s   on s.id   = a.student_id
     join public.subscriptions      sub on sub.session_id = a.session_id
+    -- L'ENSEIGNANT DOIT EXISTER ENCORE. `schedule_sessions.teacher_id` est un
+    -- simple texte : un emploi du temps peut donc pointer vers une fiche
+    -- SUPPRIMÉE depuis. `unpaid_teacher_sessions.teacher_id`, lui, a une vraie
+    -- clé étrangère — écrire une part pour un enseignant qui n'existe plus
+    -- échouerait sur toute la transaction. Ces emplois-là sont listés par
+    -- l'étape 0 bis : rendez-leur un enseignant, puis relancez le script.
+    join public.teachers           tea on tea.id = ses.teacher_id
    where a.status <> 'cancelled'
      and coalesce(a.no_charge, false) = false
      and a.occurred_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
@@ -399,7 +456,8 @@ select ses.title                       as emploi,
 -- -----------------------------------------------------------------------------
 --  ÉTAPE 4 — VÉRIFICATION (lecture seule)
 --
---  Relancez l'ÉTAPE 0 : la liste doit être VIDE.
+--  Relancez l'ÉTAPE 0 : la liste doit être VIDE — sauf, éventuellement, les
+--  emplois du temps de l'ÉTAPE 0 BIS, qui attendent encore un enseignant.
 --
 --  Et le tableau ci-dessous, emploi du temps par emploi du temps, doit se lire
 --  comme l'écran du tarif : part enseignant du mois = tarif × séances du mois.
