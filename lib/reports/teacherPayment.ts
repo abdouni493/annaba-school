@@ -191,10 +191,21 @@ export function buildTeacherPaymentReport(data: TeacherReportData): string {
     row.revenue += a.amountDeducted;
   });
 
-  // The teacher's share comes from the dues actually written per presence, so
-  // the slip always matches what the settlement screen will pay out.
+  // The teacher's share comes from the dues the pay screens read — the rows
+  // written per presence AND the ones the month rebuilds at the emploi's rate,
+  // so the slip always matches what the settlement screen will pay out.
+  //
+  // A due is dated by its DAY, so the bounds are compared as days: turning
+  // "2026-09-01" into a Date reads it as UTC midnight, and an hour of offset
+  // was enough to push the first séance of the period out of it.
+  const dayInRange = (day: string) => {
+    const key = (day || "").substring(0, 10);
+    if (data.startDate && key < data.startDate) return false;
+    if (data.endDate && key > data.endDate) return false;
+    return !!key;
+  };
   data.unpaidTeacher.forEach((u) => {
-    if (u.teacherId !== teacher.id || !inRange(u.date)) return;
+    if (u.teacherId !== teacher.id || !dayInRange(u.date)) return;
     const session = sessionById.get(u.sessionId);
     if (!session) return;
     rowFor(session).share += u.amount;

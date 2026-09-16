@@ -32,6 +32,7 @@ import type {
   Student,
   StudentCase,
   Subscription,
+  UnpaidTeacherSession,
 } from "@/lib/types";
 import {
   consumesSeance,
@@ -48,6 +49,8 @@ import {
   independentTotals,
   monthlyPriceOf,
   seancePriceOf,
+  teacherSeanceDueOf,
+  virtualTeacherDueId,
   passagerLabel,
   netPriceFor,
   registrationNumberOf,
@@ -406,6 +409,43 @@ export function teacherEmplois(db: Database, teacherId: string): TeacherEmploi[]
     .sort((a, b) => b.payable - a.payable || a.title.localeCompare(b.title));
 }
 
+/**
+ * TOUTES LES PARTS D'UN ENSEIGNANT, SÉANCE PAR SÉANCE — la liste que tout
+ * écran qui compte ses présences dues doit lire.
+ *
+ * `db.unpaidTeacher` ne porte que les parts qu'un pointage a écrites, et il en
+ * manque : celles des séances tenues avant que l'emploi du temps n'ait une part
+ * enseignant. Les lire directement faisait afficher « 3 présences » là où le
+ * mois en comptait quatre, et un total inférieur d'autant. Cette liste-ci est
+ * celle des écrans de paie — les lignes de la base ET celles que le mois
+ * reconstitue au tarif de l'emploi du temps — rendue sous la même forme, si
+ * bien qu'une fiche, un rapport et un règlement disent tous le même chiffre.
+ */
+export function teacherDueRows(db: Database, teacherId: string): UnpaidTeacherSession[] {
+  const rows: UnpaidTeacherSession[] = teacherEmplois(db, teacherId).flatMap((emploi) =>
+    emploi.months.flatMap((month) =>
+      month.dues.map((due) => ({
+        id: due.id,
+        teacherId,
+        sessionId: emploi.sessionId,
+        studentId: due.studentId,
+        amount: due.amount,
+        date: due.dateKey,
+        paid: due.paid,
+      })),
+    ),
+  );
+  // Une part écrite sur un emploi du temps qui a CHANGÉ D'ENSEIGNANT depuis
+  // n'appartient plus à aucun des siens — elle lui reste pourtant due, et sa
+  // fiche doit continuer de la porter.
+  const siens = new Set(db.sessions.filter((s) => s.teacherId === teacherId).map((s) => s.id));
+  for (const u of db.unpaidTeacher) {
+    if (u.teacherId !== teacherId || siens.has(u.sessionId)) continue;
+    rows.push(u);
+  }
+  return rows;
+}
+
 function buildEmploi(db: Database, teacherId: string, session: ScheduleSession): TeacherEmploi {
   const sub = db.subscriptions.find((s) => s.sessionId === session.id);
   const size = cycleSizeOf(sub);
@@ -525,6 +565,13 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
 
   const duesByMonth = new Map<number, TeacherDue[]>();
   const rosterIds = new Set(roster.map((st) => st.id));
+  const pushDue = (idx: number, due: TeacherDue) => {
+    const list = duesByMonth.get(idx);
+    if (list) list.push(due);
+    else duesByMonth.set(idx, [due]);
+  };
+  /** `studentId|jour` des séances qu'une ligne en base porte déjà. */
+  const borne = new Set<string>();
   for (const u of db.unpaidTeacher) {
     if (u.teacherId !== teacherId || u.sessionId !== session.id) continue;
     // Un élève « école seule » SUR CET EMPLOI n'a rien à faire ici : il est
@@ -549,9 +596,47 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
       monthCode: `M${idx + 1}`,
       withheld: !u.paid && isWithheld(u.studentId, rec, idx),
     };
-    const list = duesByMonth.get(idx);
-    if (list) list.push(due);
-    else duesByMonth.set(idx, [due]);
+    borne.add(`${u.studentId}|${day}`);
+    pushDue(idx, due);
+  }
+
+  /**
+   * ET LES SÉANCES QU'AUCUNE LIGNE NE PORTE — celles que l'enseignant perdait.
+   *
+   * Une part n'existait que si le pointage l'avait écrite, et il ne l'écrivait
+   * que s'il trouvait un tarif enseignant sur l'emploi du temps ce jour-là.
+   * Une part école saisie APRÈS coup laissait donc les séances déjà tenues sans
+   * aucune ligne, et rien n'en créait jamais : l'emploi annonçait 1 400 DA le
+   * mois, la paie n'en réglait que 1 050 — trois séances sur quatre.
+   *
+   * Le mois se lit désormais sur les PRÉSENCES, qui sont ce qui s'est vraiment
+   * passé, et la part manquante est reconstituée au tarif que l'école a saisi
+   * sur l'emploi du temps. Elle porte un identifiant déterministe : le jour où
+   * un règlement l'écrit pour de bon, la ligne prend cet identifiant-là et
+   * cette reconstitution s'arrête d'elle-même.
+   */
+  for (const st of roster) {
+    for (const rec of recordsByStudent.get(st.id) ?? []) {
+      if (!consumesSeance(rec)) continue;
+      const day = dayKeyOf(rec.timestamp);
+      if (borne.has(`${st.id}|${day}`)) continue;
+      borne.add(`${st.id}|${day}`);
+      const amount = teacherSeanceDueOf(db, rec, st, sub, session);
+      if (amount <= 0) continue;
+      const idx = monthOfRecord.get(rec.id) ?? currentIndexOf.get(st.id) ?? 0;
+      pushDue(idx, {
+        id: virtualTeacherDueId(session.id, st.id, day),
+        studentId: st.id,
+        studentName: studentName(st),
+        registrationNumber: registrationNumberOf(db, st),
+        dateKey: day,
+        fee: rec.amountDeducted || rec.waivedAmount || 0,
+        amount,
+        paid: false,
+        monthCode: `M${idx + 1}`,
+        withheld: isWithheld(st.id, rec, idx),
+      });
+    }
   }
 
   // ---- combien de mois faut-il rendre ? ------------------------------------
