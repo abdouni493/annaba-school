@@ -60,6 +60,7 @@ import {
   GraduationCap,
   HandCoins,
   History,
+  Layers,
   Pencil,
   Printer,
   Receipt,
@@ -121,6 +122,7 @@ import {
   studentAdvanceDebt,
   studentChargeDebt,
   studentDebtSummary,
+  studentEmploiDebt,
   studentName,
   studentSoldDebtRows,
   subscriptionLabel,
@@ -212,12 +214,14 @@ export function PresenceSheet({
     student: Student;
     /**
      * `previous` : ses mois passés SUR CET EMPLOI ;
-     * `other`    : ses mois en dette sur les AUTRES emplois du temps ;
-     * `all`      : TOUT ce qu'il doit en scolarité, celui-ci compris — ce que
-     *              l'alerte du haut ouvre, parce qu'elle parle de la dette
-     *              entière et non d'une moitié.
+     * `emploi`   : TOUT ce qu'il doit SUR CET EMPLOI, mois courant compris —
+     *              ce que l'alerte du haut ouvre, parce qu'elle ne parle que
+     *              de ce cours-ci ;
+     * `other`    : ses mois en dette sur les AUTRES emplois du temps, ouverts
+     *              élève par élève depuis sa ligne ;
+     * `all`      : TOUT ce qu'il doit en scolarité, partout.
      */
-    kind: "previous" | "other" | "all";
+    kind: "previous" | "other" | "all" | "emploi";
   } | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
   /** les bons de la séance libre qu'on vient de saisir — un par élève */
@@ -310,11 +314,12 @@ export function PresenceSheet({
    * la seconde — il n'y a rien à rafraîchir.
    */
   /**
-   * QUI DOIT DE L'ARGENT DANS CE GROUPE — les trois dettes d'un élève, lues
-   * ensemble, parce que la réception les réclame dans la même phrase :
+   * QUI DOIT DE L'ARGENT **SUR CET EMPLOI DU TEMPS** — les trois dettes d'un
+   * élève, lues ensemble, parce que la réception les réclame dans la même
+   * phrase :
    *
-   *   * la SCOLARITÉ : ses mois dans le rouge, sur cet emploi et sur les
-   *     autres, plus les restes d'anciens paiements et les frais d'inscription ;
+   *   * la SCOLARITÉ : ses mois dans le rouge SUR CET EMPLOI, plus les restes
+   *     d'anciens paiements qui y sont portés et les frais d'inscription ;
    *   * les FRAIS : un livre, une tenue, une sortie — tout ce qui a été porté à
    *     son compte hors scolarité ;
    *   * les AVANCES DE L'ÉCOLE : ce que la caisse a réglé À SA PLACE pour ne
@@ -322,32 +327,33 @@ export function PresenceSheet({
    *     entrer : la famille le doit à l'école, et c'est ici qu'on le lui
    *     rappelle, en face de son nom, le jour où elle est là.
    *
+   * ET RIEN DE CE QUI APPARTIENT À UN AUTRE EMPLOI DU TEMPS. L'alerte comptait
+   * TOUT ce qu'un élève devait, partout : la feuille d'un groupe annonçait donc
+   * des élèves « en dette » qui étaient à jour ici, et un total que cet
+   * écran-là ne pouvait même pas encaisser — les mois à solder appartenaient à
+   * un autre cours. Ce qu'il doit ailleurs n'est pas caché pour autant : il est
+   * compté à part (`other`), signalé sur sa ligne, et le bouton « autres
+   * emplois » l'ouvre élève par élève. Voir `studentEmploiDebt`.
+   *
    * Les trois se règlent sur CET écran, sans jamais ouvrir la fiche de l'élève.
    */
   const alerts = useMemo(() => {
-    const rows = roster
-      .map((st) => {
-        const summary = studentDebtSummary(db, st.id);
-        const charges = studentChargeDebt(db, st.id);
-        const advances = studentAdvanceDebt(db, st.id);
-        return {
-          student: st,
-          school: summary.total,
-          charges,
-          advances,
-          total: summary.total + charges,
-        };
-      })
-      .filter((r) => r.total > 0)
-      .sort((a, b) => b.total - a.total);
+    const everyone = !sub
+      ? []
+      : roster.map((st) => ({ student: st, ...studentEmploiDebt(db, st.id, sub.id) }));
+    const rows = everyone.filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
     return {
       rows,
       total: rows.reduce((t, r) => t + r.total, 0),
       advances: rows.reduce((t, r) => t + r.advances, 0),
       charges: rows.reduce((t, r) => t + r.charges, 0),
+      /** ce que le groupe doit AILLEURS — signalé, jamais additionné ici */
+      other: everyone.reduce((t, r) => t + r.other, 0),
+      /** combien d'élèves du groupe doivent sur un AUTRE emploi du temps */
+      elsewhere: everyone.filter((r) => r.other > 0).length,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roster, db.payments, db.enrollments, db.attendance, db.studentCharges, db.students]);
+  }, [roster, sub?.id, db.payments, db.enrollments, db.attendance, db.studentCharges, db.students]);
 
   const dayTally = useMemo(() => {
     const tally = { total: roster.length, present: 0, absent: 0, cancelled: 0, pending: 0 };
@@ -957,11 +963,14 @@ export function PresenceSheet({
             </motion.span>
             <div className="min-w-0">
               <strong className="block text-xs text-ink">
-                {alerts.rows.length} élève(s) de ce groupe doivent de l&apos;argent
+                {alerts.rows.length} élève(s) doivent de l&apos;argent{" "}
+                <span className="text-danger">sur cet emploi du temps</span>
               </strong>
               <span className="block text-[10px] text-muted">
-                Cliquez pour voir la liste, chercher un élève et encaisser — scolarité, frais et
-                avances de l&apos;école, à la date de votre choix.
+                Cliquez pour voir la liste, chercher un élève et encaisser — scolarité de CE cours,
+                frais et avances de l&apos;école, à la date de votre choix. Ce qu&apos;ils doivent
+                sur un AUTRE emploi du temps n&apos;entre pas dans ce total : chaque ligne porte son
+                propre bouton pour l&apos;ouvrir.
               </span>
             </div>
           </div>
@@ -980,6 +989,17 @@ export function PresenceSheet({
                 l&apos;école
               </Badge>
             )}
+            {/* CE QU'ILS DOIVENT AILLEURS — dit, mais jamais compté avec le
+                reste : ces mois-là appartiennent à un autre cours. */}
+            {alerts.other > 0 && (
+              <Badge
+                tone="neutral"
+                className="gap-1 font-mono text-[10px]"
+                title={`${alerts.elsewhere} élève(s) de ce groupe doivent ${formatDA(alerts.other)} sur d'autres emplois du temps — hors de ce total`}
+              >
+                <Layers className="h-3 w-3" /> {formatDA(alerts.other)} ailleurs
+              </Badge>
+            )}
             <span className="flex items-center gap-1 rounded-lg bg-danger px-2 py-1 text-[10px] font-bold text-white">
               <Users className="h-3 w-3" /> Voir la liste
             </span>
@@ -993,14 +1013,17 @@ export function PresenceSheet({
         <Modal
           open
           onClose={() => setDebtorsOpen(false)}
-          title={`Élèves du groupe en dette (${alerts.rows.length})`}
+          title={`En dette sur cet emploi du temps (${alerts.rows.length})`}
           wide
         >
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-danger/30 bg-danger/5 p-3">
               <span className="text-[11px] leading-relaxed text-muted">
-                Scolarité, frais divers et dettes avancées par l&apos;école — encaissables ici même,
-                à la date de votre choix, en totalité ou en partie.
+                La scolarité de <strong className="text-ink">CE cours</strong>, les frais divers et
+                les dettes avancées par l&apos;école — encaissables ici même, à la date de votre
+                choix, en totalité ou en partie. Ce qu&apos;un élève doit sur un AUTRE emploi du
+                temps n&apos;est pas compté ici : son bouton{" "}
+                <strong className="text-ink">« Autres emplois »</strong> l&apos;ouvre, à lui seul.
               </span>
               <div className="flex flex-wrap gap-1.5">
                 <Badge tone="danger" className="font-mono text-[10px]">
@@ -1014,6 +1037,16 @@ export function PresenceSheet({
                 {alerts.advances > 0 && (
                   <Badge tone="warning" className="gap-1 font-mono text-[10px]">
                     <Landmark className="h-3 w-3" /> {formatDA(alerts.advances)} avancés
+                  </Badge>
+                )}
+                {alerts.other > 0 && (
+                  <Badge
+                    tone="neutral"
+                    className="gap-1 font-mono text-[10px]"
+                    title="Ces mois-là appartiennent à un autre cours : ils n'entrent pas dans le total ci-contre, et s'ouvrent élève par élève."
+                  >
+                    <Layers className="h-3 w-3" /> {alerts.elsewhere} élève(s) ·{" "}
+                    {formatDA(alerts.other)} sur d&apos;autres emplois
                   </Badge>
                 )}
               </div>
@@ -1055,12 +1088,22 @@ export function PresenceSheet({
                           <span className="text-[10px] text-muted"> · {r.student.phone}</span>
                         )}
                         <span className="block text-[10px] text-muted">
-                          {r.school > 0 ? `Scolarité ${formatDA(r.school)}` : "Scolarité à jour"}
+                          {r.school > 0
+                            ? `Scolarité de ce cours ${formatDA(r.school)}`
+                            : "À jour sur ce cours"}
                           {r.charges > 0 ? ` · Frais ${formatDA(r.charges)}` : ""}
                           {r.advances > 0
                             ? ` · dont ${formatDA(r.advances)} avancés par l'école`
                             : ""}
                         </span>
+                        {/* SES AUTRES EMPLOIS DU TEMPS — nommés, mais hors du
+                            total de cette ligne : ils ne sont pas de ce cours. */}
+                        {r.other > 0 && (
+                          <span className="block text-[10px] text-warning">
+                            + {formatDA(r.other)} sur {r.otherRows.length || 1} autre(s) emploi(s)
+                            du temps — non compté ici
+                          </span>
+                        )}
                       </span>
                       <span className="flex shrink-0 flex-wrap items-center gap-1.5">
                         <Badge tone="danger" className="font-mono text-[10px]">
@@ -1068,11 +1111,24 @@ export function PresenceSheet({
                         </Badge>
                         {r.school > 0 && (
                           <button
-                            onClick={() => setDrill({ student: r.student, kind: "all" })}
-                            title="Voir et régler ses mois en dette, emploi par emploi"
+                            onClick={() => setDrill({ student: r.student, kind: "emploi" })}
+                            title="Voir et régler ses mois en dette SUR CET emploi du temps"
                             className="flex h-7 items-center gap-1 rounded-lg border border-primary/40 bg-primary-50/70 px-2 text-[10px] font-bold text-primary hover:bg-primary hover:text-white"
                           >
                             <Wallet className="h-3 w-3" /> Régler la scolarité
+                          </button>
+                        )}
+                        {/* LE BOUTON DES AUTRES DETTES — un élève à la fois.
+                            Ce qu'il doit ailleurs ne se mélange jamais au total
+                            de ce cours, mais reste réclamable au comptoir : la
+                            famille est là, et chaque mois se règle nommément. */}
+                        {r.other > 0 && (
+                          <button
+                            onClick={() => setDrill({ student: r.student, kind: "other" })}
+                            title={`Voir et régler les ${formatDA(r.other)} qu'il doit sur ses AUTRES emplois du temps`}
+                            className="flex h-7 items-center gap-1 rounded-lg border border-warning/40 bg-warning/10 px-2 text-[10px] font-bold text-warning hover:bg-warning hover:text-white"
+                          >
+                            <Layers className="h-3 w-3" /> Autres emplois
                           </button>
                         )}
                         {r.charges > 0 && (
@@ -3452,7 +3508,7 @@ function DebtDrill({
   onPay,
 }: {
   student: Student;
-  kind: "previous" | "other" | "all";
+  kind: "previous" | "other" | "all" | "emploi";
   subscriptionId: string;
   monthIndex: number;
   onClose: () => void;
@@ -3476,16 +3532,36 @@ function DebtDrill({
             size: c.size,
           }))
       : studentSoldDebtRows(db, student.id)
-          // « all » ne cache rien : le mois du groupe ouvert compte comme les
-          // autres, sinon l'alerte annoncerait une somme qu'on ne pourrait pas
-          // solder depuis l'écran qu'elle ouvre.
-          .filter((r) => kind === "all" || r.subscriptionId !== subscriptionId)
+          // Chaque vue tient sa promesse, au mois près :
+          //   « all »    ne cache rien — tous ses emplois du temps ;
+          //   « emploi » ne montre QUE ce cours-ci, mois courant compris, parce
+          //              que c'est exactement la somme que l'alerte annonce ;
+          //   « other »  ne montre QUE les autres, pour qu'ouvrir la dette d'un
+          //              élève depuis sa ligne ne ramène jamais ce cours-ci.
+          .filter((r) =>
+            kind === "all"
+              ? true
+              : kind === "emploi"
+                ? r.subscriptionId === subscriptionId
+                : r.subscriptionId !== subscriptionId,
+          )
           .map((r) => ({ ...r, done: 0, size: 0 }));
 
   // Les restes d'anciens paiements et les frais d'inscription ne relèvent
-  // d'aucun mois : ils se rappellent à part, sous la liste.
+  // d'aucun mois : ils se rappellent à part, sous la liste. Sur « emploi » on
+  // ne rappelle que les restes portés SUR ce cours — les autres appartiennent
+  // à un autre, et les compter ici recréerait le mélange qu'on vient de
+  // défaire. C'est le même partage que `studentEmploiDebt`.
   const summary = studentDebtSummary(db, student.id);
-  const loose = kind === "all" ? summary.rests + summary.registrationDue : 0;
+  const scoped = studentEmploiDebt(db, student.id, subscriptionId);
+  const loose =
+    kind === "all"
+      ? summary.rests + summary.registrationDue
+      : kind === "emploi"
+        ? scoped.rests + scoped.registrationDue
+        : 0;
+  const rests = kind === "emploi" ? scoped.rests : summary.rests;
+  const registrationDue = kind === "emploi" ? scoped.registrationDue : summary.registrationDue;
 
   return (
     <Modal
@@ -3496,7 +3572,9 @@ function DebtDrill({
           ? "Dettes des mois précédents"
           : kind === "all"
             ? "Toute la scolarité qu'il doit"
-            : "Dettes sur les autres emplois du temps"
+            : kind === "emploi"
+              ? "Ce qu'il doit sur cet emploi du temps"
+              : "Dettes sur les AUTRES emplois du temps"
       }
     >
       <div className="space-y-3">
@@ -3505,7 +3583,13 @@ function DebtDrill({
           <span className="text-[11px] text-muted">N° {registrationNumberOf(db, student)}</span>
         </div>
         {rows.length === 0 ? (
-          <p className="py-6 text-center text-xs italic text-muted">Aucune dette. ✅</p>
+          <p className="py-6 text-center text-xs italic text-muted">
+            {kind === "other"
+              ? "Aucune dette sur ses autres emplois du temps. ✅"
+              : kind === "emploi"
+                ? "Aucun mois en dette sur cet emploi du temps. ✅"
+                : "Aucune dette. ✅"}
+          </p>
         ) : (
           <div className="space-y-2">
             {rows.map((r) => (
@@ -3550,11 +3634,9 @@ function DebtDrill({
         {loose > 0 && (
           <p className="rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-[11px] text-warning">
             S&apos;ajoutent <strong>{formatDA(loose)}</strong> qui ne relèvent d&apos;aucun mois :
-            {summary.rests > 0 ? ` ${formatDA(summary.rests)} de restes d'anciens paiements` : ""}
-            {summary.rests > 0 && summary.registrationDue > 0 ? " et" : ""}
-            {summary.registrationDue > 0
-              ? ` ${formatDA(summary.registrationDue)} de frais d'inscription`
-              : ""}
+            {rests > 0 ? ` ${formatDA(rests)} de restes d'anciens paiements` : ""}
+            {rests > 0 && registrationDue > 0 ? " et" : ""}
+            {registrationDue > 0 ? ` ${formatDA(registrationDue)} de frais d'inscription` : ""}
             . Ils se règlent depuis la fiche de l&apos;élève.
           </p>
         )}
