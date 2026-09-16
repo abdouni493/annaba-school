@@ -3,14 +3,12 @@
 import { create } from "zustand";
 import { emptyDatabase, loadDatabase, loadSchool } from "@/lib/supabase/load";
 import {
-  caseReductionCut,
   cycleSizeOf,
   currentCycleCode,
   enrollmentCycles,
   seanceChargeOf,
   studentSubscriptionHistory,
   isFreeSub,
-  isSchoolOnlySub,
   joinPointFor,
   groupSeanceTotals,
   soloSeanceTotals,
@@ -23,6 +21,10 @@ import {
   studentListPrice,
   subscriptionLabel,
   teacherChildDebtEmploi,
+  teacherSeanceDueOf,
+  teacherSeanceRate,
+  parseVirtualTeacherDueId,
+  virtualTeacherDueId,
 } from "@/lib/helpers";
 import { money, positiveMoney, formatDA } from "@/lib/utils";
 import type {
@@ -1155,22 +1157,20 @@ function activeFreePeriod(
 }
 
 /**
- * What the teacher earns on ONE séance of a given emploi du temps. When the
- * emploi carries a monthly split (month price -> school share -> teacher
- * remainder / séances), that fixed per-séance price wins; otherwise the
- * teacher's own percentage contract applies.
+ * What the teacher earns on ONE séance of a given emploi du temps — the very
+ * same `teacherSeanceRate` the pay screens display in their « part / séance »
+ * column, so what a présence WRITES can never contradict what the paie SHOWS.
  *
- * A teacher paid "par groupe" is priced by the emplois du temps ONLY: if the
- * one he just taught carries no split yet, the séance simply owes him nothing
- * until the abonnement is given one — his fiche has no rate of its own.
+ * It used to read `sub.teacherPerSeance` alone, and that column is only ONE of
+ * the two ways the split is written: an emploi whose part école was typed after
+ * the fact carries `monthlyPrice` + `schoolMonthShare` and the per-séance rate
+ * falls out of them. The séances pointed before that day therefore wrote NO
+ * part at all, and the teacher lost them for good. `teacherSeanceRate` derives
+ * the rate from the month, exactly as the screens do.
  *
- * The STUDENT's case then has the last word, exactly as the fiche promises:
- *  - `special` (scolarité offerte SUR CET EMPLOI DU TEMPS): neither the school
- *    nor the teacher is paid. La gratuité se coche module par module, donc un
- *    même élève peut très bien rapporter sur un autre de ses emplois,
- *  - `school_only`: the school is paid, the listed teachers are not,
- *  - `reduction`: the teacher grants his own part of the remise, so it comes
- *    off his share and not off the school's.
+ * `payTeachers: false` on a période portes ouvertes is honoured too: the school
+ * said that period pays nobody, so `pays` carries that decision down here
+ * rather than being lost the moment the emploi carried a fixed rate.
  */
 function teacherDueFor(
   db: Database,
@@ -1178,25 +1178,10 @@ function teacherDueFor(
   sub: Subscription | undefined,
   base: number,
   student?: Student,
+  opts?: { pays?: boolean },
 ): number {
-  if (student) {
-    if (isFreeSub(student, sub?.id)) return 0;
-    // « École seule » : l'option se coche emploi par emploi. Sur un emploi
-    // ACTIVÉ l'enseignant ne touche rien pour cet élève ; sur un emploi non
-    // activé, sa part se calcule comme pour n'importe qui d'autre.
-    if (isSchoolOnlySub(student, sub?.id, session.teacherId)) return 0;
-  }
-
-  const perSeance = sub?.teacherPerSeance ?? 0;
-  const gross =
-    perSeance > 0
-      ? positiveMoney(perSeance)
-      : teacherShare(db, session.teacherId, base);
-
-  // La moitié « enseignant » de la remise, calculée par le MÊME helper que
-  // celui qui l'affiche sur la paie et qui la retire du prix de l'élève : les
-  // deux côtés du partage ne peuvent donc pas diverger.
-  return positiveMoney(gross - caseReductionCut(student, "teacher", gross));
+  if (opts?.pays === false) return 0;
+  return teacherSeanceRate(db, session, sub, student, base);
 }
 
 /**
@@ -1226,6 +1211,10 @@ interface RepriceLine {
   /** la ligne de part enseignant encore due, quand il y en a une */
   dueId?: string;
   teacherAfter: number;
+  /** de quoi ÉCRIRE la part quand aucune ligne ne la portait encore */
+  teacherId?: string;
+  dayKey: string;
+  occurredAt: string;
 }
 
 function repricePlan(
@@ -1282,6 +1271,9 @@ function repricePlan(
       after,
       dueId: due?.id,
       teacherAfter,
+      teacherId: session.teacherId,
+      dayKey: day,
+      occurredAt: rec.timestamp,
     });
   }
   return out;
@@ -1313,6 +1305,27 @@ function applyReprice(
     );
   }
   const teacherRows = new Map(plan.filter((l) => l.dueId).map((l) => [l.dueId!, l]));
+  /**
+   * LES PARTS QUE PERSONNE N'AVAIT ÉCRITES.
+   *
+   * Une séance pointée alors que l'emploi du temps ne portait pas encore de
+   * part enseignant n'a laissé AUCUNE ligne : re-tarifer se contentait de
+   * relire les lignes existantes, si bien que ces séances-là ne rapportaient
+   * jamais rien. Elles s'écrivent maintenant, sous l'identifiant déterministe
+   * que les écrans de paie leur donnent déjà — jamais de doublon.
+   */
+  const born: UnpaidTeacherSession[] = plan
+    .filter((l) => !l.dueId && !!l.teacherId && l.teacherAfter > 0)
+    .map((l) => ({
+      ...authorStamp(),
+      id: virtualTeacherDueId(l.sessionId, l.studentId, l.dayKey),
+      teacherId: l.teacherId!,
+      sessionId: l.sessionId,
+      studentId: l.studentId,
+      amount: l.teacherAfter,
+      date: l.occurredAt,
+      paid: false,
+    }));
 
   write((state) => ({
     attendance: state.attendance.map((a) => {
@@ -1323,26 +1336,76 @@ function applyReprice(
       const delta = balanceDelta.get(e.id);
       return delta ? { ...e, balance: money((e.balance ?? 0) + delta) } : e;
     }),
-    unpaidTeacher: state.unpaidTeacher
-      .map((u) => {
-        const line = teacherRows.get(u.id);
-        return line ? { ...u, amount: line.teacherAfter } : u;
-      })
-      // Une part devenue nulle (emploi offert, « école seule ») n'a plus rien à
-      // faire sur la fiche de paie : elle disparaît au lieu d'y peser zéro.
-      .filter((u) => !(teacherRows.has(u.id) && teacherRows.get(u.id)!.teacherAfter <= 0)),
+    unpaidTeacher: [
+      ...state.unpaidTeacher
+        .map((u) => {
+          const line = teacherRows.get(u.id);
+          return line ? { ...u, amount: line.teacherAfter } : u;
+        })
+        // Une part devenue nulle (emploi offert, « école seule ») n'a plus rien
+        // à faire sur la fiche de paie : elle disparaît au lieu d'y peser zéro.
+        .filter((u) => !(teacherRows.has(u.id) && teacherRows.get(u.id)!.teacherAfter <= 0)),
+      ...born.filter((b) => !state.unpaidTeacher.some((u) => u.id === b.id)),
+    ],
   }));
 
   return plan.length;
 }
 
-function teacherShare(db: Database, teacherId: string | undefined, base: number): number {
-  if (!teacherId) return 0;
-  const teacher = db.teachers.find((t) => t.id === teacherId);
-  // "monthly" is paid by contract and "per_group" by the emploi du temps —
-  // neither earns a percentage of what the student paid.
-  if (!teacher || teacher.paymentType !== "percentage") return 0;
-  return positiveMoney((base * (teacher.percentage ?? 0)) / 100);
+/**
+ * ÉCRIT EN BASE LES PARTS QUE L'ÉCRAN DE PAIE A RECONSTITUÉES.
+ *
+ * `teacherMonths` reconstitue à la lecture la part des séances qu'aucune ligne
+ * `unpaid_teacher` ne portait — celles pointées avant que l'emploi du temps
+ * n'ait une part enseignant. Tant qu'on ne fait que les LIRE, cela suffit ;
+ * dès qu'on les RÈGLE, il faut qu'elles existent, sinon le règlement ne peut
+ * ni les marquer payées ni s'en souvenir.
+ *
+ * L'identifiant est déterministe (`virtualTeacherDueId`) : réécrire deux fois
+ * la même séance rend la même ligne, donc rien ne se duplique jamais. Le
+ * montant est relu au tarif de l'emploi du temps — celui que l'écran affichait.
+ */
+function materialiseVirtualDues(
+  db: Database,
+  write: (fn: (state: DataStore) => Partial<DataStore>) => void,
+  teacherId: string,
+  dueIds: string[],
+): void {
+  const known = new Set(db.unpaidTeacher.map((u) => u.id));
+  const born: UnpaidTeacherSession[] = [];
+  const seen = new Set<string>();
+
+  for (const id of dueIds) {
+    if (known.has(id) || seen.has(id)) continue;
+    const ref = parseVirtualTeacherDueId(id);
+    if (!ref) continue;
+    const session = db.sessions.find((x) => x.id === ref.sessionId);
+    if (session?.teacherId !== teacherId) continue;
+    const record = db.attendance.find(
+      (a) =>
+        a.studentId === ref.studentId &&
+        a.sessionId === ref.sessionId &&
+        dateKey(a.timestamp) === ref.dateKey,
+    );
+    if (!record) continue;
+    const amount = teacherSeanceDueOf(db, record, undefined, undefined, session);
+    if (amount <= 0) continue;
+    seen.add(id);
+    born.push({
+      ...authorStamp(),
+      id,
+      teacherId,
+      sessionId: ref.sessionId,
+      studentId: ref.studentId,
+      amount,
+      date: record.timestamp,
+      paid: false,
+    });
+  }
+
+  if (born.length > 0) {
+    write((state) => ({ unpaidTeacher: [...state.unpaidTeacher, ...born] }));
+  }
 }
 
 const MODULE_NAME = (db: Database, id: string) => db.modules.find((m) => m.id === id)?.name ?? "";
@@ -1604,10 +1667,13 @@ export const useData = create<DataStore>((set, get) => ({
     const status: "present" | "late" =
       nowMin > startsAt(matched) + SCAN_LATE_AFTER ? "late" : "present";
 
-    // The teacher taught the séance: an offered one still pays.
-    const teacherBase =
-      (isFreePeriod && (freePeriod?.payTeachers ?? true)) || beforeStart ? waived : cost;
-    const teacherDue = teacherDueFor(db, matched, scannedSub, teacherBase, student);
+    // The teacher taught the séance: an offered one still pays — unless the
+    // école said this période portes ouvertes pays nobody.
+    const paysTeacher = !isFreePeriod || (freePeriod?.payTeachers ?? true);
+    const teacherBase = (isFreePeriod && paysTeacher) || beforeStart ? waived : cost;
+    const teacherDue = teacherDueFor(db, matched, scannedSub, teacherBase, student, {
+      pays: paysTeacher,
+    });
 
     // Burn ONE séance and take its price off the SOLDE of that emploi — exactly
     // what the présence sheet does, so a badge and a click can never disagree.
@@ -1782,11 +1848,11 @@ export const useData = create<DataStore>((set, get) => ({
     const waived = offered && !freeHere ? price : 0;
     const cost = freeHere || offered ? 0 : price;
 
-    const teacherBase =
-      isFreePeriod && (freePeriod?.payTeachers ?? true) ? waived : cost;
+    const paysTeacher = !isFreePeriod || (freePeriod?.payTeachers ?? true);
+    const teacherBase = isFreePeriod && paysTeacher ? waived : cost;
     const teacherDue = opts?.skipTeacherDue
       ? 0
-      : teacherDueFor(db, session, markedSub, teacherBase, student);
+      : teacherDueFor(db, session, markedSub, teacherBase, student, { pays: paysTeacher });
 
     const occurred =
       date === dateKey(new Date())
@@ -2014,9 +2080,12 @@ export const useData = create<DataStore>((set, get) => ({
       noCharge: noCharge || undefined,
     };
 
-    // The teacher earns on the séances that happened; an annulée pays nobody.
+    // The teacher earns on the séances that happened; an annulée pays nobody,
+    // and neither does a période portes ouvertes the école set to pay nobody.
     const teacherBase = noCharge ? 0 : charge || waived;
-    const teacherDue = teacherDueFor(db, session, sub, teacherBase, student);
+    const teacherDue = teacherDueFor(db, session, sub, teacherBase, student, {
+      pays: !noCharge && (!freePeriod || freePeriod.payTeachers),
+    });
     const billable = !noCharge;
 
     set((state) => {
@@ -3691,9 +3760,20 @@ export const useData = create<DataStore>((set, get) => ({
     arrears,
     board,
   }) => {
-    const db = get();
-    const teacher = db.teachers.find((t) => t.id === teacherId);
+    const teacher = get().teachers.find((t) => t.id === teacherId);
     if (!teacher) return { ok: false, messageKey: "pay.teacherNotFound" };
+
+    /**
+     * LES PARTS RECONSTITUÉES DEVIENNENT DE VRAIES LIGNES.
+     *
+     * L'écran de paie reconstitue à la lecture les séances qu'aucune ligne
+     * `unpaid_teacher` ne portait — celles pointées avant que l'emploi du temps
+     * n'ait une part enseignant. Les régler suppose qu'elles EXISTENT : elles
+     * s'écrivent donc ici, sous l'identifiant déterministe que l'écran leur a
+     * donné, juste avant d'être soldées comme n'importe quelle autre.
+     */
+    materialiseVirtualDues(get(), set, teacherId, [...(dueIds ?? []), ...(arrearDueIds ?? [])]);
+    const db = get();
 
     const parsed = (keys ?? []).map((k) => {
       const [date, sessionId] = k.split("|");

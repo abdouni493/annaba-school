@@ -41,7 +41,7 @@ import { TeacherPayCenter } from "@/components/teachers/TeacherPayCenter";
 import { PayBoardView } from "@/components/teachers/PayBoardView";
 import { buildTeacherMonthPayslip } from "@/lib/reports/teacherMonthPayslip";
 import { TeacherMonthsModal } from "@/components/teachers/TeacherMonthsModal";
-import { teacherEmplois, unpaidStudents } from "@/lib/teacherMonths";
+import { teacherDueRows, teacherEmplois, unpaidStudents } from "@/lib/teacherMonths";
 import {
   cycleSizeOf,
   groupSeanceTotals,
@@ -261,7 +261,15 @@ export function TeachersPage() {
   const payroll = useMemo(() => {
     const map = new Map<
       string,
-      { payable: number; withheld: number; closed: number; running: number; debtors: number }
+      {
+        payable: number;
+        withheld: number;
+        closed: number;
+        running: number;
+        debtors: number;
+        /** présences encore dues — celles reconstituées comprises */
+        dues: number;
+      }
     >();
     for (const t of teachers) {
       const emplois = teacherEmplois(db, t.id);
@@ -274,6 +282,10 @@ export function TeachersPage() {
         ),
         running: emplois.length,
         debtors: unpaidStudents(emplois).length,
+        dues: emplois.reduce(
+          (s, e) => s + e.months.reduce((n, m) => n + m.dues.filter((d) => !d.paid).length, 0),
+          0,
+        ),
       });
     }
     return map;
@@ -303,10 +315,6 @@ export function TeachersPage() {
   }, [teachers]);
 
   // Helpers
-  const getTeacherUnpaidSessions = (tid: string) => {
-    return unpaidTeacher.filter((u) => u.teacherId === tid && !u.paid);
-  };
-
   const getTeacherAcomptes = (tid: string) => {
     return acomptes.filter((a) => a.teacherId === tid);
   };
@@ -824,6 +832,21 @@ export function TeachersPage() {
   };
 
 
+  /**
+   * LES PARTS DE L'ENSEIGNANT OUVERT — la même liste que ses écrans de paie.
+   *
+   * Sa fiche lisait `db.unpaidTeacher` telle quelle, et il y manque les séances
+   * tenues avant que l'emploi du temps n'ait une part enseignant : l'onglet
+   * « Séances » en comptait donc moins que le mois, et le rapport imprimé
+   * annonçait un total plus bas que le règlement. Les deux lisent désormais la
+   * liste des écrans de paie.
+   */
+  const selectedDues = useMemo(
+    () => (selectedTeacher ? teacherDueRows(db, selectedTeacher.id) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedTeacher?.id, sessions, subscriptions, students, attendance, unpaidTeacher, payments, db.enrollments, independent],
+  );
+
   const handlePrintTeacherReport = () => {
     if (!selectedTeacher) return;
     printHtmlDocument(
@@ -835,7 +858,7 @@ export function TeachersPage() {
         endDate: printEnd,
         sessions,
         attendance,
-        unpaidTeacher,
+        unpaidTeacher: selectedDues,
         modules,
         groups,
         classes,
@@ -971,13 +994,13 @@ export function TeachersPage() {
               .includes(teacherSearch.toLowerCase());
           })
           .map((t) => {
-          const unpaidSess = getTeacherUnpaidSessions(t.id);
           const pay = payroll.get(t.id) ?? {
             payable: 0,
             withheld: 0,
             closed: 0,
             running: 0,
             debtors: 0,
+            dues: 0,
           };
 
           return (
@@ -1188,7 +1211,7 @@ export function TeachersPage() {
                     <div className="border-t border-line/60 pt-3 mt-4 flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[10px] text-muted flex items-center gap-1.5">
                         <span className={`h-1.5 w-1.5 rounded-full ${owing ? "bg-warning animate-pulse" : "bg-success"}`} />
-                        {pay.closed} mois clos à régler · {unpaidSess.length} présence(s)
+                        {pay.closed} mois clos à régler · {pay.dues} présence(s)
                         {pay.debtors > 0 && ` · ${pay.debtors} impayé(s) élève`}
                       </span>
                       <div className="flex items-center gap-1.5">
@@ -1491,7 +1514,7 @@ export function TeachersPage() {
             {selectedTeacher.isPassager && (() => {
               const myTimings = sessions.filter((s) => s.teacherId === selectedTeacher.id);
               const myTimingIds = new Set(myTimings.map((s) => s.id));
-              const myDues = unpaidTeacher.filter((u) => u.teacherId === selectedTeacher.id);
+              const myDues = selectedDues;
               const myPassagerAttendees = independent.filter(
                 (ind) => ind.sessionId && myTimingIds.has(ind.sessionId) && !ind.studentId,
               );
@@ -2274,7 +2297,7 @@ export function TeachersPage() {
 
             {/* TAB CONTENT: Sessions History */}
             {!selectedTeacher.isPassager && detailsTab === "sessions" && (() => {
-              const allTeacherSessions = unpaidTeacher.filter((u) => u.teacherId === selectedTeacher.id);
+              const allTeacherSessions = selectedDues;
               const unpaidSessions = allTeacherSessions.filter((u) => !u.paid);
               const paidSessions = allTeacherSessions.filter((u) => u.paid);
 

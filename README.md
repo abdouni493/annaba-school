@@ -230,7 +230,11 @@ Scan RFID et feuille de présence manuelle appliquent la même règle :
 - sinon → **séances restantes − 1**, jamais d'argent ;
 - l'enseignant payé au **pourcentage** touche sa part du prix net de la séance, comme avant ;
 - l'enseignant payé **par groupe** touche le tarif fixé sur l'emploi du temps lui-même
-  (part enseignant du mois ÷ séances du mois), quel que soit le nombre d'élèves présents ;
+  (part enseignant du mois ÷ séances du mois), quel que soit le nombre d'élèves présents. Ce tarif
+  se lit **du mois**, jamais d'une colonne à côté : une part école saisie APRÈS coup vaut aussi
+  pour les séances déjà tenues, et elles lui sont dues comme les autres ;
+- une **période portes ouvertes** réglée sur « enseignants non payés » ne paie personne, même sur
+  un emploi du temps qui porte un tarif ;
 - plus aucune séance restante → l'élève est **quand même accepté**, la présence est signalée comme
   « à régulariser » ;
 - abonnement **expiré** (mois écoulé ou formation terminée) → carte refusée, et les séances qui
@@ -494,9 +498,10 @@ Deux écrans, sur sa fiche :
   **payé ce mois ?**, **mois précédents impayés**, **arriérés débloqués** et **part enseignant**.
   Le règlement s'ouvre sur le **dernier mois CLOS non réglé**, jamais sur le mois en cours : si le
   groupe en est à la 3ᵉ séance d'un mois de 4, c'est le mois précédent qui est coché. La formule
-  **par groupe** additionne les tarifs déjà écrits sur chaque présence (part enseignant du mois ÷
-  séances), le **pourcentage** s'applique au tarif de chaque élève, le **montant fixe** se répartit
-  au prorata. En bas de l'écran : les **cas particuliers**, la table des **dépenses**, celle des
+  **par groupe** additionne, présence par présence, le tarif que porte l'emploi du temps (part
+  enseignant du mois ÷ séances) — une séance tenue est donc toujours comptée, même si elle a été
+  pointée avant que la part école ne soit saisie ; le **pourcentage** s'applique au tarif de chaque
+  élève, le **montant fixe** se répartit au prorata. En bas de l'écran : les **cas particuliers**, la table des **dépenses**, celle des
   **acomptes**, et le récapitulatif *total des élèves − dépenses − acomptes − scolarité des enfants
   = net à verser*. Enregistrer propose d'imprimer la **fiche de paie**.
 

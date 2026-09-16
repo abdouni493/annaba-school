@@ -1058,6 +1058,116 @@ export function seanceChargeOf(
   return netPriceFor(studentListPrice(stu, tariff), discount);
 }
 
+// ---- Ce qu'une séance rapporte à l'ENSEIGNANT -----------------------------
+/**
+ * LE TARIF D'UNE SÉANCE POUR L'ENSEIGNANT — un seul calcul, partout.
+ *
+ * Deux chiffres décrivaient la même chose et pouvaient diverger : celui que les
+ * écrans de paie AFFICHENT (« part / séance »), déduit du mois de l'emploi du
+ * temps — prix du mois − part école, divisé par les séances — et celui que le
+ * pointage ÉCRIVAIT, qui ne lisait que la colonne `teacherPerSeance`. Un emploi
+ * dont la part école était saisie APRÈS coup portait donc un tarif affiché de
+ * 350 DA la séance et des séances enregistrées à 0 : la paie annonçait 1 400 DA
+ * le mois et n'en réglait que 1 050.
+ *
+ * Il n'y a plus qu'une réponse, et c'est celle-ci. L'ordre est celui de la
+ * fiche : le TARIF DE L'EMPLOI DU TEMPS d'abord — c'est ce que l'école a saisi
+ * en le créant — et, à défaut, le contrat au pourcentage de l'enseignant.
+ * Le cas de l'élève a toujours le dernier mot (offert, « école seule »,
+ * réduction), exactement comme sa fiche le promet.
+ */
+export function teacherSeanceRate(
+  db: Database,
+  session: ScheduleSession | undefined,
+  sub: Subscription | undefined,
+  student?: Student,
+  /** ce que la séance a coûté à l'élève — ne sert qu'au contrat au pourcentage */
+  base = 0,
+): number {
+  if (student) {
+    if (isFreeSub(student, sub?.id)) return 0;
+    // « École seule » : l'option se coche emploi par emploi. Sur un emploi
+    // ACTIVÉ l'enseignant ne touche rien pour cet élève.
+    if (isSchoolOnlySub(student, sub?.id, session?.teacherId)) return 0;
+  }
+  // L'emploi du temps porte un tarif : il fait foi. C'est très exactement le
+  // chiffre que la colonne « part / séance » des écrans de paie affiche.
+  const rate = teacherSeanceShareOf(sub);
+  if (rate > 0) {
+    return student ? studentTeacherPerSeance(student, sub, session?.teacherId) : rate;
+  }
+  // Sinon, le pourcentage inscrit sur sa fiche — « mensuel » et « par groupe »
+  // ne touchent rien d'un pourcentage de ce que l'élève a payé.
+  const teacher = db.teachers.find((t) => t.id === session?.teacherId);
+  if (!teacher || teacher.paymentType !== "percentage") return 0;
+  const gross = positiveMoney((positiveMoney(base) * (teacher.percentage ?? 0)) / 100);
+  return positiveMoney(gross - caseReductionCut(student, "teacher", gross));
+}
+
+/**
+ * CE QU'UNE SÉANCE DÉJÀ POINTÉE RAPPORTE À L'ENSEIGNANT — le pendant exact de
+ * `seanceChargeOf`, qui dit ce que la même séance coûte à l'élève.
+ *
+ * La part est relue au tarif D'AUJOURD'HUI de l'emploi du temps, parce que
+ * c'est le seul chiffre que l'école ait jamais saisi : la ligne `unpaid_teacher`
+ * écrite le jour du pointage n'en est qu'une copie, et elle peut manquer (la
+ * séance a été pointée avant que l'emploi n'ait une part enseignant) ou avoir
+ * vieilli. Une séance ANNULÉE ou « sans frais » ne rapporte rien, et une
+ * période portes ouvertes qui ne paie pas les enseignants non plus.
+ */
+export function teacherSeanceDueOf(
+  db: Database,
+  record: AttendanceRecord,
+  student?: Student,
+  sub?: Subscription,
+  session?: ScheduleSession,
+): number {
+  if (!consumesSeance(record)) return 0;
+  const ses = session ?? db.sessions.find((s) => s.id === record.sessionId);
+  if (!ses?.teacherId) return 0;
+  // Portes ouvertes : l'école a pu décider que la séance ne paie personne.
+  if (record.freePeriodId) {
+    const period = db.freePeriods.find((f) => f.id === record.freePeriodId);
+    if (period && !period.payTeachers) return 0;
+  }
+  const stu = student ?? db.students.find((s) => s.id === record.studentId);
+  const tariff = sub ?? db.subscriptions.find((x) => x.sessionId === record.sessionId);
+  // La base du contrat au pourcentage : ce que la séance a coûté, ou ce
+  // qu'elle aurait coûté si l'école ne l'avait pas offerte — il l'a enseignée.
+  const base =
+    seanceChargeOf(db, record, stu, tariff) || positiveMoney(record.waivedAmount ?? 0);
+  return teacherSeanceRate(db, ses, tariff, stu, base);
+}
+
+/**
+ * L'IDENTIFIANT D'UNE PART QUE PERSONNE N'A ENCORE ÉCRITE.
+ *
+ * Une séance pointée avant que l'emploi du temps n'ait une part enseignant n'a
+ * laissé AUCUNE ligne `unpaid_teacher` — et rien n'en créait jamais. Les écrans
+ * de paie la reconstituent donc à la lecture, sous cet identifiant : il est
+ * déterministe (même séance, même identifiant), si bien que le jour où le
+ * règlement l'écrit vraiment en base, la ligne prend cet identifiant-là et la
+ * reconstitution s'arrête d'elle-même. Jamais de doublon, jamais de part
+ * fantôme.
+ */
+const VIRTUAL_DUE_PREFIX = "utpv";
+
+export function virtualTeacherDueId(
+  sessionId: string,
+  studentId: string,
+  dateKey: string,
+): string {
+  return [VIRTUAL_DUE_PREFIX, sessionId, studentId, dateKey].join("|");
+}
+
+export function parseVirtualTeacherDueId(
+  id: string,
+): { sessionId: string; studentId: string; dateKey: string } | undefined {
+  const parts = id.split("|");
+  if (parts.length !== 4 || parts[0] !== VIRTUAL_DUE_PREFIX) return undefined;
+  return { sessionId: parts[1], studentId: parts[2], dateKey: parts[3] };
+}
+
 /**
  * L'ÉCART entre ce que les présences ont RÉELLEMENT débité du solde et ce
  * qu'elles auraient dû débiter (voir `seanceChargeOf`).
