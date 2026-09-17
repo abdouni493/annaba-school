@@ -52,6 +52,9 @@ import {
   formatDays,
   groupName,
   isFreeSub,
+  caseReductionLabel,
+  hasReductionOnSub,
+  reductionForSub,
   monthCodeLabel,
   moduleName as moduleNameOf,
   registrationNumberOf,
@@ -143,6 +146,9 @@ export function SoldManagerModal({
         // jour » par construction, quoi qu'il porte.
         const offered = isFreeSub(student, subId);
         const status = offered ? "ok" : soldStatus(sold, unit);
+        // La réduction se coche emploi par emploi : le guichet doit lire, sur
+        // la ligne qui la porte, POURQUOI cet emploi coûte moins que son tarif.
+        const reduction = caseReductionLabel(reductionForSub(student, subId));
         return [
           {
             subId,
@@ -156,6 +162,7 @@ export function SoldManagerModal({
             cycle,
             status,
             offered,
+            reduction,
             monthsInDebt: enrollmentCycles(db, student.id, subId).filter((c) => c.balance < 0),
           },
         ];
@@ -410,6 +417,11 @@ export function SoldManagerModal({
                             </>
                           )}
                         </span>
+                        {r.reduction && (
+                          <Badge tone="warning" className="mt-0.5 text-[9px]">
+                            Réduction · {r.reduction}
+                          </Badge>
+                        )}
                       </div>
                       <Badge tone={alert.tone} className="gap-1 shrink-0">
                         <AlertIcon className="h-3 w-3" /> {alert.label}
@@ -557,6 +569,23 @@ export function SoldManagerModal({
                             } — là où en est le groupe.`,
                             studentName: studentName(student),
                           });
+                          // La réduction se coche emploi par emploi : un emploi
+                          // ajouté ici n'en porte aucune tant que la fiche n'en
+                          // a pas accordé une. On le dit plutôt que de laisser
+                          // croire à une remise oubliée.
+                          if (
+                            student.studentCase === "reduction" &&
+                            !hasReductionOnSub(student, subId)
+                          ) {
+                            addToast({
+                              type: "info",
+                              title: "Réduction inactive sur cet emploi du temps",
+                              message:
+                                "Aucune remise n'est accordée sur cet emploi du temps : tout s'y " +
+                                "calcule normalement. Ouvrez sa fiche pour lui en accorder une.",
+                              studentName: studentName(student),
+                            });
+                          }
                         }
                       }
                     }

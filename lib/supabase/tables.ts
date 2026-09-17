@@ -151,7 +151,7 @@ export const TABLES: Record<CollectionKey, TableSpec> = {
     fields: ["id", "registrationNumber", "firstName", "lastName", "birthDate", "phone",
              "phone2",
              "email", "rfid", "isFree", "studentCase", "freeSubscriptionIds",
-             "teacherFatherId", "caseReduction",
+             "teacherFatherId", "caseReduction", "subscriptionReductions",
              "unpaidTeacherIds", "schoolOnlySubscriptionIds",
              "enrollmentLevel", "enrollmentYear",
              "parentId", "subscriptionIds", "subscriptionDates",

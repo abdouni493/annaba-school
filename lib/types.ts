@@ -906,8 +906,11 @@ export interface ModuleAbsenceRule {
  *     nor the teacher is paid for them) and the others are billed as usual,
  *  - `teacher_child`: the school is paid from the teacher-father's salary, not
  *     from the student directly (see `teacherFatherId`),
- *  - `reduction`: a reduction split between the school and the teacher (see
- *     `caseReduction`),
+ *  - `reduction`: a reduction split between the school and the teacher,
+ *     EMPLOI DU TEMPS PAR EMPLOI DU TEMPS — les emplois listés dans
+ *     `subscriptionReductions` portent chacun leur remise (part école + part
+ *     enseignant) et les autres se calculent normalement (voir
+ *     `subscriptionReductions`, et `caseReduction` pour les fiches d'avant),
  *  - `school_only`: the school is paid, but the listed teachers are NOT paid for
  *     this student's presences (see `unpaidTeacherIds`).
  */
@@ -960,8 +963,35 @@ export interface Student extends Authored {
   freeSubscriptionIds?: string[];
   /** teacher_child: the teacher whose salary settles this student */
   teacherFatherId?: string;
-  /** reduction: how much the school and the teacher each knock off */
+  /**
+   * LA RÉDUCTION GÉNÉRALE — LES FICHES D'AVANT, ET ELLES SEULES.
+   *
+   * Une remise unique, valable sur TOUS ses emplois du temps. Elle ne se
+   * saisit plus : la réduction se règle désormais emploi par emploi (voir
+   * `subscriptionReductions`). Elle reste lue pour que les fiches déjà en base
+   * ne changent pas de sens tant que personne ne les a rouvertes.
+   */
   caseReduction?: CaseReduction;
+  /**
+   * « RÉDUCTION » : LA REMISE, EMPLOI DU TEMPS PAR EMPLOI DU TEMPS.
+   *
+   * Exactement comme la gratuité et « école seulement », la réduction se coche
+   * emploi par emploi. À chaque emploi coché, la réception répond à la question
+   * « réduction sur celui-ci ? » :
+   *
+   *  - NON (l'emploi n'est pas dans cette table) : tout s'y calcule
+   *    NORMALEMENT — la famille paie le tarif entier et l'enseignant touche sa
+   *    part entière, exactement comme pour un élève ordinaire ;
+   *  - OUI : l'emploi porte sa PROPRE remise, avec sa part école et sa part
+   *    enseignant. L'école retire la sienne de SA part, l'enseignant la sienne
+   *    de LA SIENNE, et la famille ne verse que ce qui reste.
+   *
+   * ABSENT (`undefined`) = fiche d'avant, pilotée par `caseReduction` seule :
+   * la remise générale vaut alors sur tous ses emplois du temps, ce qui est
+   * très exactement le sens qu'elle avait. Une table PRÉSENTE fait foi, même
+   * vide — vide signifie « aucun emploi réduit », et non « tous ».
+   */
+  subscriptionReductions?: Record<string, CaseReduction>;
   /** school_only: teachers NOT paid for this student's presences */
   unpaidTeacherIds?: string[];
   /**

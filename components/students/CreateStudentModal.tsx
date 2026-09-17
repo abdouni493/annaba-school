@@ -34,6 +34,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useData, uid } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
 import { useToast } from "@/lib/store/toast";
@@ -41,7 +42,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
-import { BookOpen, Building2, Check, Gift, Trash2, Wallet } from "lucide-react";
+import { BookOpen, Building2, Check, Gift, Percent, Trash2, Wallet } from "lucide-react";
 import { createRoleUser, resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
 import { formatDA } from "@/lib/utils";
 import {
@@ -62,11 +63,15 @@ import {
   joinPointFor,
   studentDebtSummary,
   schoolPerSeanceOf,
+  studentListPrice,
+  studentSchoolPerSeance,
+  studentTeacherPerSeance,
   teacherPerSeanceOf,
   registrationFeeFor,
   registrationFeeSubIds,
   registrationNumberOf,
   soldFor,
+  studentSubscriptionHistory,
   studentMonthPrice,
   nextRegistrationNumber,
   todayIso,
@@ -140,6 +145,83 @@ export function CreateStudentModal(props: StudentFicheProps) {
   );
 }
 
+/**
+ * « RÉDUCTION SUR CET EMPLOI DU TEMPS ? » — l'alerte posée à chaque emploi coché.
+ *
+ * Elle ne se referme QUE sur une réponse : ni l'arrière-plan ni la touche Échap
+ * ne la congédient, parce qu'une question non posée deviendrait une remise
+ * silencieusement absente (ou, pire, silencieusement appliquée). Elle s'affiche
+ * par-dessus la fiche, dans son propre calque à la racine du document, pour ne
+ * pas dépendre des transformations de la fenêtre qui la porte.
+ */
+function ReductionAsk({
+  label,
+  seancePrice,
+  schoolPart,
+  teacherPart,
+  onAnswer,
+}: {
+  label: string;
+  seancePrice: number;
+  schoolPart: number;
+  teacherPart: number;
+  onAnswer: (active: boolean) => void;
+}) {
+  // L'alerte ne s'ouvre QUE sur un clic de la réception : le document est donc
+  // toujours là. Le garde-fou ne protège que d'un rendu côté serveur.
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="relative z-10 w-full max-w-md overflow-y-auto rounded-2xl border border-warning/50 bg-surface card-shadow-lg">
+        <div className="flex items-center gap-2 border-b border-line bg-warning/10 px-5 py-3.5">
+          <Percent className="h-4 w-4 shrink-0 text-warning" />
+          <h2 className="text-sm font-bold text-ink">Réduction sur cet emploi du temps ?</h2>
+        </div>
+        <div className="space-y-3 p-5">
+          <div className="rounded-xl border border-line bg-canvas/40 p-3">
+            <strong className="block text-[12px] text-ink">{label}</strong>
+            <span className="mt-0.5 block text-[10px] text-muted">
+              Séance à <strong className="text-ink">{formatDA(seancePrice)}</strong> — part école{" "}
+              {formatDA(schoolPart)} · part enseignant {formatDA(teacherPart)}.
+            </span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted">
+            La réduction se coche{" "}
+            <strong className="text-ink">emploi du temps par emploi du temps</strong>. Vous venez
+            d&apos;ajouter celui-ci : dites s&apos;il en porte une.
+          </p>
+          <ul className="space-y-1.5 text-[10px] leading-relaxed text-muted">
+            <li className="rounded-lg border border-line bg-canvas/40 px-2.5 py-1.5">
+              <strong className="text-ink">Non</strong> — la réduction reste{" "}
+              <strong className="text-ink">inactive</strong> sur cet emploi du temps : tout s&apos;y
+              calcule normalement, la famille paie {formatDA(seancePrice)} la séance et
+              l&apos;enseignant touche {formatDA(teacherPart)}, comme pour n&apos;importe quel élève.
+            </li>
+            <li className="rounded-lg border border-warning/40 bg-warning/5 px-2.5 py-1.5">
+              <strong className="text-warning">Oui</strong> — vous saisissez, juste en dessous,{" "}
+              <strong className="text-ink">la part de l&apos;école</strong> et{" "}
+              <strong className="text-ink">la part de l&apos;enseignant</strong> : chacun retire la
+              sienne de sa propre part, sur les paiements de l&apos;élève ET sur la paie de
+              l&apos;enseignant, pour cet emploi du temps seulement.
+            </li>
+          </ul>
+          <div className="flex flex-wrap justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => onAnswer(false)}>
+              Non — calcul normal
+            </Button>
+            <Button onClick={() => onAnswer(true)} className="gap-1.5">
+              <Percent className="h-4 w-4" /> Oui, activer la réduction
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function StudentFiche({
   onClose,
   defaultSubIds = [],
@@ -180,11 +262,41 @@ function StudentFiche({
   );
   const [teacherFatherId, setTeacherFatherId] = useState(editing?.teacherFatherId ?? "");
   const [teacherSearch, setTeacherSearch] = useState("");
-  const [caseRedType, setCaseRedType] = useState<DiscountType>(
-    editing?.caseReduction?.type ?? "percent",
-  );
-  const [caseRedSchool, setCaseRedSchool] = useState(editing?.caseReduction?.schoolValue ?? 0);
-  const [caseRedTeacher, setCaseRedTeacher] = useState(editing?.caseReduction?.teacherValue ?? 0);
+  /**
+   * « RÉDUCTION » : LA REMISE SE COCHE EMPLOI DU TEMPS PAR EMPLOI DU TEMPS.
+   *
+   * Il n'y a plus de remise générale : à chaque emploi coché, l'écran DEMANDE
+   * si la réduction s'y applique. L'emploi absent de cette table se calcule
+   * NORMALEMENT — tarif entier pour la famille, part entière pour
+   * l'enseignant ; celui qui y est porte SA remise, part école et part
+   * enseignant saisies séparément.
+   *
+   * Une fiche d'avant, qui ne connaissait qu'une remise générale, ouvre avec
+   * cette remise recopiée sur chacun de ses emplois du temps : ce qu'elle
+   * facturait hier, elle le facture encore aujourd'hui, et la réception peut
+   * désormais la retirer emploi par emploi.
+   */
+  const [subReductions, setSubReductions] = useState<Record<string, CaseReduction>>(() => {
+    const saved = editing?.subscriptionReductions;
+    if (saved) return { ...saved };
+    const general = editing?.caseReduction;
+    if (!general || editing?.studentCase !== "reduction") return {};
+    const spread: Record<string, CaseReduction> = {};
+    // TOUS ses emplois du temps, ceux qu'il a QUITTÉS compris : une dette
+    // laissée derrière lui a été créée au tarif réduit, et re-tarifer cette
+    // dette au tarif plein réclamerait à la famille plus qu'elle ne devait.
+    for (const id of studentSubscriptionHistory(db, editing)) spread[id] = { ...general };
+    return spread;
+  });
+  /**
+   * LA QUESTION POSÉE À CHAQUE EMPLOI DU TEMPS COCHÉ — la file d'attente.
+   *
+   * Cocher un emploi sur un « cas réduction » ouvre aussitôt l'alerte
+   * « réduction sur cet emploi du temps ? ». Tant qu'on n'a pas répondu, elle
+   * reste là ; cocher trois emplois d'affilée pose la question trois fois, une
+   * par emploi, dans l'ordre où ils ont été cochés.
+   */
+  const [reductionAsk, setReductionAsk] = useState<string[]>([]);
   const [unpaidTeacherIds, setUnpaidTeacherIds] = useState<string[]>(
     editing?.unpaidTeacherIds ?? [],
   );
@@ -253,15 +365,66 @@ function StudentFiche({
   const shownNumber = editing ? registrationNumberOf(db, editing) : nextNumber;
   const isFree = studentCase === "special";
   const isSchoolOnly = studentCase === "school_only";
+  const isReduction = studentCase === "reduction";
   /** Cet emploi du temps est-il offert à l'élève tel que la fiche est cochée ? */
   const freeOn = (subId: string) => isFree && freeSubIds.includes(subId);
   /** L'option « école seulement » est-elle ACTIVE sur cet emploi du temps ? */
   const schoolOnlyOn = (subId: string) => isSchoolOnly && schoolOnlySubIds.includes(subId);
+  /** La réduction est-elle ACTIVE sur cet emploi du temps ? */
+  const reductionOn = (subId: string) => isReduction && !!subReductions[subId];
   /** Ce que la fiche enregistrera : rien à écrire hors du cas spécial. */
   const freeList = isFree ? subIds.filter((id) => freeSubIds.includes(id)) : undefined;
   const schoolOnlyList = isSchoolOnly
     ? subIds.filter((id) => schoolOnlySubIds.includes(id))
     : undefined;
+  /**
+   * LA TABLE DES RÉDUCTIONS QUE LA FICHE ÉCRIRA — les emplois du temps
+   * réellement cochés, et eux seuls.
+   *
+   * Elle est écrite MÊME VIDE sur un « cas réduction » : vide veut dire « aucun
+   * emploi réduit », et c'est une réponse, pas une absence de réponse. Hors de
+   * ce cas, rien n'est écrit du tout.
+   */
+  const subKeyList = subIds.join("|");
+  const reductionKey = JSON.stringify(subReductions);
+  /** Les emplois du temps sur lesquels la réduction est ACTIVE. */
+  const reducedSubIds = subIds.filter((id) => reductionOn(id));
+  /**
+   * LES EMPLOIS DU TEMPS QU'IL A QUITTÉS — ils gardent leur réduction.
+   *
+   * Sortir d'un groupe n'efface pas ce qu'on y devait, et cette dette a été
+   * créée au TARIF RÉDUIT. Retirer la remise en le désinscrivant ferait
+   * re-tarifer ces séances-là au prix plein : la famille se verrait réclamer
+   * plus qu'elle ne devait. La fiche ne montre donc que les emplois cochés,
+   * mais elle réécrit ceux d'avant tels quels.
+   */
+  const pastSubIds = useMemo(
+    () =>
+      editing
+        ? studentSubscriptionHistory(db, editing).filter((id) => !subIds.includes(id))
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editing?.id, db.enrollments, db.subscriptions, subKeyList],
+  );
+  const pastKey = pastSubIds.join("|");
+  const reductionList = useMemo(() => {
+    if (!isReduction) return undefined;
+    const out: Record<string, CaseReduction> = {};
+    const ids = [
+      ...(subKeyList ? subKeyList.split("|") : []),
+      ...(pastKey ? pastKey.split("|") : []),
+    ];
+    for (const id of ids) {
+      const red = subReductions[id];
+      if (red && (red.schoolValue > 0 || red.teacherValue > 0)) out[id] = red;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReduction, subKeyList, pastKey, reductionKey]);
+  /** Les mêmes listes, en une chaîne : de quoi comparer sans objet. */
+  const freeKey = freeList?.join("|") ?? "";
+  const schoolOnlyKey = schoolOnlyList?.join("|") ?? "";
+  const reductionListKey = JSON.stringify(reductionList ?? null);
   /**
    * Les enseignants que ce cas prive de paie : ceux des emplois du temps où
    * l'option est active. La liste historique `unpaidTeacherIds` reste écrite,
@@ -377,9 +540,8 @@ function StudentFiche({
     setStudentCase("normal");
     setTeacherFatherId("");
     setTeacherSearch("");
-    setCaseRedType("percent");
-    setCaseRedSchool(0);
-    setCaseRedTeacher(0);
+    setSubReductions({});
+    setReductionAsk([]);
     setUnpaidTeacherIds([]);
     setSubIds(defaultSubIds);
     setFreeSubIds(defaultSubIds);
@@ -392,6 +554,29 @@ function StudentFiche({
     const next = toggleTimingSelection(subIds, option);
     const added = next.filter((id) => !subIds.includes(id));
     setSubIds(next);
+    /**
+     * UN EMPLOI DU TEMPS VIENT D'ÊTRE COCHÉ SUR UN « CAS RÉDUCTION » : ON
+     * DEMANDE.
+     *
+     * L'emploi arrive SANS réduction — tant que la réception n'a pas répondu
+     * « oui », il se calcule normalement. L'alerte pose la question pour
+     * chacun des emplois cochés, dans l'ordre, et ne se referme qu'une fois
+     * répondu.
+     */
+    if (isReduction && added.length > 0) {
+      setReductionAsk((prev) => [...prev, ...added.filter((id) => !prev.includes(id))]);
+    }
+    // Un emploi décoché n'a plus de réduction à porter — SAUF s'il fait partie
+    // de son histoire : la dette qu'il y a laissée est née au tarif réduit.
+    const kept = editing ? studentSubscriptionHistory(db, editing) : [];
+    setSubReductions((prev) => {
+      const clean: Record<string, CaseReduction> = {};
+      for (const id of Object.keys(prev)) {
+        if (next.includes(id) || kept.includes(id)) clean[id] = prev[id];
+      }
+      return clean;
+    });
+    setReductionAsk((prev) => prev.filter((id) => next.includes(id)));
     // Un emploi qu'on vient de cocher sur un « cas spécial » arrive OFFERT :
     // c'est ce que le cas promet, et le décocher le rend payant.
     setFreeSubIds((prev) => [...new Set([...prev, ...added])].filter((id) => next.includes(id)));
@@ -417,24 +602,100 @@ function StudentFiche({
       prev.includes(subId) ? prev.filter((id) => id !== subId) : [...prev, subId],
     );
 
+  /** Activer la réduction sur cet emploi du temps (elle démarre à zéro : la
+   *  réception saisit tout de suite la part école et la part enseignant). */
+  const activateReduction = (subId: string) =>
+    setSubReductions((prev) =>
+      prev[subId] ? prev : { ...prev, [subId]: { type: "percent", schoolValue: 0, teacherValue: 0 } },
+    );
+
+  /** La retirer : l'emploi du temps repasse au calcul NORMAL. */
+  const clearReduction = (subId: string) =>
+    setSubReductions((prev) => {
+      const next = { ...prev };
+      delete next[subId];
+      return next;
+    });
+
+  const toggleReduction = (subId: string) =>
+    (subReductions[subId] ? clearReduction : activateReduction)(subId);
+
+  /** Modifier une valeur de la remise d'un emploi du temps. */
+  const patchReduction = (subId: string, patch: Partial<CaseReduction>) =>
+    setSubReductions((prev) => {
+      const base: CaseReduction = prev[subId] ?? {
+        type: "percent",
+        schoolValue: 0,
+        teacherValue: 0,
+      };
+      return { ...prev, [subId]: { ...base, ...patch } };
+    });
+
+  /**
+   * CHOISIR LE CAS DE L'ÉLÈVE.
+   *
+   * Basculer sur « Réduction » alors que des emplois du temps sont DÉJÀ cochés
+   * pose la question pour chacun d'eux : sans réponse, aucun n'est réduit et
+   * tout se calcule normalement. Quitter le cas referme les questions en
+   * attente — il n'y a plus rien à demander.
+   */
+  const pickCase = (value: StudentCase) => {
+    setStudentCase(value);
+    if (value === "reduction") {
+      setReductionAsk(subIds.filter((id) => !subReductions[id]));
+    } else {
+      setReductionAsk([]);
+    }
+  };
+
+  /** Répondre à l'alerte posée pour l'emploi du temps en tête de file. */
+  const answerReductionAsk = (subId: string, active: boolean) => {
+    if (active) activateReduction(subId);
+    else {
+      clearReduction(subId);
+      addToast({
+        type: "info",
+        title: "Réduction inactive sur cet emploi du temps",
+        message: `${subLabel(subId)} — la famille paie le tarif entier et l'enseignant touche sa part entière, comme pour un élève ordinaire.`,
+      });
+    }
+    setReductionAsk((prev) => prev.filter((id) => id !== subId));
+  };
+
+  /**
+   * L'ÉLÈVE TEL QUE LA FICHE EST COCHÉE — pas tel qu'il est en base.
+   *
+   * Tout ce que l'écran annonce en dinars (le mois proposé, le tarif d'une
+   * séance réduite, la part qui revient à l'enseignant) passe par les MÊMES
+   * fonctions que la caisse et la paie, appliquées à cet élève-là. Une case
+   * cochée change donc le chiffre affiché exactement comme elle changera le
+   * chiffre encaissé — l'écran ne peut pas promettre autre chose.
+   */
+  const ficheStudent = useMemo(
+    () =>
+      ({
+        ...(editing ?? ({} as Student)),
+        studentCase,
+        isFree,
+        freeSubscriptionIds: freeList,
+        schoolOnlySubscriptionIds: schoolOnlyList,
+        subscriptionReductions: reductionList,
+      }) as Student,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editing, studentCase, isFree, freeKey, schoolOnlyKey, reductionListKey],
+  );
+
   /**
    * Suggested opening solde of an emploi: the price of one of its months FOR
    * HIM. An « école seule » élève ne paie que la part de l'école, donc son mois
-   * coûte cette part-là et pas le prix complet.
+   * coûte cette part-là et pas le prix complet — et un emploi RÉDUIT coûte son
+   * tarif réduit, réduction école et réduction enseignant comprises.
    */
   const suggestFor = (subId: string) => {
     const sub = subscriptions.find((s) => s.id === subId);
     if (!sub) return 0;
-    const asStudent = {
-      ...(editing ?? ({} as Student)),
-      studentCase,
-      isFree,
-      freeSubscriptionIds: freeList,
-      schoolOnlySubscriptionIds: schoolOnlyList,
-    };
     return (
-      studentMonthPrice(asStudent as Student, sub) ||
-      sub.pricePerSession * cycleSizeOf(sub)
+      studentMonthPrice(ficheStudent, sub) || sub.pricePerSession * cycleSizeOf(sub)
     );
   };
 
@@ -475,6 +736,39 @@ function StudentFiche({
       });
       return;
     }
+    /**
+     * UNE RÉDUCTION ACTIVÉE MAIS LAISSÉE À ZÉRO n'est pas une réponse : c'est
+     * une case cochée et oubliée. L'écran le dit plutôt que d'enregistrer une
+     * remise qui ne retire rien — soit on saisit une part, soit on désactive
+     * la réduction sur cet emploi du temps.
+     */
+    if (isReduction) {
+      const empty = subIds.filter((id) => {
+        const red = subReductions[id];
+        return red && (red.schoolValue || 0) <= 0 && (red.teacherValue || 0) <= 0;
+      });
+      if (empty.length > 0) {
+        addToast({
+          type: "danger",
+          title: "Réduction à zéro",
+          message:
+            `Indiquez la part école ou la part enseignant sur ${empty
+              .map((id) => subLabel(id))
+              .join(", ")}, ou désactivez-y la réduction — elle ne retire rien pour le moment.`,
+        });
+        return;
+      }
+      // Une question restée sans réponse : on ne devine pas à la place de la
+      // réception, on la lui repose avant d'enregistrer.
+      if (reductionAsk.length > 0) {
+        addToast({
+          type: "warning",
+          title: "Réduction : une question attend une réponse",
+          message: `Dites si la réduction s'applique à ${subLabel(reductionAsk[0])}.`,
+        });
+        return;
+      }
+    }
 
     // ---- editing an existing fiche ---------------------------------------
     if (editing) {
@@ -503,14 +797,16 @@ function StudentFiche({
           enrollmentLevel: enrollLevel || undefined,
           enrollmentYear: enrollYear || undefined,
           teacherFatherId: studentCase === "teacher_child" ? teacherFatherId : undefined,
-          caseReduction:
-            studentCase === "reduction"
-              ? ({
-                  type: caseRedType,
-                  schoolValue: caseRedSchool || 0,
-                  teacherValue: caseRedTeacher || 0,
-                } as CaseReduction)
-              : undefined,
+          /**
+           * LA RÉDUCTION, EMPLOI DU TEMPS PAR EMPLOI DU TEMPS.
+           *
+           * La table fait foi, même vide : « aucun emploi réduit » est une
+           * réponse. L'ancienne remise générale est effacée par la même
+           * occasion — la fiche ne peut pas porter deux vérités à la fois, et
+           * celle qui reste est celle que la réception vient de saisir.
+           */
+          subscriptionReductions: reductionList,
+          caseReduction: undefined,
           unpaidTeacherIds:
             studentCase === "school_only" ? derivedUnpaidTeacherIds : undefined,
           /**
@@ -680,14 +976,9 @@ function StudentFiche({
         enrollmentLevel: enrollLevel || undefined,
         enrollmentYear: enrollYear || undefined,
         teacherFatherId: studentCase === "teacher_child" ? teacherFatherId : undefined,
-        caseReduction:
-          studentCase === "reduction"
-            ? ({
-                type: caseRedType,
-                schoolValue: caseRedSchool || 0,
-                teacherValue: caseRedTeacher || 0,
-              } as CaseReduction)
-            : undefined,
+        // La réduction se coche emploi par emploi : la table dit lesquels, et
+        // les emplois qui n'y sont pas se calculent normalement.
+        subscriptionReductions: reductionList,
         unpaidTeacherIds:
           studentCase === "school_only" ? derivedUnpaidTeacherIds : undefined,
         subscriptionIds: subIds,
@@ -753,12 +1044,19 @@ function StudentFiche({
         lines: subIds.map((subId) => {
           const sub = subscriptions.find((s) => s.id === subId);
           const offered = freeOn(subId);
+          const reduced = reductionOn(subId);
           return {
-            // Le bon d'inscription dit ce que la famille paie réellement :
-            // un emploi offert y apparaît à 0 DA et le dit en toutes lettres.
-            label: offered ? `${subLabel(subId)} (offert)` : subLabel(subId),
+            // Le bon d'inscription dit ce que la famille paie RÉELLEMENT : un
+            // emploi offert y apparaît à 0 DA et le dit en toutes lettres, un
+            // emploi réduit y apparaît à SON tarif réduit — celui que la
+            // caisse réclamera — et le dit aussi.
+            label: offered
+              ? `${subLabel(subId)} (offert)`
+              : reduced
+                ? `${subLabel(subId)} (réduction)`
+                : subLabel(subId),
             monthSeances: cycleSizeOf(sub),
-            unitPrice: offered ? 0 : sub?.pricePerSession ?? 0,
+            unitPrice: offered ? 0 : studentListPrice(student, sub),
             sold: offered ? 0 : positiveMoney(solds[subId] || 0),
             monthCode: joinPointOf(subId).monthCode,
           };
@@ -802,8 +1100,24 @@ function StudentFiche({
     }
   };
 
+  /** L'emploi du temps dont l'alerte attend une réponse — le premier de la file. */
+  const asking = reductionAsk.find((id) => subIds.includes(id));
+  const askingSub = asking ? subscriptions.find((x) => x.id === asking) : undefined;
+
   return (
     <>
+      {/* « Réduction sur cet emploi du temps ? » — posée à chaque emploi coché,
+          et tant qu'elle n'a pas de réponse, l'emploi n'en porte aucune. */}
+      {asking && (
+        <ReductionAsk
+          key={asking}
+          label={subLabel(asking)}
+          seancePrice={askingSub?.pricePerSession ?? 0}
+          schoolPart={schoolPerSeanceOf(askingSub)}
+          teacherPart={teacherPerSeanceOf(askingSub)}
+          onAnswer={(active) => answerReductionAsk(asking, active)}
+        />
+      )}
       <Modal open onClose={onClose} title={isEdit ? "Modifier l'élève" : "Nouvel élève"} wide>
         <div className="space-y-4">
           {/* identity */}
@@ -897,7 +1211,7 @@ function StudentFiche({
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() => setStudentCase(opt.value)}
+                  onClick={() => pickCase(opt.value)}
                   className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
                     studentCase === opt.value
                       ? "border-primary bg-primary text-white"
@@ -1095,53 +1409,38 @@ function StudentFiche({
               </div>
             )}
 
-            {studentCase === "reduction" && (
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  {(["percent", "amount"] as DiscountType[]).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setCaseRedType(t)}
-                      className={`flex-1 rounded-lg border px-2 py-1 text-[11px] font-semibold ${
-                        caseRedType === t
-                          ? "border-primary bg-primary text-white"
-                          : "border-line bg-surface text-ink"
-                      }`}
-                    >
-                      {t === "percent" ? "Pourcentage (%)" : "Montant fixe (DA)"}
-                    </button>
-                  ))}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold text-muted">
-                      Part école ({caseRedType === "percent" ? "%" : "DA"})
-                    </label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      value={caseRedSchool || ""}
-                      onChange={(e) => setCaseRedSchool(Math.max(0, Number(e.target.value) || 0))}
-                      placeholder="0"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold text-muted">
-                      Part enseignant ({caseRedType === "percent" ? "%" : "DA"})
-                    </label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      value={caseRedTeacher || ""}
-                      onChange={(e) => setCaseRedTeacher(Math.max(0, Number(e.target.value) || 0))}
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-              </div>
+            {/* -----------------------------------------------------------
+                 « RÉDUCTION » — PLUS AUCUNE REMISE GÉNÉRALE.
+
+                 La remise se coche EMPLOI DU TEMPS PAR EMPLOI DU TEMPS, comme
+                 la gratuité et « école seulement ». Chaque emploi coché plus
+                 bas pose sa question ; sans réponse, il se calcule normalement.
+                 ----------------------------------------------------------- */}
+            {isReduction && (
+              <p className="rounded-lg bg-warning/10 p-2 text-[10px] leading-relaxed text-muted">
+                La réduction se règle{" "}
+                <strong className="text-ink">emploi du temps par emploi du temps</strong> : à chaque
+                emploi coché plus bas, l&apos;écran demande si la réduction s&apos;y applique.
+                Répondez <strong className="text-ink">non</strong> et tout s&apos;y calcule
+                normalement — tarif entier pour la famille, part entière pour l&apos;enseignant.
+                Répondez <strong className="text-warning">oui</strong> et vous saisissez, pour cet
+                emploi-là, <strong className="text-ink">la part de l&apos;école</strong> et{" "}
+                <strong className="text-ink">la part de l&apos;enseignant</strong> : chacun retire la
+                sienne de sa propre part, et la famille ne verse que ce qui reste.
+                {subIds.length > 0 && (
+                  <>
+                    {" "}
+                    <strong className="text-warning">
+                      {reducedSubIds.length} emploi(s) réduit(s)
+                    </strong>{" "}
+                    ·{" "}
+                    <strong className="text-ink">
+                      {subIds.length - reducedSubIds.length} normal(aux)
+                    </strong>
+                    .
+                  </>
+                )}
+              </p>
             )}
           </div>
 
@@ -1200,6 +1499,19 @@ function StudentFiche({
                   const paid = solds[subId] || 0;
                   const seances = unit > 0 ? Math.floor(paid / unit) : 0;
                   const point = joinPointOf(subId);
+                  /** LA RÉDUCTION DE CET EMPLOI DU TEMPS, et ce qu'elle donne. */
+                  const reduced = reductionOn(subId);
+                  const red = subReductions[subId];
+                  const redType: DiscountType = red?.type ?? "percent";
+                  const redSchool = red?.schoolValue ?? 0;
+                  const redTeacher = red?.teacherValue ?? 0;
+                  const schoolPart = schoolPerSeanceOf(sub);
+                  const teacherPart = teacherPerSeanceOf(sub);
+                  // Les chiffres annoncés passent par les MÊMES calculs que la
+                  // caisse et la paie : l'écran ne promet jamais autre chose.
+                  const reducedSchool = studentSchoolPerSeance(ficheStudent, sub);
+                  const reducedTeacher = studentTeacherPerSeance(ficheStudent, sub);
+                  const reducedUnit = studentListPrice(ficheStudent, sub);
                   return (
                     <div
                       key={subId}
@@ -1231,7 +1543,13 @@ function StudentFiche({
                           </Badge>
                         </div>
                         <button
-                          onClick={() => setSubIds(subIds.filter((id) => id !== subId))}
+                          onClick={() => {
+                            setSubIds(subIds.filter((id) => id !== subId));
+                            // L'emploi s'en va : sa réduction et sa question
+                            // s'en vont avec lui.
+                            clearReduction(subId);
+                            setReductionAsk((prev) => prev.filter((id) => id !== subId));
+                          }}
                           className="shrink-0 text-muted hover:text-danger"
                           title="Retirer cet emploi du temps"
                         >
@@ -1326,6 +1644,148 @@ function StudentFiche({
                             </span>
                           </span>
                         </label>
+                      )}
+
+                      {/* -------------------------------------------------
+                           LA RÉDUCTION DE CET EMPLOI DU TEMPS.
+
+                           Elle n'est JAMAIS active d'office : l'alerte posée à
+                           la coche décide, et tant qu'elle n'est pas activée,
+                           cet emploi se calcule comme celui de n'importe quel
+                           élève — tarif entier pour la famille, part entière
+                           pour l'enseignant. Activée, elle porte SA part école
+                           et SA part enseignant, et l'écran annonce aussitôt ce
+                           que la famille versera et ce que l'enseignant
+                           touchera pour cet emploi-là.
+                           ------------------------------------------------- */}
+                      {isReduction && (
+                        <div
+                          className={`mt-2 rounded-lg border px-2.5 py-1.5 ${
+                            reduced ? "border-warning/50 bg-warning/10" : "border-line bg-canvas/40"
+                          }`}
+                        >
+                          <label className="flex cursor-pointer items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={reduced}
+                              onChange={() => toggleReduction(subId)}
+                              className="mt-0.5 h-4 w-4 shrink-0"
+                            />
+                            <span className="min-w-0">
+                              <strong
+                                className={`flex items-center gap-1 text-[11px] ${
+                                  reduced ? "text-warning" : "text-ink"
+                                }`}
+                              >
+                                <Percent className="h-3 w-3" />
+                                {reduced
+                                  ? "RÉDUCTION ACTIVE sur cet emploi du temps"
+                                  : "Réduction INACTIVE — calcul normal"}
+                              </strong>
+                              <span className="block text-[9px] leading-relaxed text-muted">
+                                {reduced ? (
+                                  <>
+                                    L&apos;école retire sa part de{" "}
+                                    <strong className="text-ink">{formatDA(schoolPart)}</strong>,
+                                    l&apos;enseignant la sienne de{" "}
+                                    <strong className="text-ink">{formatDA(teacherPart)}</strong>.
+                                  </>
+                                ) : (
+                                  <>
+                                    La famille paie{" "}
+                                    <strong className="text-ink">{formatDA(listUnit)}</strong> la
+                                    séance et l&apos;enseignant touche{" "}
+                                    <strong className="text-ink">{formatDA(teacherPart)}</strong>,
+                                    comme pour un élève ordinaire.
+                                  </>
+                                )}
+                              </span>
+                            </span>
+                          </label>
+
+                          {reduced && (
+                            <div className="mt-2 space-y-2 border-t border-warning/30 pt-2">
+                              <div className="flex gap-2">
+                                {(["percent", "amount"] as DiscountType[]).map((t) => (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() => patchReduction(subId, { type: t })}
+                                    className={`flex-1 rounded-lg border px-2 py-1 text-[10px] font-semibold ${
+                                      redType === t
+                                        ? "border-primary bg-primary text-white"
+                                        : "border-line bg-surface text-ink"
+                                    }`}
+                                  >
+                                    {t === "percent" ? "Pourcentage (%)" : "Montant fixe (DA)"}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                                    Part école ({redType === "percent" ? "%" : "DA"})
+                                  </label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min={0}
+                                    value={redSchool || ""}
+                                    onChange={(e) =>
+                                      patchReduction(subId, {
+                                        schoolValue: Math.max(0, Number(e.target.value) || 0),
+                                      })
+                                    }
+                                    placeholder="0"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                                    Part enseignant ({redType === "percent" ? "%" : "DA"})
+                                  </label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min={0}
+                                    value={redTeacher || ""}
+                                    onChange={(e) =>
+                                      patchReduction(subId, {
+                                        teacherValue: Math.max(0, Number(e.target.value) || 0),
+                                      })
+                                    }
+                                    placeholder="0"
+                                  />
+                                </div>
+                              </div>
+                              {/* CE QUE ÇA DONNE, EN DINARS — le chiffre que la
+                                  caisse réclamera et celui que la paie versera. */}
+                              <p
+                                className={`rounded-lg p-2 text-[10px] leading-relaxed ${
+                                  redSchool > 0 || redTeacher > 0
+                                    ? "bg-success/10 text-success"
+                                    : "bg-danger/10 text-danger"
+                                }`}
+                              >
+                                {redSchool > 0 || redTeacher > 0 ? (
+                                  <>
+                                    La famille paiera <strong>{formatDA(reducedUnit)}</strong> la
+                                    séance au lieu de {formatDA(listUnit)} · l&apos;école garde{" "}
+                                    <strong>{formatDA(reducedSchool)}</strong> (au lieu de{" "}
+                                    {formatDA(schoolPart)}) · l&apos;enseignant touche{" "}
+                                    <strong>{formatDA(reducedTeacher)}</strong> (au lieu de{" "}
+                                    {formatDA(teacherPart)}). Son mois revient à{" "}
+                                    <strong>{formatDA(reducedUnit * cycleSizeOf(sub))}</strong>.
+                                  </>
+                                ) : (
+                                  <>
+                                    Réduction activée mais à zéro : elle ne retire rien. Indiquez
+                                    une part, ou décochez-la pour revenir au calcul normal.
+                                  </>
+                                )}
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       <div className="mt-2 flex flex-wrap items-end gap-2">

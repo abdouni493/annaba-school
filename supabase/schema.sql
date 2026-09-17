@@ -911,7 +911,17 @@ create table if not exists public.students (
   student_case           text check (student_case in ('normal','special','teacher_child','reduction','school_only')),
   free_subscription_ids  jsonb,                 -- cas spécial : les abonnements OFFERTS (null = tous)
   teacher_father_id      text references public.teachers (id) on delete set null,
+  -- La remise GÉNÉRALE des fiches d'avant : une seule, valable sur tous les
+  -- emplois du temps. Elle ne se saisit plus (voir `subscription_reductions`),
+  -- mais elle reste lue tant qu'une fiche n'a pas été rouverte.
   case_reduction         jsonb,                 -- remise partagée école / enseignant
+  -- « RÉDUCTION », EMPLOI PAR EMPLOI : { "<subscription_id>": {type, schoolValue,
+  -- teacherValue} }. L'emploi qui n'y figure pas se calcule NORMALEMENT — tarif
+  -- entier pour la famille, part entière pour l'enseignant ; celui qui y figure
+  -- porte SA remise, l'école retirant la sienne de sa part et l'enseignant la
+  -- sienne de la sienne. NULL = fiche d'avant, pilotée par `case_reduction`
+  -- seule ; une table PRÉSENTE fait foi, même vide (= aucun emploi réduit).
+  subscription_reductions jsonb,
   unpaid_teacher_ids     jsonb,                 -- school_only : enseignants NON payés
   -- « École seulement », EMPLOI PAR EMPLOI : les abonnements sur lesquels
   -- l'option est ACTIVE (la famille n'y verse que la part de l'école,
@@ -953,6 +963,9 @@ create index if not exists students_rfid_key
 -- emploi du temps : « M2 » + 2 = inscrit au 2e mois de l'emploi, sur sa 3e
 -- séance (index 0). Les séances tenues avant lui ne sont pas les siennes, et
 -- les mois précédents ne le comptent pas. Absent = M1 · séance 1.
+comment on column public.students.subscription_reductions is
+  'Réduction PAR EMPLOI DU TEMPS : {"<subscription_id>":{type,schoolValue,teacherValue}} — un emploi absent de la table se calcule normalement (tarif entier, part enseignant entière). NULL = fiche d''avant, pilotée par case_reduction seule.';
+
 comment on column public.students.subscription_dates is
   'Par abonnement : {subscribedAt,startDate,expiryDate,plan,joinMonthCode,joinSlotIndex} — joinMonthCode/joinSlotIndex = le mois et la séance où l''élève entre dans le groupe';
 

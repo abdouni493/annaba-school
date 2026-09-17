@@ -60,6 +60,7 @@ import {
   sessionTitleOf,
   sessionTimeLabel,
   studentCaseLabel,
+  studentCaseLabelFor,
   studentDebtSummary,
   studentHasDebt,
   studentListPrice,
@@ -354,13 +355,17 @@ function emptyMonthStudent(
   rates: { listPrice: number; schoolPerSeance: number; teacherPerSeance: number },
   /** CET emploi du temps lui est-il offert ? */
   free: boolean,
+  /** l'emploi du temps de la ligne — le cas se lit SUR CET EMPLOI-LÀ */
+  subscriptionId?: string,
 ): TeacherMonthStudent {
   return {
     studentId: student.id,
     name: studentName(student),
     registrationNumber: registrationNumberOf(db, student),
     phone: student.phone,
-    caseLabel: studentCaseLabel(student),
+    // La réduction se coche emploi par emploi : le badge ne promet une remise
+    // que là où elle s'applique vraiment, sinon la paie se lit à l'envers.
+    caseLabel: studentCaseLabelFor(student, subscriptionId),
     caseKind: student.studentCase ?? "normal",
     isTeacherChild: student.studentCase === "teacher_child",
     isFree: free,
@@ -841,6 +846,7 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
         teacherPerSeance: studentTeacherPerSeance(st, sub, session.teacherId),
       },
       isFreeSub(st, sub?.id),
+      sub?.id,
     );
 
     const cycle = cycles[index];

@@ -75,6 +75,8 @@ import {
   sessionSalleOn,
   sessionTimeLabel,
   soldFor,
+  caseReductionLabel,
+  reductionForSub,
   studentCaseLabel,
   studentCaseTone,
   isFreeSub,
@@ -120,6 +122,11 @@ interface SituationRow {
   /** cet emploi du temps lui est OFFERT (la gratuité se coche module par
    *  module : les autres restent payants) */
   offered: boolean;
+  /** la RÉDUCTION cochée sur CET emploi du temps — vide s'il n'y en a pas
+   *  (la remise se coche emploi par emploi : les autres se calculent
+   *  normalement, tarif entier pour la famille et part entière pour
+   *  l'enseignant) */
+  reductionLabel: string;
   done: number;
   presents: number;
   absents: number;
@@ -273,6 +280,7 @@ export function StudentSituationModal({
         slots,
         unitPrice: studentListPrice(student, sub),
         offered: isFreeSub(student, subId),
+        reductionLabel: caseReductionLabel(reductionForSub(student, subId)),
         done: cycle.done,
         presents: slots.filter((a) => a.status === "present" || a.status === "late").length,
         absents: slots.filter((a) => a.status === "absent").length,
@@ -796,6 +804,15 @@ export function StudentSituationModal({
                                 <>séance à {formatDA(r.unitPrice)}</>
                               )}
                             </span>
+                            {/* LA RÉDUCTION DE CET EMPLOI DU TEMPS — elle se
+                                coche emploi par emploi, donc elle se lit ici,
+                                sur la ligne de l'emploi qui la porte, et non
+                                sur la fiche entière. */}
+                            {r.reductionLabel && (
+                              <Badge tone="warning" className="mt-0.5 text-[9px]">
+                                Réduction · {r.reductionLabel}
+                              </Badge>
+                            )}
                             {!r.active && (
                               <Badge tone="warning" className="mt-0.5 gap-1 text-[9px]">
                                 <UserMinus className="h-2.5 w-2.5" /> désinscrit

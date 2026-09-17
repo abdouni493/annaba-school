@@ -114,7 +114,9 @@ import {
   slotCountFor,
   soldFor,
   soldStatus,
+  hasReductionOnSub,
   studentCaseLabel,
+  studentCaseLabelFor,
   studentCaseTone,
   studentListPrice,
   studentMatches,
@@ -518,6 +520,25 @@ export function PresenceSheet({
       message: `Entre en ${res.monthCode ?? monthCode} · séance ${(res.slotIndex ?? 0) + 1} — aucune fiche à ressaisir.`,
       studentName: studentName(student),
     });
+    /**
+     * UN « CAS RÉDUCTION » ARRIVE ICI SANS RÉDUCTION.
+     *
+     * La remise se coche emploi du temps par emploi du temps, et cet
+     * emploi-ci n'a jamais reçu de réponse : il se calcule donc NORMALEMENT —
+     * tarif entier pour la famille, part entière pour l'enseignant. C'est le
+     * bon défaut, mais il doit être DIT, sinon la réduction paraîtrait
+     * simplement oubliée.
+     */
+    if (student.studentCase === "reduction" && !hasReductionOnSub(student, sub.id)) {
+      addToast({
+        type: "info",
+        title: "Réduction inactive sur cet emploi du temps",
+        message:
+          "Cet élève est un « cas réduction », mais aucune remise n'est accordée sur cet emploi " +
+          "du temps : tout s'y calcule normalement. Ouvrez sa fiche pour lui en accorder une.",
+        studentName: studentName(student),
+      });
+    }
   };
 
   // ---- marking the WHOLE list at once ------------------------------------
@@ -746,7 +767,9 @@ export function PresenceSheet({
               i < lead ? null : (slots[i - lead]?.status ?? null),
             ),
             sold: soldFor(db, st.id, sub.id),
-            caseLabel: studentCaseLabel(st),
+            // Le cas se lit SUR CET EMPLOI DU TEMPS : une réduction cochée
+            // ailleurs n'a rien à faire sur la feuille de celui-ci.
+            caseLabel: studentCaseLabelFor(st, sub.id),
             previousDebt: prevDebt,
             otherDebt: studentSoldDebtRows(db, st.id)
               .filter((r) => r.subscriptionId !== sub.id)
@@ -2720,7 +2743,9 @@ function StudentRow({
   const chargeDebt = studentChargeDebt(db, student.id);
   const advanceDebt = studentAdvanceDebt(db, student.id);
 
-  const caseLabel = studentCaseLabel(student);
+  // La gratuité, « école seule » et la réduction se cochent emploi par emploi :
+  // ce badge ne dit que ce qui vaut SUR CET EMPLOI DU TEMPS.
+  const caseLabel = studentCaseLabelFor(student, subscriptionId);
 
   const soldTone =
     status === "debt" ? "danger" : status === "empty" ? "warning" : status === "low" ? "warning" : "success";
