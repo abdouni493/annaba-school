@@ -91,7 +91,10 @@ import {
   studentChargesOf,
   studentCaseLabel,
   studentCaseTone,
+  studentListPrice,
   studentMatches,
+  caseReductionLabel,
+  reductionForSub,
   isFreeSub,
   studentFullyFree,
   studentSoldDebt,
@@ -507,7 +510,11 @@ export function StudentsPage() {
    *  speak in (they count séances, not dinars). */
   const seancesLeftFor = (student: Student) =>
     student.subscriptionIds.reduce((t, subId) => {
-      const unit = subscriptions.find((x) => x.id === subId)?.pricePerSession ?? 0;
+      // SON tarif à LUI sur cet emploi du temps : une réduction cochée ici, ou
+      // « école seule », fait durer le même solde plus longtemps. Compter au
+      // tarif affiché de l'emploi annoncerait moins de séances qu'il n'en a.
+      const sub = subscriptions.find((x) => x.id === subId);
+      const unit = studentListPrice(student, sub);
       const sold = soldFor(db, student.id, subId);
       return t + (unit > 0 ? Math.max(0, Math.floor(sold / unit)) : 0);
     }, 0);
@@ -521,7 +528,8 @@ export function StudentsPage() {
       // se coche module par module, donc la question se pose emploi par emploi.
       if (isFreeSub(student, subId)) return false;
       const sub = subscriptions.find((x) => x.id === subId);
-      const st = soldStatus(soldFor(db, student.id, subId), sub?.pricePerSession ?? 0);
+      // Au tarif de CET élève sur CET emploi du temps — réduction comprise.
+      const st = soldStatus(soldFor(db, student.id, subId), studentListPrice(student, sub));
       return st !== "ok";
     });
   };
@@ -970,7 +978,9 @@ export function StudentsPage() {
         teacherName: t ? `${t.firstName} ${t.lastName}` : "-",
         groupName: gr?.name ?? "-",
         salleName: sa?.name ?? "-",
-        price: sub?.pricePerSession ?? 0,
+        // Le tarif que la famille paie RÉELLEMENT sur cet emploi du temps :
+        // réduction cochée dessus et « école seule » comprises.
+        price: studentListPrice(stu, sub),
         schedule,
       };
     });
@@ -2214,7 +2224,11 @@ export function StudentsPage() {
                         const sub = subscriptions.find((x) => x.id === id);
                         const sold = soldFor(db, stu.id, id);
                         const offered = isFreeSub(stu, id);
-                        const st = offered ? "ok" : soldStatus(sold, sub?.pricePerSession ?? 0);
+                        // La réduction se coche emploi par emploi : la pastille
+                        // ne la signale que là où elle s'applique, et le solde
+                        // est jugé au tarif que CET élève paie sur CET emploi.
+                        const reduced = !!reductionForSub(stu, id);
+                        const st = offered ? "ok" : soldStatus(sold, studentListPrice(stu, sub));
                         const tone =
                           st === "debt" ? "danger" : st === "empty" || st === "low" ? "warning" : "success";
                         const month = currentCycleIndex(db, stu.id, id) + 1;
@@ -2222,6 +2236,7 @@ export function StudentsPage() {
                           <Badge key={id} tone={tone} className="text-[9px] px-1 py-0.5 whitespace-normal">
                             {getModuleLabel(id)} · M{month}
                             {offered ? " · offert" : ` · ${formatDA(sold)}`}
+                            {reduced ? " · réduit" : ""}
                           </Badge>
                         );
                       })}
@@ -2428,7 +2443,11 @@ export function StudentsPage() {
                         const sold = soldFor(db, selectedStudent.id, subId);
                         const st = isFreeSub(selectedStudent, subId)
                           ? "ok"
-                          : soldStatus(sold, sub.pricePerSession);
+                          : soldStatus(sold, studentListPrice(selectedStudent, sub));
+                        /** La réduction cochée sur CET emploi du temps — s'il y en a une. */
+                        const reductionHere = caseReductionLabel(
+                          reductionForSub(selectedStudent, subId),
+                        );
                         const cycles = enrollmentCycles(db, selectedStudent.id, subId);
                         const current = currentCycleIndex(db, selectedStudent.id, subId);
                         return (
@@ -2442,6 +2461,14 @@ export function StudentsPage() {
                               <div className="min-w-0">
                                 <strong className="block text-xs text-ink">
                                   {subscriptionTitleOf(db, subId)}
+                                  {/* LA RÉDUCTION DE CET EMPLOI DU TEMPS : elle se
+                                      coche emploi par emploi, donc elle se lit ici,
+                                      sur celui qui la porte. */}
+                                  {reductionHere && (
+                                    <Badge tone="warning" className="ml-1 text-[9px]">
+                                      Réduction · {reductionHere}
+                                    </Badge>
+                                  )}
                                   {/* SUPPRIMER UN EMPLOI DU TEMPS NE L'EFFACE PAS :
                                       il est archivé, et tout ce qu'il porte —
                                       présences, absences, dettes, paiements —

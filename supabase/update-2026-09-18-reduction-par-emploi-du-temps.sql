@@ -1,0 +1,167 @@
+-- =============================================================================
+--  MISE À JOUR — LA RÉDUCTION SE COCHE EMPLOI DU TEMPS PAR EMPLOI DU TEMPS
+--  Projet : https://jehpfbupmhbnbbkzhiwr.supabase.co
+--
+--  À exécuter dans le SQL Editor de Supabase. Le script est IDEMPOTENT : il ne
+--  contient qu'un « add column if not exists », son commentaire, et une
+--  reprise FACULTATIVE des fiches déjà en base. Le relancer ne casse rien et ne
+--  double aucun chiffre.
+--
+--  ---------------------------------------------------------------------------
+--  CE QUI CHANGE
+--  ---------------------------------------------------------------------------
+--  Un « cas réduction » ne portait qu'UNE remise, valable sur TOUS ses emplois
+--  du temps (`students.case_reduction`). Un élève qui suivait trois modules et
+--  ne devait être réduit que sur un seul était donc réduit sur les trois : la
+--  caisse réclamait trop peu, et les enseignants des deux autres modules
+--  étaient payés moins que ce qu'ils avaient réellement gagné.
+--
+--  La remise se règle désormais EMPLOI DU TEMPS PAR EMPLOI DU TEMPS, comme la
+--  gratuité (`free_subscription_ids`) et « école seulement »
+--  (`school_only_subscription_ids`) le font déjà. À chaque emploi coché, la
+--  fiche demande « réduction sur celui-ci ? » :
+--
+--    · NON  -> l'emploi N'EST PAS dans la table : tout s'y calcule NORMALEMENT,
+--              la famille paie le tarif entier et l'enseignant touche sa part
+--              entière, exactement comme pour un élève ordinaire ;
+--    · OUI  -> l'emploi porte SA remise, avec SA part école et SA part
+--              enseignant. L'école retire la sienne de SA part, l'enseignant
+--              la sienne de LA SIENNE, et la famille ne verse que ce qui reste.
+--
+--  ---------------------------------------------------------------------------
+--  CE QU'IL Y A DEDANS
+--  ---------------------------------------------------------------------------
+--   1. NOUVELLE COLONNE `students.subscription_reductions` (jsonb).
+--      C'est la seule chose du lot qui EXIGE d'être exécutée. Sans elle, la
+--      réduction saisie emploi par emploi ne serait jamais enregistrée : elle
+--      vivrait le temps de l'écran et disparaîtrait au rechargement.
+--
+--   2. PARTIE 2, FACULTATIVE — la reprise des fiches déjà en base. Elle rend
+--      la réduction EXPLICITE, emploi par emploi, sans changer un seul chiffre
+--      facturé. L'application s'en passe très bien (voir ci-dessous) : à ne
+--      lancer que si vous voulez voir tout de suite, sur chaque écran, quel
+--      emploi du temps porte quelle remise.
+--
+--  RIEN D'AUTRE NE DEMANDE DE COLONNE. Le calcul des paiements de l'élève, la
+--  part due à l'enseignant, la re-tarification des séances non encore réglées,
+--  les libellés des écrans et les documents imprimés sont entièrement côté
+--  application.
+--
+--  ---------------------------------------------------------------------------
+--  LES FICHES DÉJÀ EN BASE NE CHANGENT PAS DE SENS
+--  ---------------------------------------------------------------------------
+--  Une colonne `subscription_reductions` À NULL veut dire « fiche d'avant » :
+--  l'application retombe alors sur `case_reduction`, la remise générale, qui
+--  vaut sur tous ses emplois du temps — très exactement le sens qu'elle avait.
+--  Rien n'est donc à réparer, et un élève réduit hier est réduit de la même
+--  façon aujourd'hui.
+--
+--  Une table PRÉSENTE fait foi, MÊME VIDE : `{}` veut dire « aucun emploi
+--  réduit », et c'est une réponse, pas une absence de réponse. C'est ce que la
+--  fiche écrit dès qu'on la rouvre — elle y recopie d'abord la remise générale
+--  sur CHACUN des emplois du temps de l'élève, ceux qu'il a quittés compris
+--  (leurs dettes sont nées au tarif réduit), pour que ce qui était facturé
+--  hier le soit encore ; la réception retire ensuite la réduction des emplois
+--  qui ne doivent plus en porter.
+-- =============================================================================
+
+
+-- =============================================================================
+--  PARTIE 1 — LA COLONNE.  ⚠️ C'EST CELLE-CI QU'IL FAUT EXÉCUTER.
+-- =============================================================================
+
+alter table public.students
+  add column if not exists subscription_reductions jsonb;
+
+comment on column public.students.subscription_reductions is
+  'Réduction PAR EMPLOI DU TEMPS : {"<subscription_id>":{type,schoolValue,teacherValue}} — un emploi absent de la table se calcule normalement (tarif entier pour la famille, part entière pour l''enseignant). NULL = fiche d''avant, pilotée par case_reduction seule ; une table présente fait foi, même vide (= aucun emploi réduit).';
+
+
+-- =============================================================================
+--  PARTIE 2 — REPRISE DES FICHES DÉJÀ EN BASE.  ⚠️ FACULTATIVE.
+--
+--  RIEN N'OBLIGE À LA LANCER. Tant que `subscription_reductions` reste à NULL,
+--  l'application lit la remise générale et facture exactement comme hier.
+--
+--  CE QU'ELLE FAIT : pour chaque élève « réduction » qui porte encore une
+--  remise générale, elle recopie cette remise sur CHACUN de ses emplois du
+--  temps — ceux qu'il suit ET ceux qu'il a QUITTÉS, parce qu'une dette laissée
+--  derrière lui est née au tarif réduit et que la re-tarifer au tarif plein
+--  réclamerait à la famille plus qu'elle ne devait. C'est très exactement ce
+--  que l'écran « Modifier l'élève » écrit quand on rouvre une fiche : le
+--  script ne fait que le faire pour tout le monde d'un coup.
+--
+--  CE QU'ELLE CHANGE POUR L'ŒIL : la liste des élèves affiche « Réduction ·
+--  N emploi(s) » au lieu d'un « Réduction » muet, et chaque emploi du temps
+--  porte sa remise en toutes lettres. Aucun chiffre facturé ne bouge.
+--
+--  Décommentez le bloc pour l'exécuter. Il est idempotent : il ne touche que
+--  les fiches dont la table est encore à NULL.
+-- =============================================================================
+
+-- update public.students s
+--    set subscription_reductions = (
+--          select coalesce(jsonb_object_agg(sub_id, s.case_reduction), '{}'::jsonb)
+--            from (
+--                   -- les emplois du temps qu'il SUIT…
+--                   select value as sub_id
+--                     from jsonb_array_elements_text(coalesce(s.subscription_ids, '[]'::jsonb))
+--                   union
+--                   -- …et ceux qu'il a QUITTÉS, qui portent peut-être une dette
+--                   select e.subscription_id
+--                     from public.enrollments e
+--                    where e.student_id = s.id
+--                 ) as suivis
+--           where exists (select 1 from public.subscriptions x where x.id = suivis.sub_id)
+--        )
+--  where s.student_case = 'reduction'
+--    and s.case_reduction is not null
+--    and s.subscription_reductions is null;
+
+
+-- =============================================================================
+--  VÉRIFICATION — à lancer après le script, pour lire ce qu'il a fait.
+--
+--  Les trois requêtes rendent, dans l'ordre :
+--   1. « 1 » — la colonne existe bien ;
+--   2. les élèves « réduction », et d'où leur remise est lue aujourd'hui :
+--      « par emploi » (la nouvelle table) ou « générale (fiche d'avant) » ;
+--   3. le détail, emploi du temps par emploi du temps, des réductions
+--      réellement enregistrées — une ligne par emploi réduit.
+-- =============================================================================
+
+-- 1.
+-- select count(*) as colonne_reduction_par_emploi_ok
+--   from information_schema.columns
+--  where table_schema = 'public'
+--    and table_name   = 'students'
+--    and column_name  = 'subscription_reductions';
+
+-- 2.
+-- select s.registration_number,
+--        s.first_name || ' ' || s.last_name as eleve,
+--        case when s.subscription_reductions is null
+--             then 'générale (fiche d''avant)'
+--             else 'par emploi' end         as remise_lue_depuis,
+--        jsonb_array_length(coalesce(s.subscription_ids, '[]'::jsonb)) as emplois_suivis,
+--        coalesce((select count(*)
+--                    from jsonb_object_keys(coalesce(s.subscription_reductions, '{}'::jsonb))), 0)
+--                                            as emplois_reduits,
+--        s.case_reduction                    as remise_generale
+--   from public.students s
+--  where s.student_case = 'reduction'
+--  order by s.registration_number;
+
+-- 3.
+-- select s.registration_number,
+--        s.first_name || ' ' || s.last_name as eleve,
+--        ses.title                          as emploi_du_temps,
+--        r.value ->> 'type'                 as type_remise,
+--        (r.value ->> 'schoolValue')::numeric  as part_ecole,
+--        (r.value ->> 'teacherValue')::numeric as part_enseignant
+--   from public.students s
+--   cross join lateral jsonb_each(coalesce(s.subscription_reductions, '{}'::jsonb)) as r
+--   left join public.subscriptions    sub on sub.id = r.key
+--   left join public.schedule_sessions ses on ses.id = sub.session_id
+--  where s.student_case = 'reduction'
+--  order by s.registration_number, ses.title;

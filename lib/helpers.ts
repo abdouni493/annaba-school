@@ -3,6 +3,7 @@ import { money, positiveMoney, formatDA } from "@/lib/utils";
 import { DAYS } from "@/lib/types";
 import type {
   AttendanceRecord,
+  CaseReduction,
   CoursLevel,
   Day,
   DayTime,
@@ -690,22 +691,85 @@ export function paidSubIdsOf(student: Student | undefined): string[] {
   return (student!.subscriptionIds ?? []).filter((id) => !list.includes(id));
 }
 
+// ---- « Réduction » : la remise se coche EMPLOI DU TEMPS PAR EMPLOI DU TEMPS
 /**
- * What ONE side of the split grants on a « cas réduction ».
+ * LA REMISE QUI S'APPLIQUE À CET EMPLOI DU TEMPS — ou aucune.
  *
- * The two values of `caseReduction` are independent: the school knocks
+ * La réduction se règle emploi par emploi, exactement comme la gratuité et
+ * « école seulement ». À chaque emploi coché, la réception répond « réduction
+ * sur celui-ci ? » : l'emploi qui n'est pas dans `subscriptionReductions` se
+ * calcule NORMALEMENT — tarif entier pour la famille, part entière pour
+ * l'enseignant — et celui qui y est porte SA remise, avec sa part école et sa
+ * part enseignant.
+ *
+ * Une fiche SANS table (`subscriptionReductions` absent) est une fiche d'avant :
+ * c'est alors la remise générale `caseReduction` qui vaut sur tous ses emplois,
+ * ce qui est très exactement le sens qu'elle avait. Une table PRÉSENTE fait
+ * foi, même vide : vide veut dire « aucun emploi réduit ».
+ */
+export function reductionForSub(
+  student: Student | undefined,
+  subscriptionId?: string,
+): CaseReduction | undefined {
+  if (!student || student.studentCase !== "reduction") return undefined;
+  const perSub = student.subscriptionReductions;
+  if (perSub) {
+    // Sans emploi du temps sous les yeux, aucune remise ne peut être nommée :
+    // la réduction n'existe plus que RATTACHÉE à un emploi.
+    if (!subscriptionId) return undefined;
+    const red = perSub[subscriptionId];
+    return red && (red.schoolValue > 0 || red.teacherValue > 0) ? red : undefined;
+  }
+  // Fiche d'avant : la remise générale valait partout.
+  const general = student.caseReduction;
+  return general && (general.schoolValue > 0 || general.teacherValue > 0) ? general : undefined;
+}
+
+/** CET emploi du temps porte-t-il une réduction pour CET élève ? */
+export function hasReductionOnSub(student: Student | undefined, subscriptionId?: string): boolean {
+  return !!reductionForSub(student, subscriptionId);
+}
+
+/** Les emplois du temps de l'élève sur lesquels une réduction est ACTIVE. */
+export function reducedSubIdsOf(student: Student | undefined): string[] {
+  if (!student || student.studentCase !== "reduction") return [];
+  const followed = student.subscriptionIds ?? [];
+  const perSub = student.subscriptionReductions;
+  if (!perSub) return student.caseReduction ? followed : [];
+  return followed.filter((id) => hasReductionOnSub(student, id));
+}
+
+/** Human label for a « cas réduction » on ONE emploi, e.g. « -50% / -10% ». */
+export function caseReductionLabel(reduction?: CaseReduction): string {
+  if (!reduction) return "";
+  const unit = reduction.type === "percent" ? "%" : " DA";
+  const school = Math.max(0, reduction.schoolValue || 0);
+  const teacher = Math.max(0, reduction.teacherValue || 0);
+  if (school <= 0 && teacher <= 0) return "";
+  return `école -${school}${unit} · enseignant -${teacher}${unit}`;
+}
+
+/**
+ * What ONE side of the split grants on a « cas réduction », SUR CET EMPLOI DU
+ * TEMPS.
+ *
+ * The two values of the reduction are independent: the school knocks
  * `schoolValue` off ITS part, the teacher knocks `teacherValue` off HIS. A
  * percentage applies to that side's part, a fixed amount is taken off it —
  * never below zero, and never more than the part itself.
+ *
+ * Un emploi du temps SANS réduction ne retire rien du tout : il se calcule
+ * comme celui de n'importe quel élève ordinaire.
  */
 export function caseReductionCut(
   student: Student | undefined,
   side: "school" | "teacher",
   part: number,
+  subscriptionId?: string,
 ): number {
   const base = positiveMoney(part || 0);
-  if (!student || student.studentCase !== "reduction" || base <= 0) return 0;
-  const red = student.caseReduction;
+  if (base <= 0) return 0;
+  const red = reductionForSub(student, subscriptionId);
   if (!red) return 0;
   const value = Math.max(0, side === "school" ? red.schoolValue || 0 : red.teacherValue || 0);
   if (value <= 0) return 0;
@@ -716,13 +780,14 @@ export function caseReductionCut(
 
 /**
  * What the SCHOOL actually keeps on one séance of this student: its part of the
- * split, minus the school's half of a « cas réduction ».
+ * split, minus the school's half of the « cas réduction » DE CET EMPLOI DU
+ * TEMPS (aucune sur un emploi non réduit).
  */
 export function studentSchoolPerSeance(student: Student | undefined, sub?: Subscription): number {
   // Un emploi du temps offert ne rapporte rien à l'école non plus.
   if (isFreeSub(student, sub?.id)) return 0;
   const part = schoolPerSeanceOf(sub);
-  return positiveMoney(part - caseReductionCut(student, "school", part));
+  return positiveMoney(part - caseReductionCut(student, "school", part, sub?.id));
 }
 
 // ---- « École seule » : l'option se coche EMPLOI DU TEMPS PAR EMPLOI DU TEMPS
@@ -764,9 +829,11 @@ export function schoolOnlySubIdsOf(student: Student | undefined): string[] {
 
 /**
  * What the TEACHER actually earns on one séance of this student: his part of
- * the split, minus his own half of a « cas réduction ». A « cas spécial » and an
- * « école seule » élève (SUR LES EMPLOIS OÙ L'OPTION EST ACTIVE) earn him
- * nothing — the same rule `teacherDueFor` writes on every présence.
+ * the split, minus his own half of the « cas réduction » DE CET EMPLOI DU TEMPS
+ * — rien du tout sur un emploi que la réception n'a pas réduit. A « cas
+ * spécial » and an « école seule » élève (SUR LES EMPLOIS OÙ L'OPTION EST
+ * ACTIVE) earn him nothing — the same rule `teacherDueFor` writes on every
+ * présence.
  */
 export function studentTeacherPerSeance(
   student: Student | undefined,
@@ -777,7 +844,7 @@ export function studentTeacherPerSeance(
   if (isFreeSub(student, sub.id)) return 0;
   if (isSchoolOnlySub(student, sub.id, teacherId)) return 0;
   const part = teacherSeanceShareOf(sub);
-  return positiveMoney(part - caseReductionCut(student, "teacher", part));
+  return positiveMoney(part - caseReductionCut(student, "teacher", part, sub.id));
 }
 
 /**
@@ -787,11 +854,13 @@ export function studentTeacherPerSeance(
  *  - an « école seule » élève pays only what the school keeps, because the
  *    teacher is deliberately not paid for him: charging him the full price
  *    would collect a teacher's share nobody is ever going to hand over;
- *  - a « cas réduction » élève pays the price MINUS the two halves of his
- *    reduction — the school grants its part, the teacher grants his, and the
- *    family only ever hands over what is left. `teacherDueFor` takes the very
- *    same teacher half off the part enseignant, so the two sides always add
- *    back up to what was actually paid.
+ *  - a « cas réduction » élève pays, SUR LES EMPLOIS DU TEMPS QUE LA RÉCEPTION
+ *    A RÉDUITS, the price MINUS the two halves of that emploi's reduction — the
+ *    school grants its part, the teacher grants his, and the family only ever
+ *    hands over what is left. `teacherDueFor` takes the very same teacher half
+ *    off the part enseignant, so the two sides always add back up to what was
+ *    actually paid. Sur ses AUTRES emplois du temps, il paie le tarif entier
+ *    comme n'importe qui.
  */
 export function studentListPrice(
   student: Student | undefined,
@@ -820,7 +889,10 @@ export function studentListPrice(
     const schoolPart = schoolPerSeanceOf(sub);
     return schoolPart > 0 ? schoolPart : base;
   }
-  if (student.studentCase === "reduction") {
+  // LA RÉDUCTION SE COCHE EMPLOI PAR EMPLOI : seul un emploi RÉDUIT sort du
+  // tarif ordinaire. Sur les autres, la famille paie le prix entier — c'est ce
+  // que la réception a répondu en ne cochant pas la réduction pour eux.
+  if (hasReductionOnSub(student, sub.id)) {
     // Sans répartition mensuelle, l'emploi ne porte pas de « part enseignant » :
     // `schoolPerSeanceOf` rend alors le prix entier et `teacherSeanceShareOf`
     // rend 0, si bien que seule la moitié « école » de la remise sort d'ici. La
@@ -842,7 +914,9 @@ export function studentMonthPrice(student: Student | undefined, sub?: Subscripti
   if (isSchoolOnlySub(student, sub.id)) {
     return positiveMoney(schoolMonthShareOf(sub));
   }
-  if (student?.studentCase === "reduction") {
+  // Un emploi RÉDUIT se paie séance par séance au tarif réduit ; un emploi que
+  // la réception n'a pas réduit garde le prix du mois de l'emploi du temps.
+  if (hasReductionOnSub(student, sub.id)) {
     return positiveMoney(studentListPrice(student, sub) * cycleSizeOf(sub));
   }
   return monthlyPriceOf(sub) || positiveMoney((sub.pricePerSession ?? 0) * cycleSizeOf(sub));
@@ -1101,7 +1175,7 @@ export function teacherSeanceRate(
   const teacher = db.teachers.find((t) => t.id === session?.teacherId);
   if (!teacher || teacher.paymentType !== "percentage") return 0;
   const gross = positiveMoney((positiveMoney(base) * (teacher.percentage ?? 0)) / 100);
-  return positiveMoney(gross - caseReductionCut(student, "teacher", gross));
+  return positiveMoney(gross - caseReductionCut(student, "teacher", gross, sub?.id));
 }
 
 /**
@@ -2340,8 +2414,19 @@ export function studentCaseLabel(student: Student): string {
     }
     case "teacher_child":
       return "Fils d'enseignant";
-    case "reduction":
+    case "reduction": {
+      // La réduction se coche emploi par emploi : une fiche partiellement
+      // réduite doit se lire comme telle, sinon la paie se lit à l'envers.
+      const perSub = student.subscriptionReductions;
+      if (perSub) {
+        const followed = student.subscriptionIds ?? [];
+        const active = followed.filter((id) => hasReductionOnSub(student, id)).length;
+        if (active < followed.length) {
+          return active > 0 ? `Réduction · ${active} emploi(s)` : "Réduction · aucun emploi";
+        }
+      }
       return "Réduction";
+    }
     case "school_only": {
       // L'option se coche emploi par emploi : une fiche partiellement activée
       // doit se lire comme telle, sinon la paie se lit à l'envers.
@@ -2360,6 +2445,27 @@ export function studentCaseLabel(student: Student): string {
     default:
       return "";
   }
+}
+
+/**
+ * LE CAS DE L'ÉLÈVE, LU SUR UN EMPLOI DU TEMPS PRÉCIS.
+ *
+ * Les trois cas détaillés — gratuité, « école seulement », réduction — se
+ * cochent emploi par emploi. Sur un écran qui ne parle QUE d'un emploi (la
+ * feuille de présence, la paie d'un enseignant, la fiche d'un groupe), le
+ * libellé général mentirait : un élève « Réduction » dont la remise n'est PAS
+ * active ici paie le tarif entier et rapporte sa part entière à l'enseignant.
+ * Ce libellé-ci ne dit donc que ce qui vaut POUR CET EMPLOI DU TEMPS.
+ */
+export function studentCaseLabelFor(student: Student, subscriptionId?: string): string {
+  if (subscriptionId && student.studentCase === "reduction") {
+    const red = reductionForSub(student, subscriptionId);
+    // Réduction NON active ici : il est un élève comme les autres sur cet
+    // emploi du temps, et le badge doit se taire plutôt que promettre une
+    // remise que ni la caisse ni la paie n'appliqueront.
+    return red ? `Réduction · ${caseReductionLabel(red)}` : "";
+  }
+  return studentCaseLabel(student);
 }
 
 /** Tone the case badge takes on the présence sheet. */

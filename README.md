@@ -542,15 +542,17 @@ M3 — au règlement suivant      -> la part de M2 réapparaît, débloquée,
 | **Normal** | le prix de la séance | sa part du mois ÷ séances | la sienne |
 | **Cas spécial** (gratuit) | rien **sur les emplois du temps offerts**, le prix plein sur les autres | rien sur les offerts | rien sur les offerts |
 | **École seule** | la seule part de l'école | tout ce qu'il verse | rien — et il **n'apparaît pas** sur la paie de cet enseignant |
-| **Réduction** | prix − les deux remises | sa part − sa remise | la sienne − sa remise |
+| **Réduction** | **sur les emplois du temps réduits** : prix − les deux remises ; le prix plein sur les autres | sa part − sa remise sur les emplois réduits | la sienne − sa remise sur les emplois réduits |
 | **Fils d'enseignant** | rien au comptoir | oui | sa scolarité est **retenue sur le salaire du père** |
 
 Une **réduction** se partage : l'école en accorde sa moitié sur *sa* part, l'enseignant la sienne
-sur *la sienne*, et l'élève ne paie donc que ce que les deux lui laissent.
+sur *la sienne*, et l'élève ne paie donc que ce que les deux lui laissent. Elle se coche **emploi
+du temps par emploi du temps** (voir juste après).
 
 ```
 mois à 2000 DA, 4 séances, l'école garde 800   ->  séance 500 = école 200 + enseignant 300
 réduction 50% école / 10% enseignant           ->  séance 370 = école 100 + enseignant 270
+sur un emploi du temps NON réduit              ->  séance 500 = école 200 + enseignant 300
 ```
 
 ### La gratuité se coche emploi du temps par emploi du temps
@@ -574,6 +576,46 @@ le module payant lui rapporte sa part comme pour n'importe quel élève.
 
 Un cas spécial dont **au moins un** emploi du temps reste payant doit les **frais d'inscription** ;
 celui dont tout est offert n'en doit aucun.
+
+### La réduction aussi se coche emploi du temps par emploi du temps
+
+Il n'y a **plus de remise générale**. La réception coche l'élève en **Réduction**, puis, à **chaque**
+emploi du temps qu'elle lui coche, l'écran **pose la question** :
+
+> **Réduction sur cet emploi du temps ?**
+> *Non* — la réduction reste **inactive** ici : tout s'y calcule normalement.
+> *Oui* — vous saisissez, pour cet emploi-là, **la part de l'école** et **la part de l'enseignant**.
+
+| La réponse | L'élève paie | L'école garde | L'enseignant touche |
+| ---------- | ------------ | ------------- | ------------------- |
+| **Non** (par défaut) | le prix entier de la séance | sa part entière | la sienne, entière |
+| **Oui** | prix − les deux remises **de cet emploi** | sa part − **sa** remise | la sienne − **sa** remise |
+
+Chaque emploi du temps porte donc **sa propre** remise, en pourcentage ou en dinars, avec deux
+valeurs indépendantes — l'école accorde la sienne sur *sa* part, l'enseignant la sienne sur *la
+sienne*. Un même enfant peut être réduit de 50 % / 10 % en maths, de 1 000 DA en physique et payer
+l'anglais au tarif entier, sans qu'il faille lui créer trois fiches.
+
+```
+maths    réduction 50% école / 10% enseignant  ->  séance 370 = école 100 + enseignant 270
+anglais  pas de réduction                      ->  séance 500 = école 200 + enseignant 300
+```
+
+Le choix se lit **partout où l'argent se lit** : le prix retiré du solde à la présence, le tarif du
+mois proposé au guichet, le bon d'inscription, la « situation d'un élève », les pastilles de sa
+carte — et la **paie de l'enseignant**, où l'emploi réduit ne lui verse que sa part diminuée
+pendant que ses autres emplois lui versent sa part entière. Le badge « Réduction » n'apparaît que
+sur les écrans de l'emploi du temps **qui la porte** : sur les autres, l'élève est un élève comme
+les autres.
+
+> Une fiche **déjà en base** n'a pas de table par emploi : sa **remise générale** vaut alors sur
+> tous ses emplois du temps, exactement comme le cas se lisait avant. Rien à reprendre. La table
+> n'est écrite que le jour où la réception rouvre la fiche — l'écran y recopie d'abord la remise
+> générale sur chacun de ses emplois, pour que ce qui était facturé hier le soit encore, puis on
+> retire la réduction des emplois qui ne doivent plus en porter.
+>
+> Nouvelle colonne : **`students.subscription_reductions`**
+> (`supabase/update-2026-09-18-reduction-par-emploi-du-temps.sql`).
 
 ### Le fils d'enseignant peut payer AVANT son père
 
