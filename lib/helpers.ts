@@ -1298,6 +1298,30 @@ function attendanceOf(
   return index.get(`${studentId}|${sessionId}`) ?? [];
 }
 
+/**
+ * LES VERSEMENTS D'UN ÉLÈVE SUR UN EMPLOI DU TEMPS, indexés comme les
+ * présences : `soldFor` les relit une fois par élève et par emploi sur les
+ * listes, et balayer toute la table des paiements à chaque appel se paie aussi
+ * cher que de balayer celle des présences.
+ */
+const paymentIndex = new WeakMap<Payment[], Map<string, Payment[]>>();
+
+function paymentsOf(db: Database, studentId: string, subscriptionId: string): Payment[] {
+  let index = paymentIndex.get(db.payments);
+  if (!index) {
+    index = new Map<string, Payment[]>();
+    for (const pay of db.payments) {
+      if (!pay.subscriptionId) continue;
+      const key = `${pay.studentId}|${pay.subscriptionId}`;
+      const list = index.get(key);
+      if (list) list.push(pay);
+      else index.set(key, [pay]);
+    }
+    paymentIndex.set(db.payments, index);
+  }
+  return index.get(`${studentId}|${subscriptionId}`) ?? [];
+}
+
 /** Every attendance row of ONE student on ONE emploi, oldest first. */
 export function sessionAttendance(
   db: Database,
@@ -1557,17 +1581,52 @@ export function studentEnrollmentFor(
 }
 
 /**
- * Solde of ONE student on ONE emploi du temps.
+ * SOLDE D'UN ÉLÈVE SUR UN EMPLOI DU TEMPS : CE QU'IL Y A VERSÉ, MOINS CE QUE
+ * SES SÉANCES Y ONT COÛTÉ. Rien d'autre.
  *
- * C'est la cagnotte stockée sur l'inscription — MOINS les séances qui ont été
- * suivies sans être facturées (voir `unbilledSeanceTotal`). Les deux lignes que
- * la feuille de présence affiche côte à côte, « consommé » et « Solde de
- * l'emploi », partent donc du même calcul et ne peuvent plus se contredire.
- * Sur une inscription saine l'écart vaut zéro et le solde est celui d'avant.
+ * Il se LIT dans le même grand livre que les mois — les versements de cet
+ * emploi d'un côté, `seanceChargeOf` de chaque présence de l'autre — au lieu
+ * d'être recopié depuis le compteur `enrollments.balance`. Ce compteur reste
+ * tenu à jour (c'est lui que la base stocke et que les anciens écrans lisent),
+ * mais il ne décide plus de rien : une écriture qui l'avait manqué — une
+ * séance badgée avant que l'inscription n'ait sa ligne, une ligne d'inscription
+ * écrite deux fois, un encaissement tombé sur l'une et les présences sur
+ * l'autre — le faisait dériver, et la feuille de présence affichait alors
+ * « Versé 2 000 DA · consommé 2 000 DA · mois clos ✅ » ET « Solde de l'emploi :
+ * 2 000 DA dus » sur la même ligne, en réclamant à l'élève un argent qu'il
+ * avait déjà donné.
+ *
+ * Le grand livre, lui, ne peut pas se contredire : la somme des « reste » de
+ * tous les mois EST le solde de l'emploi, par construction.
  */
 export function soldFor(db: Database, studentId: string, subscriptionId: string): number {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  // Un tarif introuvable (emploi effacé d'une vieille base) : il ne reste que
+  // le compteur pour dire ce que l'élève avait dessus.
+  if (!sub) return money(enrollmentBalance(studentEnrollmentFor(db, studentId, subscriptionId)));
+  const student = db.students.find((s) => s.id === studentId);
+  let consumed = 0;
+  for (const rec of attendanceOf(db, studentId, sub.sessionId)) {
+    consumed += seanceChargeOf(db, rec, student, sub);
+  }
+  let credited = 0;
+  for (const pay of paymentsOf(db, studentId, subscriptionId)) {
+    credited += positiveMoney(pay.amountPaid || 0);
+  }
+  return money(credited - consumed);
+}
+
+/**
+ * L'ÉCART entre le compteur `enrollments.balance` et ce grand livre.
+ *
+ * Il vaut zéro sur une inscription saine. Ailleurs, c'est exactement ce que le
+ * script de réparation SQL réécrit dans la colonne
+ * (`supabase/update-2026-09-23-seance-du-jour-et-date-d-inscription.sql`) : de
+ * quoi mesurer la dérive depuis l'application avant de la corriger en base.
+ */
+export function soldDriftOf(db: Database, studentId: string, subscriptionId: string): number {
   const stored = enrollmentBalance(studentEnrollmentFor(db, studentId, subscriptionId));
-  return money(stored - unbilledSeanceTotal(db, studentId, subscriptionId));
+  return money(stored - soldFor(db, studentId, subscriptionId));
 }
 
 export type SoldStatus = "ok" | "low" | "empty" | "debt";
@@ -1579,11 +1638,22 @@ export function soldStatus(balance: number, unitPrice: number): SoldStatus {
   return "ok";
 }
 
-/** Everything a student owes across his emplois du temps (soldes in the red). */
+/**
+ * Everything a student owes across his emplois du temps (soldes in the red).
+ *
+ * Emploi par emploi, et par le MÊME grand livre que `soldFor` : le total
+ * annoncé sur sa fiche est donc exactement la somme des soldes que ses emplois
+ * affichent, sans qu'un compteur qui a dérivé puisse en inventer un de plus.
+ * Les emplois QUITTÉS comptent aussi — partir d'un groupe n'efface pas ce qu'on
+ * y devait.
+ */
 export function studentSoldDebt(db: Database, studentId: string): number {
-  return db.enrollments
-    .filter((e) => e.studentId === studentId)
-    .reduce((t, e) => t + Math.max(0, -enrollmentBalance(e)), 0);
+  const student = db.students.find((s) => s.id === studentId);
+  if (!student) return 0;
+  return studentSubscriptionHistory(db, student).reduce(
+    (t, subId) => t + Math.max(0, -soldFor(db, studentId, subId)),
+    0,
+  );
 }
 
 export const EXPIRY_WARNING_DAYS = 7;
@@ -1694,6 +1764,39 @@ export function unsubscribedAtOf(
   const student = db.students.find((s) => s.id === studentId);
   if (!student || student.subscriptionIds.includes(subscriptionId)) return undefined;
   return student.subscriptionDates?.[subscriptionId]?.unsubscribedAt;
+}
+
+/** Quand la réception a inscrit un élève sur un emploi du temps : le jour, et
+ *  l'heure si elle a été notée. */
+export interface InscriptionMoment {
+  /** YYYY-MM-DD — le jour qui décide de la séance rejointe */
+  date: string;
+  /** "HH:mm", vide tant que l'heure n'a jamais été saisie */
+  time: string;
+}
+
+export function inscriptionMomentOf(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+): InscriptionMoment {
+  const dates = db.students.find((s) => s.id === studentId)?.subscriptionDates?.[subscriptionId];
+  return {
+    date: dates?.subscribedAt || dates?.startDate || "",
+    time: dates?.subscribedTime || "",
+  };
+}
+
+/** « le 23/09/2026 à 14:05 » — l'heure ne s'écrit que si elle existe. */
+export function formatInscriptionMoment(moment: InscriptionMoment): string {
+  if (!moment.date) return "date inconnue";
+  return moment.time ? `${formatDateFr(moment.date)} à ${moment.time}` : formatDateFr(moment.date);
+}
+
+/** L'heure qu'il est, "HH:mm" — la valeur par défaut d'une inscription. */
+export function nowTime(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 /** One emploi du temps a student is behind on, for ONE of its months. */
@@ -2587,10 +2690,53 @@ export function sessionMonthDays(
 }
 
 /**
- * Where a student registered on `date` comes into an emploi du temps: the month
- * the GROUP is living, and the séance of that month held that day — the next
- * one when nothing has been pointed yet. Registering during M2 · séance 3 gives
- * exactly `{ monthCode: "M2", slotIndex: 2 }`.
+ * TOUTES LES SÉANCES QU'UN EMPLOI DU TEMPS A TENUES, du premier jour au
+ * dernier — un seul jour par séance, du plus ancien au plus récent.
+ *
+ * C'est la RÈGLE de l'emploi du temps : la séance n° 1 est sa première
+ * journée, la n° 5 sa cinquième, et un pack de 4 les découpe en M1, M2 … Le
+ * découpage ne dépend donc plus de « là où en est la majorité du groupe », qui
+ * bascule au mois suivant dès que la séance du jour est pointée : deux
+ * réceptions qui inscrivent le même élève avant et après le pointage écrivaient
+ * deux points d'entrée différents, et l'élève inscrit APRÈS se retrouvait sur
+ * le mois suivant — sa séance du jour n'existait nulle part.
+ *
+ * Une séance ANNULÉE n'a pas eu lieu : elle ne compte pas, exactement comme
+ * elle ne compte pas dans les mois.
+ */
+export function sessionSeanceDays(
+  db: Database,
+  subscriptionId: string,
+  /** l'élève qu'on inscrit : son propre historique ne décide pas où il entre */
+  exceptStudentId?: string,
+): string[] {
+  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+  if (!sub) return [];
+  const days = new Set<string>();
+  for (const rec of db.attendance) {
+    if (rec.sessionId !== sub.sessionId) continue;
+    if (rec.studentId === exceptStudentId) continue;
+    if (!consumesSeance(rec)) continue;
+    days.add(dayKeyOf(rec.timestamp));
+  }
+  return [...days].sort();
+}
+
+/**
+ * OÙ UN ÉLÈVE INSCRIT LE `date` ENTRE SUR UN EMPLOI DU TEMPS.
+ *
+ * On ne regarde pas ce que le groupe a consommé, on regarde LE CALENDRIER DE
+ * L'EMPLOI : la séance tenue ce jour-là est la n-ième de l'emploi depuis son
+ * ouverture, et c'est celle-là que le nouvel élève prend. Un pack de 4 séances
+ * la range alors en M(n/4) · séance (n%4).
+ *
+ *  - la séance du jour a déjà été pointée pour le groupe -> il la REJOINT
+ *    (avant, le mois du groupe avait déjà basculé et l'élève était poussé au
+ *    mois suivant : la séance du jour lui était refusée) ;
+ *  - rien n'a encore été pointé ce jour-là -> il prend la séance suivante,
+ *    c'est-à-dire précisément celle d'aujourd'hui ;
+ *  - une date PASSÉE -> il se range entre les séances de ce jour-là, si bien
+ *    qu'une inscription rétroactive suit les présences déjà écrites.
  */
 export function joinPointFor(
   db: Database,
@@ -2602,13 +2748,32 @@ export function joinPointFor(
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   if (!sub) return { monthCode: "M1", slotIndex: 0 };
   const size = cycleSizeOf(sub);
-  const code = sessionCurrentMonthCode(db, sub.sessionId, exceptStudentId);
-  const days = sessionMonthDays(db, subscriptionId, code, exceptStudentId);
+  const days = sessionSeanceDays(db, subscriptionId, exceptStudentId);
   const held = days.indexOf(date);
-  // Already pointed today: he joins THAT séance. Otherwise the next one.
-  const slot = held >= 0 ? held : days.length;
-  const offset = Math.max(0, monthOrder(code)) * size + slot;
+  // Déjà pointée ce jour-là : il prend CETTE séance. Sinon il se range juste
+  // après les séances qui la précèdent — la prochaine, ou celle du jour.
+  const offset = held >= 0 ? held : days.filter((d) => d < date).length;
   return { monthCode: `M${Math.floor(offset / size) + 1}`, slotIndex: offset % size };
+}
+
+/**
+ * LE MOIS AUQUEL APPARTIENT LA SÉANCE D'UN JOUR DONNÉ.
+ *
+ * La feuille de présence s'ouvre là-dessus — et non plus sur « le mois que vit
+ * la majorité du groupe ». Les deux disaient la même chose tant que la séance
+ * du jour n'était pas pointée ; une fois pointée, le vote basculait au mois
+ * suivant et la feuille du jour changeait de mois sous les doigts de la
+ * réception : la colonne qu'elle venait de cocher disparaissait, et un élève
+ * inscrit à cet instant n'avait plus de case du tout.
+ */
+export function sessionMonthCodeOn(db: Database, sessionId: string, date: string): string {
+  const sub = db.subscriptions.find((s) => s.sessionId === sessionId);
+  if (!sub) return "M1";
+  const size = cycleSizeOf(sub);
+  const days = sessionSeanceDays(db, sub.id);
+  const at = days.indexOf(date);
+  const index = at >= 0 ? at : days.filter((d) => d < date).length;
+  return `M${Math.floor(index / size) + 1}`;
 }
 
 /** The row written for ONE student on ONE emploi on ONE day, if any. */

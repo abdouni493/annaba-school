@@ -23,6 +23,11 @@ describe("corriger et supprimer un encaissement", () => {
     db.payments = [];
     db.cash = [];
     db.enrollments = db.enrollments.filter((e) => e.subscriptionId !== SUB);
+    // Le solde d'un emploi du temps, c'est ce qui y a été versé MOINS ce que
+    // ses séances ont coûté : on part donc d'un emploi vierge de présences,
+    // pour que ces tests ne mesurent que le mouvement de l'encaissement.
+    const session = db.subscriptions.find((x) => x.id === SUB)!.sessionId;
+    db.attendance = db.attendance.filter((a) => a.sessionId !== session);
     useData.setState(db);
   });
 

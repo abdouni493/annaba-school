@@ -957,17 +957,25 @@ create index if not exists students_rfid_key
 -- façon dont le cas se lisait avant d'être détaillé.
 
 -- Le bloc `subscription_dates` porte, abonnement par abonnement :
---   {subscribedAt, startDate, expiryDate, plan,
+--   {subscribedAt, subscribedTime, startDate, expiryDate, plan,
 --    joinMonthCode, joinSlotIndex}
+-- `subscribedAt` / `subscribedTime` sont le JOUR et l'HEURE de l'inscription —
+-- saisis à la création (déjà remplis à l'instant présent) et corrigeables après
+-- coup depuis la fiche de l'élève. C'est le JOUR qui décide de la séance
+-- rejointe : la séance tenue ce jour-là est la sienne, et reculer la date range
+-- l'élève entre les présences déjà écrites.
 -- `joinMonthCode` / `joinSlotIndex` sont le POINT D'ENTRÉE de l'élève sur cet
 -- emploi du temps : « M2 » + 2 = inscrit au 2e mois de l'emploi, sur sa 3e
--- séance (index 0). Les séances tenues avant lui ne sont pas les siennes, et
--- les mois précédents ne le comptent pas. Absent = M1 · séance 1.
+-- séance (index 0). Ils se lisent sur le CALENDRIER de l'emploi du temps — la
+-- séance tenue ce jour-là est la n-ième depuis son ouverture — et non sur le
+-- mois que vit la majorité du groupe. Les séances tenues avant lui ne sont pas
+-- les siennes, et les mois précédents ne le comptent pas.
+-- Absent = M1 · séance 1.
 comment on column public.students.subscription_reductions is
   'Réduction PAR EMPLOI DU TEMPS : {"<subscription_id>":{type,schoolValue,teacherValue}} — un emploi absent de la table se calcule normalement (tarif entier, part enseignant entière). NULL = fiche d''avant, pilotée par case_reduction seule.';
 
 comment on column public.students.subscription_dates is
-  'Par abonnement : {subscribedAt,startDate,expiryDate,plan,joinMonthCode,joinSlotIndex} — joinMonthCode/joinSlotIndex = le mois et la séance où l''élève entre dans le groupe';
+  'Par abonnement : {subscribedAt,subscribedTime,startDate,expiryDate,plan,joinMonthCode,joinSlotIndex} — subscribedAt/subscribedTime = le JOUR et l''HEURE de l''inscription (le jour décide de la séance rejointe) ; joinMonthCode/joinSlotIndex = le mois et la séance où l''élève entre dans le groupe';
 
 -- Mot de passe du portail, imprimé sur le reçu. Table réservée au personnel.
 create table if not exists public.student_credentials (

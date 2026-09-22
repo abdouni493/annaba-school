@@ -296,8 +296,8 @@ affichée**, pas à celle du jour.
 
 Un enfant inscrit en cours de route ne commence pas l'emploi du temps à sa séance 1 : il arrive
 **là où en est le groupe**. La fiche de création (tableau de bord, feuille de présence ou écran
-Élèves) lit le mois que vit le groupe et la séance tenue ce jour-là, puis l'écrit sur son
-inscription :
+Élèves) lit **le calendrier de l'emploi du temps** — la séance tenue ce jour-là est la n-ième
+depuis son ouverture — puis l'écrit sur son inscription :
 
 ```
 Groupe sur M2, 2 séances déjà tenues, on crée un élève aujourd'hui
@@ -315,6 +315,29 @@ même horloge — aucune part n'est due sur les mois d'avant son arrivée.
 Le point d'entrée est stocké sur l'inscription (`joinMonthCode`, `joinSlotIndex` dans
 `students.subscription_dates`). Une inscription qui ne le porte pas — toutes celles d'avant — se
 lit comme avant : **M1 · séance 1**.
+
+**La séance du jour est à lui, pointée ou non.** Le point d'entrée se lisait autrefois sur « le
+mois que vit la majorité du groupe ». Ce mois basculait dès que la séance du jour était pointée :
+un élève inscrit après le pointage du matin se retrouvait poussé au mois suivant, et la colonne du
+jour n'existait plus pour lui — impossible de lui mettre sa présence. C'est désormais le
+calendrier de l'emploi qui décide, si bien qu'inscrire **avant** ou **après** avoir pointé le
+groupe donne exactement le même résultat. La feuille de présence, elle, s'ouvre sur **le mois de
+la séance affichée** et non sur celui du groupe : la colonne qu'on vient de cocher ne s'échappe
+plus sous les doigts.
+
+### La date et l'heure d'une inscription
+
+La fiche de création propose la **date** et l'**heure** d'inscription déjà remplies — celles du
+jour — dans la section « Emplois du temps de l'élève ». On n'y touche que pour une inscription
+d'un autre jour ; le bouton **Maintenant** ramène à l'instant présent. C'est le **jour** qui place
+l'élève sur l'emploi du temps (une inscription à 14 h un mardi de 13 h → 15 h prend bien la séance
+du jour) ; l'heure est gardée sur sa fiche.
+
+Elles se **corrigent après coup** : fiche de l'élève ▸ **Voir détails** ▸ onglet **Emplois du
+temps** ▸ *Modifier la date*. L'écran annonce le point d'entrée avant d'enregistrer (« il entrera
+en M2 · séance 3 »), puis **ses présences, ses mois et son solde suivent** la nouvelle date —
+reculer l'inscription range l'élève entre les séances déjà tenues. Rien n'est effacé.
+L'heure vit dans `students.subscription_dates` sous la clé `subscribedTime`.
 
 ### Désinscrire un élève d'un groupe
 
@@ -861,6 +884,31 @@ gratuité (`students.school_only_subscription_ids`) :
 | option **inactive**  | le tarif entier          | payé normalement  | listé comme n'importe qui |
 
 Une fiche sans liste garde le comportement d'avant, piloté par `unpaid_teacher_ids`.
+
+## Le solde d'un emploi du temps, c'est son grand livre
+
+**Ce qui y a été versé, moins ce que ses séances ont coûté.** Rien d'autre, et surtout pas un
+compteur tenu à part : la ligne « Solde de l'emploi » de la feuille de présence et le tableau
+mois par mois (« Versé / Consommé / Reste ») lisent les **mêmes** écritures, si bien que le solde
+est, par construction, la **somme des « reste » de tous les mois**.
+
+Le symptôme qui a fait changer la règle : une même ligne affichait
+« Versé 2 000 DA · consommé 2 000 DA · mois clos ✅ » **et** « Solde de l'emploi : 2 000 DA dus ».
+L'élève avait suivi ses quatre séances puis payé, la paie de l'enseignant était juste — mais le
+compteur `enrollments.balance` avait manqué une écriture, et l'école réclamait un argent déjà
+donné. Ce compteur reste tenu à jour (c'est lui que la base stocke), il ne décide simplement plus
+de ce qui s'affiche.
+
+Trois trous ont été bouchés en même temps, pour qu'il cesse de dériver : un élève **inscrit mais
+qui n'a jamais rien versé** n'avait pas de ligne d'inscription, et ses séances — badgées ou
+pointées à la main — ne partaient alors d'aucun solde ; la ligne s'ouvre désormais au premier
+pointage, comme la feuille de présence le faisait déjà. Et deux pointages lancés coup sur coup ne
+peuvent plus créer **deux** lignes pour la même inscription, l'encaissement tombant sur l'une et
+les présences sur l'autre.
+
+Le script `supabase/update-2026-09-23-seance-du-jour-et-date-d-inscription.sql` liste les
+compteurs qui ont dérivé (lecture seule) puis les remet d'accord avec le grand livre. Il ne touche
+ni aux présences, ni aux paiements.
 
 ## Les retards de paiement — chaque mois reste indépendant
 

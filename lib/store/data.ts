@@ -912,6 +912,25 @@ interface DataActions {
     subscriptionId: string;
     /** the day he comes in on (defaults to today) */
     date?: string;
+    /** l'heure de l'inscription, "HH:mm" (par défaut, l'heure qu'il est) */
+    time?: string;
+  }) => Promise<{ ok: boolean; monthCode?: string; slotIndex?: number }>;
+  /**
+   * CORRIGER LA DATE ET L'HEURE D'UNE INSCRIPTION, APRÈS COUP.
+   *
+   * La réception se trompe de jour, ou crée la fiche le lendemain de la
+   * rentrée de l'élève. Changer la date ne se contente pas de réécrire une
+   * ligne : le POINT D'ENTRÉE est recalculé sur l'emploi du temps — l'élève se
+   * range entre les séances tenues ce jour-là — si bien que ses présences, ses
+   * mois et son solde suivent la nouvelle date.
+   */
+  setInscriptionMoment: (args: {
+    studentId: string;
+    subscriptionId: string;
+    /** YYYY-MM-DD */
+    date: string;
+    /** "HH:mm" — vide efface l'heure notée */
+    time?: string;
   }) => Promise<{ ok: boolean; monthCode?: string; slotIndex?: number }>;
   /**
    * Takes a student OFF one emploi du temps. His history stays untouched —
@@ -1137,6 +1156,50 @@ function enrollmentFor(
         (!e.expiryDate || e.expiryDate >= onDate),
     )
     .sort((a, b) => (a.startDate ?? "").localeCompare(b.startDate ?? ""))[0];
+}
+
+/**
+ * LA LIGNE D'INSCRIPTION D'UN ÉLÈVE SUR UN EMPLOI DU TEMPS — ouverte si elle
+ * n'existe pas encore.
+ *
+ * Un élève inscrit qui n'a JAMAIS rien versé n'a pas de ligne `enrollments` :
+ * ses séances étaient alors écrites avec leur prix sur la présence, mais rien
+ * n'était retiré d'aucun solde — l'emploi du temps affichait « consommé
+ * 2 000 DA » et un solde à zéro. Le badge, la feuille de présence et le
+ * pointage manuel passent donc tous par ici.
+ *
+ * La recherche et l'ajout se font DANS le même `set` : deux pointages lancés
+ * coup sur coup ne peuvent plus créer deux lignes pour la même inscription —
+ * ce que la base refuse (`unique (student_id, subscription_id)`) et qui faisait
+ * dériver le compteur, l'encaissement tombant sur l'une et les présences sur
+ * l'autre.
+ */
+function openEnrollment(
+  set: (fn: (state: DataStore) => Partial<DataStore>) => void,
+  student: Student,
+  sub: Subscription | undefined,
+): Enrollment | undefined {
+  if (!sub || !student.subscriptionIds.includes(sub.id)) return undefined;
+  let row: Enrollment | undefined;
+  set((state) => {
+    row = state.enrollments.find(
+      (e) => e.studentId === student.id && e.subscriptionId === sub.id,
+    );
+    if (row) return {};
+    row = {
+      id: uid("enr"),
+      studentId: student.id,
+      subscriptionId: sub.id,
+      paidSeances: 0,
+      consumedSeances: 0,
+      balance: 0,
+      startDate: student.subscriptionDates?.[sub.id]?.startDate,
+      monthSeances: cycleSizeOf(sub),
+      createdAt: new Date().toISOString(),
+    };
+    return { enrollments: [...state.enrollments, row] };
+  });
+  return row;
 }
 
 /** The free period covering that class on that day, if any. */
@@ -1679,7 +1742,18 @@ export const useData = create<DataStore>((set, get) => ({
     // what the présence sheet does, so a badge and a click can never disagree.
     // A student whose solde is already empty is still let in: it simply goes
     // into the red and the desk regularises it.
-    const consumes = !freeHere && !offered && !!enrollment?.enrollmentId;
+    //
+    // Celui qui n'a encore RIEN versé n'a pas de ligne d'inscription : elle
+    // s'ouvre ici, vide, comme la feuille de présence l'ouvre. Sans cela la
+    // séance était écrite à son prix et ne partait d'aucun solde — l'élève
+    // suivait le mois entier sans jamais rien devoir.
+    const billable = !freeHere && !offered;
+    const soldeRow = !billable
+      ? undefined
+      : enrollment?.enrollmentId
+        ? { id: enrollment.enrollmentId }
+        : openEnrollment(set, student, scannedSub);
+    const consumes = billable && !!soldeRow?.id;
     const before = enrollment?.remaining ?? 0;
     const outOfSeances = consumes && before <= 0;
     const remaining = consumes ? Math.max(0, before - 1) : Math.max(0, before);
@@ -1704,7 +1778,7 @@ export const useData = create<DataStore>((set, get) => ({
       };
       if (consumes) {
         patch.enrollments = state.enrollments.map((e) =>
-          e.id === enrollment!.enrollmentId
+          e.id === soldeRow!.id
             ? {
                 ...e,
                 consumedSeances: e.consumedSeances + 1,
@@ -1859,7 +1933,16 @@ export const useData = create<DataStore>((set, get) => ({
         ? new Date().toISOString()
         : new Date(`${date}T${startTimeOnDate(session, date)}:00`).toISOString();
 
-    const consumes = !freeHere && !offered && !!enrollment?.enrollmentId;
+    // Même règle qu'au badge : l'élève inscrit qui n'a encore rien versé
+    // reçoit ici sa ligne d'inscription, pour que la séance parte bien d'un
+    // solde au lieu de n'être retirée à personne.
+    const onTheSolde = !freeHere && !offered;
+    const soldeRow = !onTheSolde
+      ? undefined
+      : enrollment?.enrollmentId
+        ? { id: enrollment.enrollmentId }
+        : openEnrollment(set, student, markedSub);
+    const consumes = onTheSolde && !!soldeRow?.id;
     const before = enrollment?.remaining ?? 0;
     const outOfSeances = consumes && before <= 0;
     const remaining = consumes ? Math.max(0, before - 1) : Math.max(0, before);
@@ -1882,7 +1965,7 @@ export const useData = create<DataStore>((set, get) => ({
       const patch: Partial<DataStore> = { attendance: [...state.attendance, record] };
       if (consumes) {
         patch.enrollments = state.enrollments.map((e) =>
-          e.id === enrollment!.enrollmentId
+          e.id === soldeRow!.id
             ? {
                 ...e,
                 consumedSeances: e.consumedSeances + 1,
@@ -1955,24 +2038,10 @@ export const useData = create<DataStore>((set, get) => ({
     // A student enrolled on the emploi but who has never paid has no solde row
     // yet. He still has to be pointed — and his solde still has to go into the
     // red — so the row is opened here, empty, the first time he is marked.
-    let enrollment = sub
-      ? db.enrollments.find((e) => e.studentId === studentId && e.subscriptionId === sub.id)
-      : undefined;
-    if (!enrollment && sub && student.subscriptionIds.includes(sub.id)) {
-      enrollment = {
-        id: uid("enr"),
-        studentId,
-        subscriptionId: sub.id,
-        paidSeances: 0,
-        consumedSeances: 0,
-        balance: 0,
-        startDate: student.subscriptionDates?.[sub.id]?.startDate,
-        monthSeances: cycleSizeOf(sub),
-        createdAt: new Date().toISOString(),
-      };
-      const opened = enrollment;
-      set((state) => ({ enrollments: [...state.enrollments, opened] }));
-    }
+    const enrollment =
+      (sub
+        ? db.enrollments.find((e) => e.studentId === studentId && e.subscriptionId === sub.id)
+        : undefined) ?? openEnrollment(set, student, sub);
     const discount =
       enrollment?.discount ?? (sub ? student.subscriptionDiscounts?.[sub.id] : undefined);
     // « École seule » : il ne paie que la part de l'école, jamais celle de
@@ -4383,13 +4452,14 @@ export const useData = create<DataStore>((set, get) => ({
     };
   },
 
-  subscribeStudent: async ({ studentId, subscriptionId, date }) => {
+  subscribeStudent: async ({ studentId, subscriptionId, date, time }) => {
     const db = get();
     const student = db.students.find((s) => s.id === studentId);
     const sub = db.subscriptions.find((s) => s.id === subscriptionId);
     if (!student || !sub) return { ok: false };
 
     const day = date || dateKey(new Date());
+    const hour = (time ?? "").trim();
     const point = joinPointFor(db, subscriptionId, day, studentId);
 
     set((state) => ({
@@ -4404,8 +4474,14 @@ export const useData = create<DataStore>((set, get) => ({
                 ...st.subscriptionDates,
                 [subscriptionId]: {
                   ...st.subscriptionDates?.[subscriptionId],
-                  subscribedAt: st.subscriptionDates?.[subscriptionId]?.subscribedAt ?? day,
-                  startDate: st.subscriptionDates?.[subscriptionId]?.startDate ?? day,
+                  // Une date DONNÉE fait foi : c'est elle qu'on vient de
+                  // choisir, et c'est elle qui vient de placer le point
+                  // d'entrée. Sans date, l'ancienne est conservée.
+                  subscribedAt:
+                    date || st.subscriptionDates?.[subscriptionId]?.subscribedAt || day,
+                  subscribedTime:
+                    hour || st.subscriptionDates?.[subscriptionId]?.subscribedTime,
+                  startDate: date || st.subscriptionDates?.[subscriptionId]?.startDate || day,
                   joinMonthCode: point.monthCode,
                   joinSlotIndex: point.slotIndex,
                   // He is back on the roster: the old leaving date is history
@@ -4415,6 +4491,56 @@ export const useData = create<DataStore>((set, get) => ({
               },
             }
           : st,
+      ),
+      // La ligne de solde porte la même date de départ, pour que le badge et
+      // la feuille de présence lisent la même inscription.
+      enrollments: state.enrollments.map((e) =>
+        e.studentId === studentId && e.subscriptionId === subscriptionId
+          ? { ...e, startDate: date || e.startDate || day }
+          : e,
+      ),
+    }));
+
+    return { ok: true, monthCode: point.monthCode, slotIndex: point.slotIndex };
+  },
+
+  setInscriptionMoment: async ({ studentId, subscriptionId, date, time }) => {
+    const db = get();
+    const student = db.students.find((s) => s.id === studentId);
+    const sub = db.subscriptions.find((s) => s.id === subscriptionId);
+    if (!student || !sub) return { ok: false };
+    const day = (date || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { ok: false };
+    const hour = (time ?? "").trim();
+
+    // Le point d'entrée se relit sur le calendrier de l'emploi du temps à
+    // cette date-là : reculer l'inscription range l'élève entre les séances
+    // déjà tenues, et ses mois se recalculent d'eux-mêmes autour.
+    const point = joinPointFor(db, subscriptionId, day, studentId);
+
+    set((state) => ({
+      students: state.students.map((st) =>
+        st.id === studentId
+          ? {
+              ...st,
+              subscriptionDates: {
+                ...st.subscriptionDates,
+                [subscriptionId]: {
+                  ...st.subscriptionDates?.[subscriptionId],
+                  subscribedAt: day,
+                  subscribedTime: hour || undefined,
+                  startDate: day,
+                  joinMonthCode: point.monthCode,
+                  joinSlotIndex: point.slotIndex,
+                },
+              },
+            }
+          : st,
+      ),
+      enrollments: state.enrollments.map((e) =>
+        e.studentId === studentId && e.subscriptionId === subscriptionId
+          ? { ...e, startDate: day }
+          : e,
       ),
     }));
 

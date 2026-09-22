@@ -41,7 +41,7 @@ import {
   minutesOf,
   moduleName as moduleNameOf,
   salleName,
-  sessionCurrentMonthCode,
+  sessionMonthCodeOn,
   sessionTimesOn,
   studentName,
   teacherName,
@@ -114,11 +114,13 @@ export function AttendancePage() {
 
   const activeSession = daySessions.find((s) => s.id === activeSessionId);
 
-  // The sheet opens on the month the group is collectively living.
+  // La feuille s'ouvre sur LE MOIS DE LA SÉANCE DU JOUR AFFICHÉ — pas sur le
+  // mois que vit la majorité du groupe, qui bascule dès que la séance du jour
+  // est pointée et emporte la colonne qu'on vient de cocher.
   useEffect(() => {
-    if (activeSession) setMonth(sessionCurrentMonthCode(db, activeSession.id));
+    if (activeSession) setMonth(sessionMonthCodeOn(db, activeSession.id, sheetDate));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId]);
+  }, [activeSessionId, sheetDate]);
 
   const shiftDay = (days: number) => {
     const d = new Date(`${sheetDate}T12:00:00`);

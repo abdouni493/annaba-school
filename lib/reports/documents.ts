@@ -93,9 +93,16 @@ export interface InscriptionLine {
 
 export function inscriptionVoucherHtml(
   db: Database,
-  opts: { student: Student; lines: InscriptionLine[]; language: Language; registrationFee?: number },
+  opts: {
+    student: Student;
+    lines: InscriptionLine[];
+    language: Language;
+    registrationFee?: number;
+    /** le jour et l'heure de l'inscription, « 23/09/2026 à 14:05 » */
+    inscribedAt?: string;
+  },
 ): string {
-  const { student, lines, language, registrationFee = 0 } = opts;
+  const { student, lines, language, registrationFee = 0, inscribedAt } = opts;
   const total = lines.reduce((s, l) => s + l.sold, 0);
 
   const rows = lines
@@ -132,6 +139,7 @@ export function inscriptionVoucherHtml(
     <div class="summary-card">
       <h3>Récapitulatif</h3>
       <div class="summary-line"><span>Emplois du temps souscrits</span><strong>${lines.length}</strong></div>
+      ${inscribedAt ? `<div class="summary-line"><span>Inscrit le</span><strong>${esc(inscribedAt)}</strong></div>` : ""}
       ${registrationFee > 0 ? `<div class="summary-line"><span>Frais d'inscription</span><strong>${da(registrationFee)}</strong></div>` : ""}
       <div class="net-pay-box"><span>Total versé</span><span>${da(total)}</span></div>
     </div>
