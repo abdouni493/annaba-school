@@ -124,21 +124,37 @@ describe("un élève à jour sur son mois débloque la part, même s'il doit ail
       .addSold({ studentId: STU, subscriptionId: SUB, amount: 2000, monthCode: "M1" });
     for (const day of days) await attend(day);
 
-    // Un second emploi du temps, jamais réglé : son solde plonge dans le rouge.
-    useData.setState({
+    // Un second emploi du temps, jamais réglé : 4 séances suivies sans le
+    // moindre versement, donc un solde à −1 600 DA sur CET emploi-là.
+    const other = useData.getState().subscriptions.find((x) => x.id === "sub-2")!;
+    useData.setState((state) => ({
+      students: state.students.map((st) =>
+        st.id === STU ? { ...st, subscriptionIds: [...st.subscriptionIds, other.id] } : st,
+      ),
+      attendance: [
+        ...state.attendance,
+        ...days.map((day, i) => ({
+          id: `att-autre-${i}`,
+          studentId: STU,
+          sessionId: other.sessionId,
+          timestamp: `${day}T09:00:00.000Z`,
+          amountDeducted: 400,
+          status: "present" as const,
+        })),
+      ],
       enrollments: [
-        ...useData.getState().enrollments,
+        ...state.enrollments,
         {
           id: "enr-autre",
           studentId: STU,
-          subscriptionId: "sub-2",
+          subscriptionId: other.id,
           paidSeances: 0,
           consumedSeances: 4,
           balance: -1600,
           startDate: days[0],
         },
       ],
-    });
+    }));
     expect(studentHasDebt(useData.getState(), STU)).toBe(true);
 
     const row = openBoard("M1").students.find((r) => r.studentId === STU)!;

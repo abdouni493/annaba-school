@@ -62,7 +62,7 @@ import {
   minutesOf,
   moduleName as moduleNameOf,
   salleName,
-  sessionCurrentMonthCode,
+  sessionMonthCodeOn,
   sessionSalleIds,
   sessionSalleOn,
   sessionTimesOn,
@@ -346,9 +346,13 @@ function AdminDashboard() {
     const [yy, mm, dd] = openDate.split("-").map(Number);
     const d = new Date(yy, mm - 1, dd);
     d.setDate(d.getDate() + delta);
-    setOpenDate(
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-    );
+    const next = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate(),
+    ).padStart(2, "0")}`;
+    setOpenDate(next);
+    // Reculer d'un jour, c'est changer de séance : la feuille suit le mois de
+    // CETTE séance-là, au lieu de rester sur celui d'hier.
+    if (openSessionId) setMonth(sessionMonthCodeOn(db, openSessionId, next));
   };
 
   const openSheet = (s: ScheduleSession, on: string = date) => {
@@ -362,7 +366,9 @@ function AdminDashboard() {
       });
       return;
     }
-    setMonth(sessionCurrentMonthCode(db, s.id));
+    // Le mois de la séance DE CE JOUR-LÀ : la feuille ouvre sur la colonne
+    // qu'on vient cocher, même si le groupe a déjà été pointé ce matin.
+    setMonth(sessionMonthCodeOn(db, s.id, on));
     setOpenDate(on);
     setOpenSessionId(s.id);
   };

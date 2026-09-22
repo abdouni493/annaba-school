@@ -68,6 +68,7 @@ import {
   studentName,
   teacherName,
   todayIso,
+  nowTime,
 } from "@/lib/helpers";
 
 const ALERTS: Record<string, { label: string; tone: "danger" | "warning" | "success"; icon: typeof AlertTriangle }> = {
@@ -559,6 +560,7 @@ export function SoldManagerModal({
                           studentId: student.id,
                           subscriptionId: subId,
                           date: todayIso(),
+                          time: nowTime(),
                         });
                         if (res.ok) {
                           addToast({
