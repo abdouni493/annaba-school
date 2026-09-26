@@ -912,25 +912,6 @@ interface DataActions {
     subscriptionId: string;
     /** the day he comes in on (defaults to today) */
     date?: string;
-    /** l'heure de l'inscription, "HH:mm" (par défaut, l'heure qu'il est) */
-    time?: string;
-  }) => Promise<{ ok: boolean; monthCode?: string; slotIndex?: number }>;
-  /**
-   * CORRIGER LA DATE ET L'HEURE D'UNE INSCRIPTION, APRÈS COUP.
-   *
-   * La réception se trompe de jour, ou crée la fiche le lendemain de la
-   * rentrée de l'élève. Changer la date ne se contente pas de réécrire une
-   * ligne : le POINT D'ENTRÉE est recalculé sur l'emploi du temps — l'élève se
-   * range entre les séances tenues ce jour-là — si bien que ses présences, ses
-   * mois et son solde suivent la nouvelle date.
-   */
-  setInscriptionMoment: (args: {
-    studentId: string;
-    subscriptionId: string;
-    /** YYYY-MM-DD */
-    date: string;
-    /** "HH:mm" — vide efface l'heure notée */
-    time?: string;
   }) => Promise<{ ok: boolean; monthCode?: string; slotIndex?: number }>;
   /**
    * Takes a student OFF one emploi du temps. His history stays untouched —
@@ -4452,14 +4433,16 @@ export const useData = create<DataStore>((set, get) => ({
     };
   },
 
-  subscribeStudent: async ({ studentId, subscriptionId, date, time }) => {
+  subscribeStudent: async ({ studentId, subscriptionId, date }) => {
     const db = get();
     const student = db.students.find((s) => s.id === studentId);
     const sub = db.subscriptions.find((s) => s.id === subscriptionId);
     if (!student || !sub) return { ok: false };
 
+    // LE JOUR, ET RIEN QUE LE JOUR. L'heure à laquelle la réception saisit
+    // l'inscription ne compte pas : inscrit à 10 h 30 sur un emploi qui
+    // tournait de 8 h à 10 h, l'élève prend quand même la séance de ce jour-là.
     const day = date || dateKey(new Date());
-    const hour = (time ?? "").trim();
     const point = joinPointFor(db, subscriptionId, day, studentId);
 
     set((state) => ({
@@ -4474,14 +4457,8 @@ export const useData = create<DataStore>((set, get) => ({
                 ...st.subscriptionDates,
                 [subscriptionId]: {
                   ...st.subscriptionDates?.[subscriptionId],
-                  // Une date DONNÉE fait foi : c'est elle qu'on vient de
-                  // choisir, et c'est elle qui vient de placer le point
-                  // d'entrée. Sans date, l'ancienne est conservée.
-                  subscribedAt:
-                    date || st.subscriptionDates?.[subscriptionId]?.subscribedAt || day,
-                  subscribedTime:
-                    hour || st.subscriptionDates?.[subscriptionId]?.subscribedTime,
-                  startDate: date || st.subscriptionDates?.[subscriptionId]?.startDate || day,
+                  subscribedAt: st.subscriptionDates?.[subscriptionId]?.subscribedAt ?? day,
+                  startDate: st.subscriptionDates?.[subscriptionId]?.startDate ?? day,
                   joinMonthCode: point.monthCode,
                   joinSlotIndex: point.slotIndex,
                   // He is back on the roster: the old leaving date is history
@@ -4491,56 +4468,6 @@ export const useData = create<DataStore>((set, get) => ({
               },
             }
           : st,
-      ),
-      // La ligne de solde porte la même date de départ, pour que le badge et
-      // la feuille de présence lisent la même inscription.
-      enrollments: state.enrollments.map((e) =>
-        e.studentId === studentId && e.subscriptionId === subscriptionId
-          ? { ...e, startDate: date || e.startDate || day }
-          : e,
-      ),
-    }));
-
-    return { ok: true, monthCode: point.monthCode, slotIndex: point.slotIndex };
-  },
-
-  setInscriptionMoment: async ({ studentId, subscriptionId, date, time }) => {
-    const db = get();
-    const student = db.students.find((s) => s.id === studentId);
-    const sub = db.subscriptions.find((s) => s.id === subscriptionId);
-    if (!student || !sub) return { ok: false };
-    const day = (date || "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { ok: false };
-    const hour = (time ?? "").trim();
-
-    // Le point d'entrée se relit sur le calendrier de l'emploi du temps à
-    // cette date-là : reculer l'inscription range l'élève entre les séances
-    // déjà tenues, et ses mois se recalculent d'eux-mêmes autour.
-    const point = joinPointFor(db, subscriptionId, day, studentId);
-
-    set((state) => ({
-      students: state.students.map((st) =>
-        st.id === studentId
-          ? {
-              ...st,
-              subscriptionDates: {
-                ...st.subscriptionDates,
-                [subscriptionId]: {
-                  ...st.subscriptionDates?.[subscriptionId],
-                  subscribedAt: day,
-                  subscribedTime: hour || undefined,
-                  startDate: day,
-                  joinMonthCode: point.monthCode,
-                  joinSlotIndex: point.slotIndex,
-                },
-              },
-            }
-          : st,
-      ),
-      enrollments: state.enrollments.map((e) =>
-        e.studentId === studentId && e.subscriptionId === subscriptionId
-          ? { ...e, startDate: day }
-          : e,
       ),
     }));
 

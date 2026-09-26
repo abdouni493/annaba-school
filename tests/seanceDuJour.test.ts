@@ -5,8 +5,8 @@ import {
   cycleLead,
   cycleOf,
   cycleSlots,
+  dayKeyOf,
   enrolledInMonth,
-  inscriptionMomentOf,
   joinPointFor,
   sessionMonthCodeOn,
   sessionSeanceDays,
@@ -15,18 +15,20 @@ import {
 import type { Student } from "@/lib/types";
 
 /**
- * L'ÉLÈVE INSCRIT LE JOUR MÊME PREND LA SÉANCE DU JOUR.
+ * LA SÉANCE DU JOUR EST À L'ÉLÈVE INSCRIT CE JOUR-LÀ — LE JOUR, JAMAIS L'HEURE.
  *
- * Le symptôme, relevé au comptoir : l'emploi du temps tourne le mardi, la
- * réception pointe le groupe le matin, puis crée un élève et l'inscrit dessus —
- * et la séance du jour lui était REFUSÉE. Le point d'entrée se lisait sur « le
- * mois que vit la majorité du groupe », or ce mois venait de basculer avec le
- * pointage du matin : le nouvel élève était poussé au mois suivant, et la
- * colonne du jour n'existait plus pour lui.
+ * Le symptôme, relevé au comptoir : l'emploi du temps tourne le mardi de 8 h à
+ * 10 h, la réception pointe le groupe le matin, puis crée un élève et l'inscrit
+ * dessus — et la séance du jour lui était REFUSÉE. Le point d'entrée se lisait
+ * sur « le mois que vit la majorité du groupe », or ce mois venait de basculer
+ * avec le pointage du matin : le nouvel élève était poussé au mois suivant, et
+ * la colonne du jour n'existait plus pour lui.
  *
- * La règle est désormais le CALENDRIER de l'emploi du temps : la séance tenue
- * ce jour-là est la n-ième depuis son ouverture, et c'est celle-là qu'il prend —
- * que le groupe ait déjà été pointé ou non.
+ * La règle est le CALENDRIER de l'emploi du temps, à la JOURNÉE : la séance
+ * tenue ce jour-là est la n-ième depuis son ouverture, et c'est celle-là qu'il
+ * prend. Peu importe qu'il soit inscrit à 8 h 05 ou à 17 h : l'heure de saisie
+ * n'entre nulle part dans le calcul, et la séance du jour tombe dans son
+ * historique, sur le tableau de bord et dans la paie de l'enseignant.
  */
 
 const SUB = "sub-1";
@@ -35,7 +37,7 @@ const OLD = "stu-1";
 const NEW = "stu-new";
 const DAY_KEYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
-/** Un emploi du temps qui ne tourne QU'aujourd'hui — « Mardi 13:00 → 15:00 ». */
+/** Un emploi du temps qui ne tourne QU'aujourd'hui, de 8 h à 10 h. */
 function board(monthSeances = 4) {
   const db = buildSeed();
   const sub = db.subscriptions.find((s) => s.id === SUB)!;
@@ -43,9 +45,14 @@ function board(monthSeances = 4) {
   sub.monthlyPrice = monthSeances * sub.pricePerSession;
   sub.schoolMonthShare = Math.round(sub.monthlyPrice / 2);
   sub.teacherPerSeance = Math.round(sub.monthlyPrice / 2 / monthSeances);
-  db.sessions.find((s) => s.id === SES)!.days = [DAY_KEYS[new Date().getDay()] as never];
+  const session = db.sessions.find((s) => s.id === SES)!;
+  session.days = [DAY_KEYS[new Date().getDay()] as never];
+  session.startTime = "08:00";
+  session.endTime = "10:00";
+  session.dayTimes = undefined;
   db.attendance = [];
   db.payments = [];
+  db.unpaidTeacher = [];
   db.freePeriods = [];
   db.enrollments = db.enrollments.filter((e) => e.subscriptionId !== SUB);
   const opened = new Date();
@@ -77,6 +84,8 @@ function weeks(count: number): string[] {
   return out;
 }
 
+const today = () => new Date().toLocaleDateString("fr-CA");
+
 const present = (studentId: string, date: string) =>
   useData.getState().setPresence({ studentId, sessionId: SES, date, status: "present" });
 
@@ -97,7 +106,6 @@ function register(day: string): Student {
     subscriptionDates: {
       [SUB]: {
         subscribedAt: day,
-        subscribedTime: "14:05",
         startDate: day,
         joinMonthCode: point.monthCode,
         joinSlotIndex: point.slotIndex,
@@ -115,26 +123,26 @@ beforeEach(() => {
 describe("inscrit le jour d'une séance, il prend CETTE séance", () => {
   it("le groupe déjà pointé ce matin ne pousse plus le nouvel élève au mois suivant", async () => {
     board(4);
-    const days = weeks(4); // 3 mardis passés + aujourd'hui
-    const today = days[3];
+    const days = weeks(4); // 3 séances passées + celle d'aujourd'hui
+    const day = days[3];
     for (const d of days) await present(OLD, d);
 
     // Le groupe a bouclé son mois AUJOURD'HUI : il vit désormais M2…
     expect(cycleOf(useData.getState(), OLD, SUB, "M1").complete).toBe(true);
     // …mais la séance du jour, elle, est bien la 4e de M1.
-    expect(sessionMonthCodeOn(useData.getState(), SES, today)).toBe("M1");
-    expect(joinPointFor(useData.getState(), SUB, today)).toEqual({
+    expect(sessionMonthCodeOn(useData.getState(), SES, day)).toBe("M1");
+    expect(joinPointFor(useData.getState(), SUB, day)).toEqual({
       monthCode: "M1",
       slotIndex: 3,
     });
 
-    register(today);
+    register(day);
     const db = useData.getState();
     // Il est bien sur la feuille du jour, avec la 4e case libre.
     expect(enrolledInMonth(db, NEW, SUB, "M1")).toBe(true);
     expect(cycleLead(db, NEW, SUB, "M1")).toBe(3);
 
-    await present(NEW, today);
+    await present(NEW, day);
     const after = useData.getState();
     expect(cycleSlots(after, NEW, SUB, "M1")).toHaveLength(1);
     expect(cycleOf(after, NEW, SUB, "M1").done).toBe(1);
@@ -144,12 +152,12 @@ describe("inscrit le jour d'une séance, il prend CETTE séance", () => {
   it("pointer le groupe AVANT ou APRÈS l'inscription donne le même point d'entrée", async () => {
     board(4);
     const days = weeks(3);
-    const today = days[2];
+    const day = days[2];
     for (const d of days.slice(0, 2)) await present(OLD, d);
 
-    const before = joinPointFor(useData.getState(), SUB, today);
-    await present(OLD, today);
-    const after = joinPointFor(useData.getState(), SUB, today);
+    const before = joinPointFor(useData.getState(), SUB, day);
+    await present(OLD, day);
+    const after = joinPointFor(useData.getState(), SUB, day);
 
     expect(before).toEqual({ monthCode: "M1", slotIndex: 2 });
     expect(after).toEqual(before);
@@ -180,65 +188,64 @@ describe("inscrit le jour d'une séance, il prend CETTE séance", () => {
   });
 });
 
-describe("corriger la date et l'heure d'une inscription", () => {
-  it("l'heure est gardée sur la fiche, le jour décide de la séance", async () => {
+describe("le JOUR compte, jamais l'heure de la séance", () => {
+  it("inscrit après la sonnerie, il suit quand même la séance du jour", async () => {
+    const sub = board(4);
+    const days = weeks(2);
+    const day = days[1];
+    // L'emploi tournait de 8 h à 10 h et le groupe a été pointé ce matin-là.
+    await present(OLD, days[0]);
+    await present(OLD, day);
+    expect(useData.getState().sessions.find((s) => s.id === SES)!.endTime).toBe("10:00");
+
+    // La fiche est créée bien après 10 h : rien, dans le calcul, ne lit l'heure.
+    register(day);
+    expect(cycleLead(useData.getState(), NEW, SUB, "M1")).toBe(1);
+
+    const res = await present(NEW, day);
+    expect(res.ok).toBe(true);
+    expect(res.charged).toBe(sub.pricePerSession);
+
+    const db = useData.getState();
+    // Son historique porte la séance, datée du JOUR de la séance.
+    const rows = db.attendance.filter((a) => a.studentId === NEW && a.sessionId === SES);
+    expect(rows).toHaveLength(1);
+    expect(dayKeyOf(rows[0].timestamp)).toBe(day);
+    // Elle compte dans son mois, et son solde la lui a bien facturée.
+    expect(cycleOf(db, NEW, SUB, "M1").done).toBe(1);
+    expect(soldFor(db, NEW, SUB)).toBe(-sub.pricePerSession);
+    // Et la part de l'enseignant est due dessus, comme pour n'importe qui.
+    const due = db.unpaidTeacher.filter((u) => u.studentId === NEW && u.sessionId === SES);
+    expect(due).toHaveLength(1);
+    expect(due[0].amount).toBeGreaterThan(0);
+    expect(dayKeyOf(due[0].date)).toBe(day);
+  });
+
+  it("changer les horaires de l'emploi ne déplace aucun point d'entrée", async () => {
     board(4);
     const days = weeks(3);
     for (const d of days.slice(0, 2)) await present(OLD, d);
-    register(days[2]);
-    expect(inscriptionMomentOf(useData.getState(), NEW, SUB)).toEqual({
-      date: days[2],
-      time: "14:05",
-    });
+    const before = joinPointFor(useData.getState(), SUB, days[2]);
+
+    useData.setState((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === SES ? { ...s, startTime: "18:00", endTime: "20:00" } : s,
+      ),
+    }));
+
+    expect(joinPointFor(useData.getState(), SUB, days[2])).toEqual(before);
+    expect(sessionMonthCodeOn(useData.getState(), SES, days[2])).toBe("M1");
   });
 
-  it("reculer la date range l'élève entre les séances déjà tenues", async () => {
+  it("l'inscription du jour retient le JOUR, et lui seul", async () => {
     board(4);
-    const days = weeks(4);
-    for (const d of days.slice(0, 3)) await present(OLD, d);
-    register(days[3]); // inscrit aujourd'hui : M1 · séance 4
-    expect(cycleLead(useData.getState(), NEW, SUB, "M1")).toBe(3);
-
-    // En réalité il était là dès la 2e séance.
-    const res = await useData.getState().setInscriptionMoment({
-      studentId: NEW,
-      subscriptionId: SUB,
-      date: days[1],
-      time: "08:30",
-    });
-    expect(res).toMatchObject({ ok: true, monthCode: "M1", slotIndex: 1 });
-
-    const db = useData.getState();
-    expect(cycleLead(db, NEW, SUB, "M1")).toBe(1);
-    expect(inscriptionMomentOf(db, NEW, SUB)).toEqual({ date: days[1], time: "08:30" });
-    expect(db.students.find((s) => s.id === NEW)!.subscriptionDates![SUB].startDate).toBe(days[1]);
-  });
-
-  it("ses présences suivent la nouvelle date : elles changent de mois avec lui", async () => {
-    board(2); // un pack court : 2 séances par mois
-    const days = weeks(4);
-    for (const d of days) await present(OLD, d);
-    register(days[3]); // M2 · séance 2
-    await present(NEW, days[3]);
-    expect(cycleOf(useData.getState(), NEW, SUB, "M2").done).toBe(1);
-    expect(cycleOf(useData.getState(), NEW, SUB, "M1").done).toBe(0);
-
-    // Redaté au tout début : la même présence tombe désormais sur M1.
-    await useData
-      .getState()
-      .setInscriptionMoment({ studentId: NEW, subscriptionId: SUB, date: days[0] });
-    expect(cycleOf(useData.getState(), NEW, SUB, "M1").done).toBe(1);
-    expect(cycleLead(useData.getState(), NEW, SUB, "M1")).toBe(0);
-  });
-
-  it("refuse une date qui n'en est pas une", async () => {
-    board(4);
-    register(weeks(1)[0]);
-    expect(
-      await useData
-        .getState()
-        .setInscriptionMoment({ studentId: NEW, subscriptionId: SUB, date: "" }),
-    ).toEqual({ ok: false });
+    register(today());
+    const dates = useData.getState().students.find((s) => s.id === NEW)!.subscriptionDates![SUB];
+    expect(dates.subscribedAt).toBe(today());
+    expect(dates.startDate).toBe(today());
+    expect(Object.keys(dates).sort()).toEqual(
+      ["joinMonthCode", "joinSlotIndex", "startDate", "subscribedAt"].sort(),
+    );
   });
 });
 

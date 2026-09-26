@@ -19,13 +19,12 @@
 --     qu'il prend — que le groupe ait été pointé ou non.
 --
 --  2. DATE ET HEURE D'INSCRIPTION, saisissables et modifiables.
---     La fiche de création propose la date et l'heure du jour (facultatives,
---     déjà remplies), et la fiche de l'élève — « Voir détails » ▸ « Emplois du
---     temps » — permet de les corriger après coup. Reculer la date range
---     l'élève entre les séances déjà tenues : ses présences, ses mois et son
---     solde suivent.
---     L'heure est rangée dans `students.subscription_dates` (JSONB), sous la
---     clé `subscribedTime` — AUCUNE colonne à créer.
+--     ⚠️ RETIRÉ LE 27/09/2026 — voir
+--     `update-2026-09-27-retrait-heure-d-inscription.sql`, qui remplace cette
+--     saisie par la règle « le JOUR, jamais l'heure » et efface la clé
+--     `subscribedTime` des fiches. L'ÉTAPE 1 ci-dessous est donc caduque : son
+--     commentaire de colonne est réécrit par le script du 27/09. Passez-la, et
+--     enchaînez sur l'étape 2 — la réparation des soldes, elle, tient toujours.
 --
 --  3. SOLDE D'UN EMPLOI DU TEMPS.
 --     Il se lit maintenant dans le même grand livre que les mois : les
@@ -55,11 +54,11 @@
 
 
 -- -----------------------------------------------------------------------------
---  ÉTAPE 1 — DOCUMENTER L'HEURE D'INSCRIPTION
+--  ÉTAPE 1 — DOCUMENTER L'HEURE D'INSCRIPTION  ⚠️ CADUQUE (27/09/2026)
 --
---  `subscription_dates` est du JSONB : la nouvelle clé y entre sans migration.
---  On met simplement le commentaire de la colonne à jour, pour que la base
---  dise elle-même ce qu'elle contient.
+--  L'heure d'inscription a été retirée : ne lancez plus cette étape. Le script
+--  `update-2026-09-27-retrait-heure-d-inscription.sql` réécrit ce commentaire
+--  et efface la clé `subscribedTime` des fiches qui la portent encore.
 -- -----------------------------------------------------------------------------
 comment on column public.students.subscription_dates is
   'Par abonnement : {subscribedAt,subscribedTime,startDate,expiryDate,plan,joinMonthCode,joinSlotIndex} — subscribedAt/subscribedTime = le JOUR et l''HEURE de l''inscription (le jour décide de la séance rejointe) ; joinMonthCode/joinSlotIndex = le mois et la séance où l''élève entre dans le groupe';

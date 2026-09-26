@@ -811,11 +811,11 @@ export interface Subscription extends Authored {
 /**
  * Per-student enrollment dates (YYYY-MM-DD), kept for EVERY enrollment —
  * cours and formations alike:
- *  - `subscribedAt`: the day reception registered the student on that module.
- *    C'est LUI qui décide où l'élève entre sur l'emploi du temps (voir
- *    `joinMonthCode` / `joinSlotIndex`), et la réception peut le corriger après
- *    coup depuis la fiche : reculer la date range l'élève entre les séances
- *    déjà tenues ce jour-là, et ses présences suivent,
+ *  - `subscribedAt`: le JOUR où la réception a inscrit l'élève sur ce module.
+ *    C'est lui qui décide où l'élève entre sur l'emploi du temps (voir
+ *    `joinMonthCode` / `joinSlotIndex`) — le jour, et JAMAIS l'heure : inscrit
+ *    à 10 h 30 sur un emploi qui tournait de 8 h à 10 h, il prend quand même la
+ *    séance de ce jour-là,
  *  - `startDate`: the day billing starts. A séance attended BEFORE it is
  *    recorded as usual but never charged (see `AttendanceRecord.preStart`),
  *  - `expiryDate`: end of the enrollment — formations get one from the level's
@@ -824,14 +824,6 @@ export interface Subscription extends Authored {
  */
 export interface SubscriptionDates {
   subscribedAt?: string;
-  /**
-   * L'HEURE de cette inscription ("HH:mm") — celle qu'affiche la fiche et que
-   * porte le bon d'inscription. Elle se saisit avec la date (par défaut,
-   * l'heure qu'il est) ; c'est le JOUR qui décide de la séance rejointe, une
-   * inscription à 14 h un mardi de 13 h → 15 h prenant bien la séance du jour.
-   * Absente = l'heure n'a jamais été notée.
-   */
-  subscribedTime?: string;
   startDate?: string;
   expiryDate?: string;
   /** how the module was sold to this student ("seance" when absent) */

@@ -325,19 +325,12 @@ groupe donne exactement le même résultat. La feuille de présence, elle, s'ouv
 la séance affichée** et non sur celui du groupe : la colonne qu'on vient de cocher ne s'échappe
 plus sous les doigts.
 
-### La date et l'heure d'une inscription
-
-La fiche de création propose la **date** et l'**heure** d'inscription déjà remplies — celles du
-jour — dans la section « Emplois du temps de l'élève ». On n'y touche que pour une inscription
-d'un autre jour ; le bouton **Maintenant** ramène à l'instant présent. C'est le **jour** qui place
-l'élève sur l'emploi du temps (une inscription à 14 h un mardi de 13 h → 15 h prend bien la séance
-du jour) ; l'heure est gardée sur sa fiche.
-
-Elles se **corrigent après coup** : fiche de l'élève ▸ **Voir détails** ▸ onglet **Emplois du
-temps** ▸ *Modifier la date*. L'écran annonce le point d'entrée avant d'enregistrer (« il entrera
-en M2 · séance 3 »), puis **ses présences, ses mois et son solde suivent** la nouvelle date —
-reculer l'inscription range l'élève entre les séances déjà tenues. Rien n'est effacé.
-L'heure vit dans `students.subscription_dates` sous la clé `subscribedTime`.
+**Le JOUR compte, jamais l'heure.** Un emploi du temps qui tourne de 8 h à 10 h, un élève créé à
+10 h 30 et coché dessus : il a suivi la séance, donc elle est à lui. L'heure de la saisie n'entre
+nulle part dans le calcul — ni l'heure de début, ni l'heure de fin du créneau. La séance du jour
+tombe dans son **historique**, sur le **tableau de bord** et dans la **paie de l'enseignant**
+exactement comme s'il avait été inscrit avant la sonnerie. Il n'y a donc **rien à saisir** : la
+réception coche l'emploi du temps, et le jour fait le reste.
 
 ### Désinscrire un élève d'un groupe
 

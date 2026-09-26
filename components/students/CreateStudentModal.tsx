@@ -42,17 +42,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
-import {
-  BookOpen,
-  Building2,
-  CalendarClock,
-  Check,
-  Clock,
-  Gift,
-  Percent,
-  Trash2,
-  Wallet,
-} from "lucide-react";
+import { BookOpen, Building2, Check, Gift, Percent, Trash2, Wallet } from "lucide-react";
 import { createRoleUser, resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
 import { formatDA } from "@/lib/utils";
 import {
@@ -85,9 +75,7 @@ import {
   studentMonthPrice,
   nextRegistrationNumber,
   todayIso,
-  nowTime,
   formatDateFr,
-  formatInscriptionMoment,
 } from "@/lib/helpers";
 import { positiveMoney } from "@/lib/utils";
 import type {
@@ -260,18 +248,6 @@ function StudentFiche({
   const { language } = useSettings();
   const { addToast } = useToast();
   const { subLabel } = useClassTimings();
-
-  /**
-   * QUAND L'ÉLÈVE S'INSCRIT — le jour ET l'heure.
-   *
-   * La réception n'a rien à saisir : les deux champs arrivent déjà remplis de
-   * la date et de l'heure qu'il est, exactement comme si elle les avait tapés.
-   * Elle ne les touche que pour une inscription d'hier ou de la semaine
-   * dernière — et c'est alors CE jour-là qui décide de la séance rejointe :
-   * l'élève se range entre les présences déjà écrites.
-   */
-  const [joinDay, setJoinDay] = useState(joinDate || todayIso());
-  const [joinHour, setJoinHour] = useState(nowTime());
 
   // identity — a creation starts blank, an edit starts on the fiche
   const [firstName, setFirstName] = useState(editing?.firstName ?? "");
@@ -472,9 +448,15 @@ function StudentFiche({
   // un montant y avait été saisi avant qu’on ne le passe en « offert ».
   const totalSold = paidSubIds.reduce((s, id) => s + (solds[id] || 0), 0);
 
-  /** The day he comes in on — the one typed on the fiche (pre-filled with what
-   *  the sheet was showing, or today). */
-  const arrivalDay = joinDay || joinDate || todayIso();
+  /**
+   * LE JOUR où il entre — celui de la feuille ouverte, sinon aujourd'hui.
+   *
+   * Un JOUR, jamais une heure : un élève inscrit à 10 h 30 sur un emploi du
+   * temps qui tournait de 8 h à 10 h prend quand même la séance de ce jour-là.
+   * Elle entre dans son historique, sur le tableau de bord et dans la paie de
+   * l'enseignant, exactement comme s'il avait été inscrit avant la sonnerie.
+   */
+  const arrivalDay = joinDate || todayIso();
 
   /**
    * LES FRAIS D'INSCRIPTION NE SONT PAS DUS PAR TOUT LE MONDE.
@@ -867,12 +849,7 @@ function StudentFiche({
         // aujourd'hui, et il en SORT sans rien perdre de son historique.
         for (const subId of subIds) {
           if (editing.subscriptionIds.includes(subId)) continue;
-          await subscribeStudent({
-            studentId: editing.id,
-            subscriptionId: subId,
-            date: arrivalDay,
-            time: joinHour,
-          });
+          await subscribeStudent({ studentId: editing.id, subscriptionId: subId, date: arrivalDay });
         }
         for (const subId of editing.subscriptionIds) {
           if (subIds.includes(subId)) continue;
@@ -957,11 +934,9 @@ function StudentFiche({
       if (!subscriptions.some((s) => s.id === subId)) continue;
       const point = joinPointOf(subId);
       subscriptionDates[subId] = {
-        // Le JOUR de l'inscription est celui de la fiche — c'est lui qui a
-        // placé le point d'entrée, et la fiche doit dire la même chose que le
-        // calcul.
+        // Le JOUR de l'inscription est celui qui a placé le point d'entrée :
+        // la fiche dit donc la même chose que le calcul.
         subscribedAt: arrivalDay,
-        subscribedTime: joinHour || undefined,
         startDate: arrivalDay,
         joinMonthCode: point.monthCode,
         joinSlotIndex: point.slotIndex,
@@ -1076,9 +1051,9 @@ function StudentFiche({
         student,
         language,
         registrationFee: feeRequired,
-        // Le bon dit QUAND l'élève s'est inscrit : c'est la date qui l'a placé
-        // sur ses emplois du temps, la famille doit la relire dessus.
-        inscribedAt: formatInscriptionMoment({ date: arrivalDay, time: joinHour }),
+        // Le bon dit QUEL JOUR l'élève s'est inscrit : c'est ce jour-là qui l'a
+        // placé sur ses emplois du temps.
+        inscribedAt: formatDateFr(arrivalDay),
         lines: subIds.map((subId) => {
           const sub = subscriptions.find((s) => s.id === subId);
           const offered = freeOn(subId);
@@ -1503,64 +1478,6 @@ function StudentFiche({
               </p>
             )}
 
-            {/* QUAND S'INSCRIT-IL ? — déjà rempli à la date et à l'heure qu'il
-                est. On n'y touche que pour une inscription d'un autre jour :
-                c'est ce jour-là qui décide de la séance rejointe, et les
-                récapitulatifs ci-dessous se recalculent aussitôt. */}
-            <div className="rounded-xl border border-line bg-surface p-2.5">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-[8.5rem] flex-1">
-                  <label className="mb-1 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-muted">
-                    <CalendarClock className="h-3 w-3" /> Date d&apos;inscription
-                  </label>
-                  <Input
-                    type="date"
-                    value={joinDay}
-                    onChange={(e) => setJoinDay(e.target.value || todayIso())}
-                    className="w-full"
-                  />
-                </div>
-                <div className="w-28">
-                  <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                    Heure
-                  </label>
-                  <Input
-                    type="time"
-                    value={joinHour}
-                    onChange={(e) => setJoinHour(e.target.value)}
-                    className="w-full"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setJoinDay(joinDate || todayIso());
-                    setJoinHour(nowTime());
-                  }}
-                  className="gap-1.5"
-                >
-                  <Clock className="h-3.5 w-3.5" /> Maintenant
-                </Button>
-              </div>
-              <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
-                Facultatif — {formatDateFr(arrivalDay)}
-                {joinHour ? ` à ${joinHour}` : ""} par défaut. C&apos;est cette{" "}
-                <strong>date</strong> qui place l&apos;élève sur l&apos;emploi du temps : la séance
-                tenue ce jour-là est la sienne, et une date passée le range entre les présences
-                déjà écrites.
-                {isEdit && (
-                  <>
-                    {" "}
-                    Elle ne vaut que pour les emplois du temps <strong>ajoutés ici</strong> : ceux
-                    qu&apos;il suit déjà gardent la leur — elle se corrige depuis{" "}
-                    <strong>Voir détails</strong> ▸ <strong>Emplois du temps</strong>.
-                  </>
-                )}
-              </p>
-            </div>
-
             <ClassTimingPicker
               selectedSubIds={subIds}
               onToggle={toggleTiming}
@@ -1638,9 +1555,7 @@ function StudentFiche({
                             title={
                               isEdit && editing?.subscriptionIds.includes(subId)
                                 ? undefined
-                                : `Inscrit le ${formatDateFr(arrivalDay)}${
-                                    joinHour ? ` à ${joinHour}` : ""
-                                  } — la séance tenue ce jour-là est la sienne`
+                                : `Inscrit le ${formatDateFr(arrivalDay)} — la séance tenue ce jour-là est la sienne, quelle que soit l'heure`
                             }
                           >
                             {isEdit && editing?.subscriptionIds.includes(subId)

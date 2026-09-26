@@ -29,8 +29,6 @@ import {
   Repeat,
   Receipt,
   Wallet,
-  CalendarClock,
-  Clock,
 } from "lucide-react";
 import type {
   AbsencePenalty,
@@ -106,148 +104,8 @@ import {
   studentSubscriptionHistory,
   soloSeanceTotals,
   todayIso,
-  nowTime,
-  joinPointFor,
-  inscriptionMomentOf,
-  formatInscriptionMoment,
   unsubscribedAtOf,
 } from "@/lib/helpers";
-
-/**
- * LA DATE ET L'HEURE D'UNE INSCRIPTION — corrigées après coup.
- *
- * La réception crée souvent la fiche le lendemain, ou se trompe de jour. Le
- * jour de l'inscription n'est pas qu'une mention sur une fiche : c'est LUI qui
- * dit où l'élève entre sur l'emploi du temps. Le corriger ici recale donc son
- * point d'entrée — la séance tenue ce jour-là devient la sienne, et ses
- * présences, ses mois et son solde se réordonnent autour, sans rien perdre.
- *
- * L'écran annonce le point d'entrée AVANT d'enregistrer : « M2 · séance 3 ».
- */
-function InscriptionMomentEditor({
-  studentId,
-  subscriptionId,
-}: {
-  studentId: string;
-  subscriptionId: string;
-}) {
-  const db = useData();
-  const setInscriptionMoment = useData((s) => s.setInscriptionMoment);
-  const { addToast } = useToast();
-  const saved = inscriptionMomentOf(db, studentId, subscriptionId);
-  const [open, setOpen] = useState(false);
-  const [day, setDay] = useState(saved.date || todayIso());
-  const [hour, setHour] = useState(saved.time);
-  const [busy, setBusy] = useState(false);
-
-  // Ce que la nouvelle date VA écrire — relu sur le calendrier de l'emploi du
-  // temps, donc exactement ce que l'enregistrement produira.
-  const preview = joinPointFor(db, subscriptionId, day || todayIso(), studentId);
-  const current = {
-    monthCode:
-      db.students.find((s) => s.id === studentId)?.subscriptionDates?.[subscriptionId]
-        ?.joinMonthCode || "M1",
-    slotIndex:
-      db.students.find((s) => s.id === studentId)?.subscriptionDates?.[subscriptionId]
-        ?.joinSlotIndex ?? 0,
-  };
-
-  const save = async () => {
-    setBusy(true);
-    const res = await setInscriptionMoment({ studentId, subscriptionId, date: day, time: hour });
-    setBusy(false);
-    if (!res.ok) {
-      addToast({ type: "danger", title: "Date refusée", message: "Choisissez un jour valide." });
-      return;
-    }
-    setOpen(false);
-    addToast({
-      type: "success",
-      title: "Inscription redatée",
-      message: `Inscrit le ${formatDateFr(day)}${hour ? ` à ${hour}` : ""} — il entre en ${
-        res.monthCode
-      } · séance ${(res.slotIndex ?? 0) + 1}.`,
-    });
-  };
-
-  return (
-    <div className="mt-2 rounded-xl border border-line bg-canvas/40 p-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-[10px] text-muted">
-          <CalendarClock className="h-3 w-3 text-primary" />
-          Inscrit le <strong className="text-ink">{formatInscriptionMoment(saved)}</strong>
-          <Badge tone="neutral" className="text-[9px]">
-            entre en {current.monthCode} · séance {current.slotIndex + 1}
-          </Badge>
-        </span>
-        <Button
-          size="sm"
-          variant={open ? "outline" : "ghost"}
-          onClick={() => {
-            setDay(saved.date || todayIso());
-            setHour(saved.time);
-            setOpen(!open);
-          }}
-          className="gap-1.5 text-[10px]"
-        >
-          <CalendarClock className="h-3.5 w-3.5" />
-          {open ? "Annuler" : "Modifier la date"}
-        </Button>
-      </div>
-
-      {open && (
-        <div className="mt-2 space-y-2 border-t border-line pt-2">
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[8.5rem] flex-1">
-              <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                Date d&apos;inscription
-              </label>
-              <Input
-                type="date"
-                value={day}
-                onChange={(e) => setDay(e.target.value)}
-                className="w-full"
-              />
-            </div>
-            <div className="w-28">
-              <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                Heure
-              </label>
-              <Input
-                type="time"
-                value={hour}
-                onChange={(e) => setHour(e.target.value)}
-                className="w-full"
-              />
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setDay(todayIso());
-                setHour(nowTime());
-              }}
-              className="gap-1.5"
-            >
-              <Clock className="h-3.5 w-3.5" /> Maintenant
-            </Button>
-          </div>
-          <p className="text-[10px] leading-relaxed text-muted">
-            Il entrera en <strong className="text-primary">{preview.monthCode}</strong> · séance{" "}
-            <strong className="text-primary">{preview.slotIndex + 1}</strong> — la séance tenue le{" "}
-            {formatDateFr(day || todayIso())} est la sienne. Ses présences, ses mois et son solde
-            suivent cette date ; rien n&apos;est effacé.
-          </p>
-          <div className="flex justify-end">
-            <Button size="sm" disabled={busy || !day} onClick={() => void save()} className="gap-1.5">
-              <CheckCircle className="h-3.5 w-3.5" /> Enregistrer la date
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * ENCAISSER LES FRAIS D'INSCRIPTION — en une fois, ou en plusieurs.
@@ -2712,16 +2570,6 @@ export function StudentsPage() {
                               </table>
                             </div>
 
-                            {/* QUAND S'EST-IL INSCRIT SUR CET EMPLOI ? — et le
-                                corriger, ce qui recale son point d'entrée. Un
-                                emploi quitté n'a plus de date à déplacer. */}
-                            {!gone && (
-                              <InscriptionMomentEditor
-                                studentId={selectedStudent.id}
-                                subscriptionId={subId}
-                              />
-                            )}
-
                             <div className="mt-2 flex items-center justify-between gap-2">
                               <span className="text-[10px] italic text-muted">
                                 {gone
@@ -2733,15 +2581,9 @@ export function StudentsPage() {
                                   size="sm"
                                   variant="outline"
                                   onClick={() => {
-                                    // Le réinscrire, c'est une NOUVELLE
-                                    // inscription : elle est datée d'aujourd'hui,
-                                    // là où en est le groupe — et la fiche dit la
-                                    // même chose que le point d'entrée.
                                     void subscribeStudent({
                                       studentId: selectedStudent.id,
                                       subscriptionId: subId,
-                                      date: todayIso(),
-                                      time: nowTime(),
                                     });
                                   }}
                                 >
