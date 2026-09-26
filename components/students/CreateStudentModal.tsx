@@ -939,15 +939,15 @@ function StudentFiche({
     }
 
     // Credentials and badge are minted silently — the desk types a name and
-    // nothing else is needed. The registration number closes the login, so two
-    // namesakes without phone nor birth date never collide on the same email.
+    // nothing else is needed. The registration number always closes the login,
+    // so siblings sharing the family phone (or namesakes) never collide on the
+    // same email.
     const base =
       `${firstName}${lastName}`
         .normalize("NFD") // "Aménée" -> "Amenee" once the marks are filtered out
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "") || "eleve";
-    const suffix =
-      birthDate.replace(/-/g, "") || phone.replace(/\D/g, "").slice(-4) || nextNumber;
+    const suffix = String(nextNumber).replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
     const email = `${base}${suffix}@elilm.com`;
     const password = `${base}${suffix}`;
     const rfid = uid("rfid");
