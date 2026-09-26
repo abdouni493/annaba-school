@@ -1766,39 +1766,6 @@ export function unsubscribedAtOf(
   return student.subscriptionDates?.[subscriptionId]?.unsubscribedAt;
 }
 
-/** Quand la réception a inscrit un élève sur un emploi du temps : le jour, et
- *  l'heure si elle a été notée. */
-export interface InscriptionMoment {
-  /** YYYY-MM-DD — le jour qui décide de la séance rejointe */
-  date: string;
-  /** "HH:mm", vide tant que l'heure n'a jamais été saisie */
-  time: string;
-}
-
-export function inscriptionMomentOf(
-  db: Database,
-  studentId: string,
-  subscriptionId: string,
-): InscriptionMoment {
-  const dates = db.students.find((s) => s.id === studentId)?.subscriptionDates?.[subscriptionId];
-  return {
-    date: dates?.subscribedAt || dates?.startDate || "",
-    time: dates?.subscribedTime || "",
-  };
-}
-
-/** « le 23/09/2026 à 14:05 » — l'heure ne s'écrit que si elle existe. */
-export function formatInscriptionMoment(moment: InscriptionMoment): string {
-  if (!moment.date) return "date inconnue";
-  return moment.time ? `${formatDateFr(moment.date)} à ${moment.time}` : formatDateFr(moment.date);
-}
-
-/** L'heure qu'il est, "HH:mm" — la valeur par défaut d'une inscription. */
-export function nowTime(): string {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
 /** One emploi du temps a student is behind on, for ONE of its months. */
 export interface SoldDebtRow {
   subscriptionId: string;

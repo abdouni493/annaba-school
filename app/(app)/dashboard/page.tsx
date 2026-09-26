@@ -587,6 +587,14 @@ function AdminDashboard() {
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                /* « Entrée » ouvre le 1er résultat sans quitter le champ : ce
+                   que l'`autoFocus` du bouton cherchait à faire, sans voler le
+                   curseur à chaque lettre. */
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || matches.length === 0) return;
+                  e.preventDefault();
+                  openSheet(matches[0]);
+                }}
                 placeholder="Rechercher un emploi du temps — module, groupe, salle, enseignant…"
                 className="pl-9"
               />
@@ -634,6 +642,12 @@ function AdminDashboard() {
             <div className="space-y-2">
               <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
                 <Filter className="h-3.5 w-3.5" /> {matches.length} emploi(s) du temps trouvé(s)
+                {matches.length > 0 && (
+                  <span className="font-normal normal-case tracking-normal text-muted">
+                    · <kbd className="rounded border border-line px-1">Entrée</kbd> ouvre le 1
+                    <sup>er</sup>
+                  </span>
+                )}
               </span>
               {matches.length === 0 ? (
                 <p className="py-6 text-center text-xs italic text-muted">
@@ -651,7 +665,14 @@ function AdminDashboard() {
                     return (
                       <button
                         key={s.id}
-                        autoFocus={i === 0}
+                        /* PAS d'`autoFocus` ICI. Le premier résultat le portait,
+                           si bien qu'à la première lettre tapée la liste
+                           apparaissait et le navigateur emportait le curseur
+                           hors du champ de recherche — puis le reprenait à
+                           chaque fois que le meilleur résultat changeait. On ne
+                           pouvait pas écrire deux lettres de suite. Le champ
+                           garde son curseur, et « Entrée » ouvre le 1er
+                           résultat (voir le champ de recherche plus haut). */
                         onClick={() => openSheet(s)}
                         className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border p-3 text-left transition-all hover:brightness-105 ${
                           i === 0 ? "ring-2 ring-primary/40" : ""
