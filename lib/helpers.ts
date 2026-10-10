@@ -2715,6 +2715,41 @@ export function joinPointFor(
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   if (!sub) return { monthCode: "M1", slotIndex: 0 };
   const size = cycleSizeOf(sub);
+
+  // LÀ OÙ EN EST LE GROUPE, lu sur ses propres élèves : la séance qu'ils ont
+  // pointée ce jour-là (ou, rien n'étant pointé, celle qui les attend) est la
+  // n-ième depuis leur point d'entrée. C'est la colonne que la réception voit
+  // sur la feuille — « on est à la séance 3 » — et c'est CELLE-LÀ que le
+  // nouvel élève prend. Le calendrier brut de l'emploi ne sert qu'en dernier
+  // recours : un pointage isolé un autre jour (une correction, un élève d'un
+  // autre groupe venu en remplacement) y ajoutait une journée, et le nouvel
+  // élève démarrait à la séance SUIVANTE.
+  const positions = new Map<number, number>();
+  const vote = (p: number) => positions.set(p, (positions.get(p) ?? 0) + 1);
+  const peers = db.students.filter(
+    (st) => st.id !== exceptStudentId && st.subscriptionIds.includes(subscriptionId),
+  );
+  let heldToday = false;
+  for (const st of peers) {
+    const recs = cycleRecords(db, st.id, sub.sessionId);
+    if (recs.length === 0) continue;
+    const start = enrollmentStart(db, st.id, subscriptionId).offset;
+    const at = recs.findIndex((r) => dayKeyOf(r.timestamp) === date);
+    if (at >= 0) {
+      if (!heldToday) positions.clear();
+      heldToday = true;
+      vote(start + at);
+    } else if (!heldToday) {
+      vote(start + recs.filter((r) => dayKeyOf(r.timestamp) < date).length);
+    }
+  }
+  if (positions.size > 0) {
+    // La majorité l'emporte ; à égalité, la séance la plus ancienne — mieux
+    // vaut une case de trop à pointer qu'une séance du jour refusée.
+    const [offset] = [...positions.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+    return { monthCode: `M${Math.floor(offset / size) + 1}`, slotIndex: offset % size };
+  }
+
   const days = sessionSeanceDays(db, subscriptionId, exceptStudentId);
   const held = days.indexOf(date);
   // Déjà pointée ce jour-là : il prend CETTE séance. Sinon il se range juste

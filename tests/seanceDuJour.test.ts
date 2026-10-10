@@ -309,3 +309,40 @@ describe("le solde d'un emploi du temps dit la même chose que ses mois", () => 
     expect(soldFor(db, OLD, SUB)).toBe(ledger);
   });
 });
+
+describe("ajouté en cours de route, il démarre à la séance OÙ EN EST le groupe", () => {
+  it("un pointage isolé un autre jour ne pousse pas le nouvel élève à la séance suivante", async () => {
+    board(4);
+    const days = weeks(3); // séances 1, 2 et 3 — la 3e aujourd'hui
+    for (const d of days) await present(OLD, d);
+    // Une ligne parasite, un jour sans séance pour le groupe : un élève
+    // d'un autre groupe venu en remplacement.
+    const stray = new Date();
+    stray.setDate(stray.getDate() - 3);
+    useData.setState({
+      attendance: [
+        ...useData.getState().attendance,
+        {
+          id: "att-stray",
+          studentId: "stu-2",
+          sessionId: SES,
+          timestamp: stray.toISOString(),
+          amountDeducted: 0,
+          status: "present",
+          substituteGroup: true,
+        } as never,
+      ],
+    });
+    expect(sessionSeanceDays(useData.getState(), SUB)).toHaveLength(4);
+
+    // Le groupe est à la séance 3 : le nouvel élève prend la séance 3.
+    expect(joinPointFor(useData.getState(), SUB, today())).toEqual({
+      monthCode: "M1",
+      slotIndex: 2,
+    });
+    register(today());
+    await present(NEW, today());
+    expect(cycleLead(useData.getState(), NEW, SUB, "M1")).toBe(2);
+    expect(cycleSlots(useData.getState(), NEW, SUB, "M1")).toHaveLength(1);
+  });
+});
