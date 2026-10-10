@@ -43,7 +43,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
 import { BookOpen, Building2, Check, Gift, Percent, Trash2, Wallet } from "lucide-react";
-import { createRoleUser, resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
+import { resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
 import { formatDA } from "@/lib/utils";
 import {
   inscriptionVoucherHtml,
@@ -915,18 +915,9 @@ function StudentFiche({
       return;
     }
 
-    // Credentials and badge are minted silently — the desk types a name and
-    // nothing else is needed. The registration number always closes the login,
-    // so siblings sharing the family phone (or namesakes) never collide on the
-    // same email.
-    const base =
-      `${firstName}${lastName}`
-        .normalize("NFD") // "Aménée" -> "Amenee" once the marks are filtered out
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "") || "eleve";
-    const suffix = String(nextNumber).replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-    const email = `${base}${suffix}@elilm.com`;
-    const password = `${base}${suffix}`;
+    // Un élève se crée SANS compte de connexion : aucun email à inventer,
+    // donc plus jamais de « email déjà utilisé » qui bloque l'inscription.
+    const email = "";
     const rfid = uid("rfid");
 
     const subscriptionDates: Record<string, SubscriptionDates> = {};
@@ -955,19 +946,7 @@ function StudentFiche({
 
     setBusy(true);
     try {
-      const { id: studentId } = await createRoleUser({
-        role: "student",
-        email,
-        password,
-        firstName,
-        lastName,
-        phone,
-        birthDate,
-        rfid,
-        isFree,
-        subscriptionIds: subIds,
-        registrationDue,
-      });
+      const studentId = uid("stu");
 
       const student: Student = {
         id: studentId,
@@ -998,7 +977,6 @@ function StudentFiche({
         registrationFeeAssessed: feeAssessedNow,
       };
       push("students", student);
-      await setStudentPassword(studentId, password);
 
       // L'AVANCE est créditée sur son propre emploi, au mois où l'élève ENTRE :
       // un enfant inscrit en M2 paie pour M2, jamais pour un mois qu'il a
