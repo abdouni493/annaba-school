@@ -144,10 +144,13 @@ describe("le partage école / enseignant d'une séance", () => {
     board();
     patch(STU, {
       studentCase: "reduction",
-      caseReduction: { type: "amount", schoolValue: 500, teacherValue: 50 },
+      // Un montant fixe est celui du MOIS (4 séances) : 1 000 DA côté école
+      // dépassent sa part du mois (800), 200 DA côté enseignant font 50 DA la
+      // séance.
+      caseReduction: { type: "amount", schoolValue: 1000, teacherValue: 200 },
     });
     const st = studentOf(STU);
-    // 500 DA de remise école sur une part de 200 : elle s'arrête à 200.
+    // La remise école s'arrête à la part : jamais sous zéro.
     expect(studentSchoolPerSeance(st, subOf())).toBe(0);
     expect(studentTeacherPerSeance(st, subOf(), TEACHER)).toBe(250);
     expect(studentListPrice(st, subOf())).toBe(250);
@@ -168,7 +171,9 @@ describe("le partage école / enseignant d'une séance", () => {
     }));
     patch(STU, {
       studentCase: "reduction",
-      caseReduction: { type: "amount", schoolValue: 100, teacherValue: 50 },
+      // Sans pack, le mois de l'emploi compte 4 séances : 400 DA sur le mois
+      // font 100 DA la séance.
+      caseReduction: { type: "amount", schoolValue: 400, teacherValue: 200 },
     });
     expect(studentListPrice(studentOf(STU), subOf())).toBe(400);
     expect(studentTeacherPerSeance(studentOf(STU), subOf(), TEACHER)).toBe(0);

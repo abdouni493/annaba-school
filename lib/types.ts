@@ -920,12 +920,17 @@ export interface ModuleAbsenceRule {
 export type StudentCase = "normal" | "special" | "teacher_child" | "reduction" | "school_only";
 
 /** A reduction split between the school and the teacher — each grants its own
- *  part, as a percentage or a fixed amount. */
+ *  part, as a percentage or a fixed amount.
+ *
+ *  Un MONTANT FIXE est celui du MOIS (« 500 DA de moins sur le mois ») : il se
+ *  répartit sur les séances du mois de l'emploi du temps, jamais retiré tel
+ *  quel de chaque séance (voir `caseReductionCut`). Un pourcentage s'applique
+ *  à la part, séance par séance — ce qui revient au même sur le mois. */
 export interface CaseReduction {
   type: DiscountType;
-  /** the school's part of the reduction */
+  /** the school's part of the reduction (% or DA per month) */
   schoolValue: number;
-  /** the teacher's part of the reduction */
+  /** the teacher's part of the reduction (% or DA per month) */
   teacherValue: number;
 }
 

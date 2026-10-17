@@ -44,7 +44,7 @@ import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
 import { BookOpen, Building2, Check, Gift, Percent, Trash2, Wallet } from "lucide-react";
 import { resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
-import { formatDA } from "@/lib/utils";
+import { formatDA, money } from "@/lib/utils";
 import {
   inscriptionVoucherHtml,
   soldReceiptHtml,
@@ -160,12 +160,15 @@ function ReductionAsk({
   seancePrice,
   schoolPart,
   teacherPart,
+  seances,
   onAnswer,
 }: {
   label: string;
   seancePrice: number;
   schoolPart: number;
   teacherPart: number;
+  /** séances du mois de cet emploi du temps */
+  seances: number;
   onAnswer: (active: boolean) => void;
 }) {
   // L'alerte ne s'ouvre QUE sur un clic de la réception : le document est donc
@@ -186,6 +189,12 @@ function ReductionAsk({
             <span className="mt-0.5 block text-[10px] text-muted">
               Séance à <strong className="text-ink">{formatDA(seancePrice)}</strong> — part école{" "}
               {formatDA(schoolPart)} · part enseignant {formatDA(teacherPart)}.
+            </span>
+            <span className="mt-0.5 block text-[10px] text-muted">
+              Sur le mois ({seances} séances) : part école{" "}
+              <strong className="text-ink">{formatDA(money(schoolPart * seances))}</strong> · part
+              enseignant <strong className="text-ink">{formatDA(money(teacherPart * seances))}</strong>.
+              Un montant fixe se saisit pour le mois.
             </span>
           </div>
           <p className="text-[11px] leading-relaxed text-muted">
@@ -243,6 +252,7 @@ function StudentFiche({
     subscribeStudent,
     unsubscribeStudent,
     convertStudentCase,
+    dropVoidTeacherDues,
   } = db;
   const isEdit = !!editing;
   const { language } = useSettings();
@@ -879,6 +889,15 @@ function StudentFiche({
         if (asksAboutDebt && debtMode !== "keep") {
           converted = await convertStudentCase({ studentId: editing.id, mode: debtMode });
         }
+        /**
+         * UN EMPLOI COCHÉ OFFERT (ou « école seulement ») NE PAIE PLUS
+         * L'ENSEIGNANT — séances d'avant comprises. Quelle que soit la réponse
+         * sur les dettes (et même quand la question n'a pas été posée, faute de
+         * dette), les parts encore ouvertes de cet élève sur ces emplois
+         * tombent : l'écran de paie l'affiche à zéro au lieu de le régler comme
+         * un élève ordinaire. Les parts déjà versées restent dans l'historique.
+         */
+        const droppedDues = dropVoidTeacherDues(editing.id);
 
         const feeNote =
           feeDebt > 0
@@ -899,6 +918,9 @@ function StudentFiche({
               : debtMode === "reprice" && (converted.repriced ?? 0) > 0
                 ? ` · ${converted.repriced} séance(s) recalculée(s) au nouveau cas`
                 : "") +
+            (droppedDues > 0
+              ? ` · ${droppedDues} part(s) enseignant retirée(s) : l'enseignant n'est plus payé pour cet élève sur ces emplois du temps`
+              : "") +
             ".",
           studentName: `${firstName} ${lastName}`,
         });
@@ -1106,6 +1128,7 @@ function StudentFiche({
           seancePrice={askingSub?.pricePerSession ?? 0}
           schoolPart={schoolPerSeanceOf(askingSub)}
           teacherPart={teacherPerSeanceOf(askingSub)}
+          seances={cycleSizeOf(askingSub)}
           onAnswer={(active) => answerReductionAsk(asking, active)}
         />
       )}
@@ -1397,6 +1420,15 @@ function StudentFiche({
                     </button>
                   ))}
                 </div>
+                {/* La paie de l'enseignant ne dépend pas de cette réponse : sur un
+                    emploi offert, il n'est plus payé pour cet élève. */}
+                {isFree && (
+                  <p className="rounded-lg bg-success/10 p-2 text-[10px] leading-relaxed text-success">
+                    Quel que soit votre choix, l&apos;enseignant n&apos;est plus payé pour cet élève
+                    sur les emplois du temps <strong>offerts</strong> — séances déjà pointées
+                    comprises. Seules les parts déjà réglées restent dans son historique.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1503,6 +1535,10 @@ function StudentFiche({
                   const reducedSchool = studentSchoolPerSeance(ficheStudent, sub);
                   const reducedTeacher = studentTeacherPerSeance(ficheStudent, sub);
                   const reducedUnit = studentListPrice(ficheStudent, sub);
+                  // Un montant fixe se saisit pour le MOIS : l'écran raisonne
+                  // donc en mois, et rappelle ce que cela donne par séance.
+                  const size = cycleSizeOf(sub);
+                  const perMonth = (n: number) => formatDA(money(n * size));
                   return (
                     <div
                       key={subId}
@@ -1684,10 +1720,12 @@ function StudentFiche({
                               <span className="block text-[9px] leading-relaxed text-muted">
                                 {reduced ? (
                                   <>
-                                    L&apos;école retire sa part de{" "}
-                                    <strong className="text-ink">{formatDA(schoolPart)}</strong>,
-                                    l&apos;enseignant la sienne de{" "}
-                                    <strong className="text-ink">{formatDA(teacherPart)}</strong>.
+                                    Part de l&apos;école :{" "}
+                                    <strong className="text-ink">{perMonth(schoolPart)}</strong> le mois
+                                    ({formatDA(schoolPart)} la séance) · part de l&apos;enseignant :{" "}
+                                    <strong className="text-ink">{perMonth(teacherPart)}</strong> le mois
+                                    ({formatDA(teacherPart)} la séance). Chacun retire sa remise de SA
+                                    part.
                                   </>
                                 ) : (
                                   <>
@@ -1716,14 +1754,14 @@ function StudentFiche({
                                         : "border-line bg-surface text-ink"
                                     }`}
                                   >
-                                    {t === "percent" ? "Pourcentage (%)" : "Montant fixe (DA)"}
+                                    {t === "percent" ? "Pourcentage (%)" : "Montant fixe (DA / mois)"}
                                   </button>
                                 ))}
                               </div>
                               <div className="grid grid-cols-2 gap-2">
                                 <div>
                                   <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                                    Part école ({redType === "percent" ? "%" : "DA"})
+                                    Part école ({redType === "percent" ? "%" : "DA / mois"})
                                   </label>
                                   <Input
                                     type="number"
@@ -1740,7 +1778,7 @@ function StudentFiche({
                                 </div>
                                 <div>
                                   <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                                    Part enseignant ({redType === "percent" ? "%" : "DA"})
+                                    Part enseignant ({redType === "percent" ? "%" : "DA / mois"})
                                   </label>
                                   <Input
                                     type="number"
@@ -1767,13 +1805,14 @@ function StudentFiche({
                               >
                                 {redSchool > 0 || redTeacher > 0 ? (
                                   <>
-                                    La famille paiera <strong>{formatDA(reducedUnit)}</strong> la
-                                    séance au lieu de {formatDA(listUnit)} · l&apos;école garde{" "}
-                                    <strong>{formatDA(reducedSchool)}</strong> (au lieu de{" "}
-                                    {formatDA(schoolPart)}) · l&apos;enseignant touche{" "}
-                                    <strong>{formatDA(reducedTeacher)}</strong> (au lieu de{" "}
-                                    {formatDA(teacherPart)}). Son mois revient à{" "}
-                                    <strong>{formatDA(reducedUnit * cycleSizeOf(sub))}</strong>.
+                                    Sur le mois de {size} séances : la famille paiera{" "}
+                                    <strong>{perMonth(reducedUnit)}</strong> au lieu de{" "}
+                                    {perMonth(listUnit)} ({formatDA(reducedUnit)} la séance) ·
+                                    l&apos;école garde <strong>{perMonth(reducedSchool)}</strong> (au
+                                    lieu de {perMonth(schoolPart)}) · l&apos;enseignant touche{" "}
+                                    <strong>{perMonth(reducedTeacher)}</strong> (au lieu de{" "}
+                                    {perMonth(teacherPart)}), soit{" "}
+                                    <strong>{formatDA(reducedTeacher)}</strong> la séance sur sa paie.
                                   </>
                                 ) : (
                                   <>

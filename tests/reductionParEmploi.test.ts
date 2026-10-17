@@ -213,7 +213,9 @@ describe("« réduction », emploi du temps par emploi du temps", () => {
   it("garde le sens des fiches d'avant, qui ne portaient qu'une remise générale", () => {
     patch({
       subscriptionReductions: undefined,
-      caseReduction: { type: "amount", schoolValue: 100, teacherValue: 50 },
+      // Un montant fixe est celui du MOIS : 400 / 200 DA sur un mois de 4
+      // séances, soit 100 / 50 DA la séance.
+      caseReduction: { type: "amount", schoolValue: 400, teacherValue: 200 },
     });
     const st = studentOf();
     // Sans table par emploi, la remise générale vaut PARTOUT — exactement comme
@@ -241,11 +243,13 @@ describe("« réduction », emploi du temps par emploi du temps", () => {
   it("la remise en montant fixe s'arrête à la part, sans jamais passer sous zéro", () => {
     patch({
       subscriptionReductions: {
-        [SUB_ON]: { type: "amount", schoolValue: 500, teacherValue: 50 },
+        [SUB_ON]: { type: "amount", schoolValue: 1000, teacherValue: 200 },
       },
     });
     const st = studentOf();
-    // 500 DA de remise école sur une part de 200 : elle s'arrête à 200.
+    // 1 000 DA de remise école sur une part du mois de 800 (250 la séance sur
+    // une part de 200) : elle s'arrête à la part. 200 DA côté enseignant sur le
+    // mois, soit 50 DA la séance.
     expect(studentSchoolPerSeance(st, subOf(SUB_ON))).toBe(0);
     expect(studentTeacherPerSeance(st, subOf(SUB_ON), TEACHER)).toBe(250);
     expect(studentListPrice(st, subOf(SUB_ON))).toBe(250);
