@@ -80,8 +80,8 @@ ALTECH SCHOOL gère tout le quotidien d'une école privée : inscriptions, emplo
 
 **Cas de facturation** (réglables emploi du temps par emploi du temps)
 - **Normal**.
-- **Gratuit / offert**.
-- **Réduction** (% ou montant fixe).
+- **Gratuit / offert** : l'enseignant n'est pas payé pour l'élève sur cet emploi du temps — il figure sur sa paie à 0 DA, séances pointées avant la gratuité comprises (les parts déjà versées restent dans l'historique).
+- **Réduction** (% ou **montant fixe par mois**), partagée entre la part de l'école et celle de l'enseignant ; la paie de l'enseignant applique sa part de la remise.
 - **Fils/fille d'enseignant** : la scolarité peut être retenue sur le salaire du parent enseignant, ou réglée d'avance au guichet.
 - **École seulement** : l'élève ne paie que la part de l'école (l'enseignant n'est pas payé pour lui).
 - Changement de cas avec choix de ce qu'on fait des dettes existantes.

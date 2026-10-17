@@ -21,6 +21,7 @@ import {
   studentListPrice,
   subscriptionLabel,
   teacherChildDebtEmploi,
+  teacherDueIsVoid,
   teacherSeanceDueOf,
   teacherSeanceRate,
   parseVirtualTeacherDueId,
@@ -684,6 +685,18 @@ interface DataActions {
     studentId: string;
     mode: "clear" | "reprice" | "keep";
   }) => Promise<{ ok: boolean; repriced?: number; waived?: number }>;
+  /**
+   * RETIRE LES PARTS D'ENSEIGNANT QU'UN CAS A RENDUES CADUQUES.
+   *
+   * Un emploi du temps coché OFFERT (ou « école seulement ») après coup laisse
+   * derrière lui les parts écrites au cas d'avant : l'enseignant n'est pourtant
+   * plus payé pour cet élève sur cet emploi-là. Les écrans de paie les ignorent
+   * déjà (`teacherDueIsVoid`) ; cette action les retire aussi de la base, pour
+   * que les rapports qui lisent les parts brutes disent la même chose. Les
+   * parts déjà réglées ne sont jamais touchées. Idempotente : rend le nombre de
+   * parts retirées. Sans `studentId`, passe sur tous les élèves.
+   */
+  dropVoidTeacherDues: (studentId?: string) => number;
   /**
    * ENCAISSER LES FRAIS D'INSCRIPTION, en une fois ou en plusieurs.
    *
@@ -3170,6 +3183,18 @@ export const useData = create<DataStore>((set, get) => ({
 
   repriceStudentSeances: (studentId, sessionIds) =>
     applyReprice(set, repricePlan(get(), sessionIds, { studentId })),
+
+  dropVoidTeacherDues: (studentId) => {
+    const db = get();
+    const gone = new Set(
+      db.unpaidTeacher
+        .filter((u) => (!studentId || u.studentId === studentId) && teacherDueIsVoid(db, u))
+        .map((u) => u.id),
+    );
+    if (gone.size === 0) return 0;
+    set((state) => ({ unpaidTeacher: state.unpaidTeacher.filter((u) => !gone.has(u.id)) }));
+    return gone.size;
+  },
 
   payRegistrationFee: async ({ studentId, amount, date, description }) => {
     const db = get();

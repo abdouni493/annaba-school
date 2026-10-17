@@ -21,6 +21,7 @@ import type {
   Subscription,
   SubscriptionDiscount,
   TeacherPayment,
+  UnpaidTeacherSession,
 } from "@/lib/types";
 
 /** French weekday labels — shared by every screen that prints a timing. */
@@ -742,7 +743,9 @@ export function reducedSubIdsOf(student: Student | undefined): string[] {
 /** Human label for a « cas réduction » on ONE emploi, e.g. « -50% / -10% ». */
 export function caseReductionLabel(reduction?: CaseReduction): string {
   if (!reduction) return "";
-  const unit = reduction.type === "percent" ? "%" : " DA";
+  // Un montant fixe est celui du MOIS (voir `caseReductionCut`) : le badge le
+  // dit, pour qu'on ne le relise jamais comme une remise sur chaque séance.
+  const unit = reduction.type === "percent" ? "%" : " DA/mois";
   const school = Math.max(0, reduction.schoolValue || 0);
   const teacher = Math.max(0, reduction.teacherValue || 0);
   if (school <= 0 && teacher <= 0) return "";
@@ -750,31 +753,41 @@ export function caseReductionLabel(reduction?: CaseReduction): string {
 }
 
 /**
- * What ONE side of the split grants on a « cas réduction », SUR CET EMPLOI DU
- * TEMPS.
+ * What ONE side of the split grants on ONE SÉANCE of a « cas réduction », SUR
+ * CET EMPLOI DU TEMPS.
  *
  * The two values of the reduction are independent: the school knocks
- * `schoolValue` off ITS part, the teacher knocks `teacherValue` off HIS. A
- * percentage applies to that side's part, a fixed amount is taken off it —
- * never below zero, and never more than the part itself.
+ * `schoolValue` off ITS part, the teacher knocks `teacherValue` off HIS.
  *
- * Un emploi du temps SANS réduction ne retire rien du tout : il se calcule
- * comme celui de n'importe quel élève ordinaire.
+ *  - un POURCENTAGE s'applique à la part de ce côté-là, séance par séance ;
+ *  - un MONTANT FIXE est celui du MOIS. La réception pense « 500 DA de moins
+ *    sur le mois » : c'est le mois que la famille paie et le mois que l'école
+ *    règle à l'enseignant. Le montant se répartit donc sur les séances du mois
+ *    de cet emploi du temps (`cycleSizeOf`). Il était retiré tel quel de
+ *    CHAQUE séance : 500 DA de remise sur une part enseignant de 350 DA la
+ *    séance effaçaient toute la part — l'écran de paie affichait 0 DA pour
+ *    l'élève, et la famille ne payait plus rien non plus.
+ *
+ * Jamais sous zéro, jamais plus que la part elle-même. Un emploi du temps SANS
+ * réduction ne retire rien du tout : il se calcule comme celui de n'importe
+ * quel élève ordinaire.
  */
 export function caseReductionCut(
   student: Student | undefined,
   side: "school" | "teacher",
   part: number,
-  subscriptionId?: string,
+  sub?: Subscription,
 ): number {
   const base = positiveMoney(part || 0);
   if (base <= 0) return 0;
-  const red = reductionForSub(student, subscriptionId);
+  const red = reductionForSub(student, sub?.id);
   if (!red) return 0;
   const value = Math.max(0, side === "school" ? red.schoolValue || 0 : red.teacherValue || 0);
   if (value <= 0) return 0;
   const cut =
-    red.type === "percent" ? money((base * Math.min(value, 100)) / 100) : money(value);
+    red.type === "percent"
+      ? money((base * Math.min(value, 100)) / 100)
+      : money(value / cycleSizeOf(sub));
   return Math.min(base, cut);
 }
 
@@ -787,7 +800,7 @@ export function studentSchoolPerSeance(student: Student | undefined, sub?: Subsc
   // Un emploi du temps offert ne rapporte rien à l'école non plus.
   if (isFreeSub(student, sub?.id)) return 0;
   const part = schoolPerSeanceOf(sub);
-  return positiveMoney(part - caseReductionCut(student, "school", part, sub?.id));
+  return positiveMoney(part - caseReductionCut(student, "school", part, sub));
 }
 
 // ---- « École seule » : l'option se coche EMPLOI DU TEMPS PAR EMPLOI DU TEMPS
@@ -844,7 +857,7 @@ export function studentTeacherPerSeance(
   if (isFreeSub(student, sub.id)) return 0;
   if (isSchoolOnlySub(student, sub.id, teacherId)) return 0;
   const part = teacherSeanceShareOf(sub);
-  return positiveMoney(part - caseReductionCut(student, "teacher", part, sub.id));
+  return positiveMoney(part - caseReductionCut(student, "teacher", part, sub));
 }
 
 /**
@@ -1175,7 +1188,7 @@ export function teacherSeanceRate(
   const teacher = db.teachers.find((t) => t.id === session?.teacherId);
   if (!teacher || teacher.paymentType !== "percentage") return 0;
   const gross = positiveMoney((positiveMoney(base) * (teacher.percentage ?? 0)) / 100);
-  return positiveMoney(gross - caseReductionCut(student, "teacher", gross, sub?.id));
+  return positiveMoney(gross - caseReductionCut(student, "teacher", gross, sub));
 }
 
 /**
@@ -1211,6 +1224,30 @@ export function teacherSeanceDueOf(
   const base =
     seanceChargeOf(db, record, stu, tariff) || positiveMoney(record.waivedAmount ?? 0);
   return teacherSeanceRate(db, ses, tariff, stu, base);
+}
+
+/**
+ * CETTE PART D'ENSEIGNANT N'A PLUS LIEU D'ÊTRE.
+ *
+ * Une part est écrite le jour du pointage, au cas que l'élève avait CE jour-là.
+ * Que la réception coche ensuite cet emploi du temps OFFERT à l'élève (« cas
+ * spécial ») — ou « école seulement » —, et la part ne correspond plus à rien :
+ * l'enseignant n'est pas payé pour cet élève sur cet emploi-là, et cela vaut
+ * pour TOUTES ses séances encore ouvertes, qu'elles aient été pointées avant ou
+ * après la bascule. Sans cette règle, l'écran de paie affichait l'élève
+ * « gratuit » avec, à côté, la part entière de ses anciennes séances — et la
+ * réglait comme pour un élève ordinaire.
+ *
+ * Une part déjà RÉGLÉE n'est jamais concernée : l'argent a été versé, et le
+ * passé ne se réécrit pas.
+ */
+export function teacherDueIsVoid(db: Database, due: UnpaidTeacherSession): boolean {
+  if (due.paid) return false;
+  const student = db.students.find((s) => s.id === due.studentId);
+  if (!student) return false;
+  const sub = db.subscriptions.find((x) => x.sessionId === due.sessionId);
+  if (!sub) return false;
+  return isFreeSub(student, sub.id) || isSchoolOnlySub(student, sub.id, due.teacherId);
 }
 
 /**

@@ -49,6 +49,7 @@ import {
   independentTotals,
   monthlyPriceOf,
   seancePriceOf,
+  teacherDueIsVoid,
   teacherSeanceDueOf,
   virtualTeacherDueId,
   passagerLabel,
@@ -446,6 +447,8 @@ export function teacherDueRows(db: Database, teacherId: string): UnpaidTeacherSe
   const siens = new Set(db.sessions.filter((s) => s.teacherId === teacherId).map((s) => s.id));
   for (const u of db.unpaidTeacher) {
     if (u.teacherId !== teacherId || siens.has(u.sessionId)) continue;
+    // Même règle que les mois : un emploi offert à l'élève ne doit plus rien.
+    if (teacherDueIsVoid(db, u)) continue;
     rows.push(u);
   }
   return rows;
@@ -585,6 +588,20 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
     // écrites en base sont donc écartées comme les futures.
     if (!rosterIds.has(u.studentId) && db.students.some((st) => st.id === u.studentId)) continue;
     const day = dayKeyOf(u.date);
+    /**
+     * UN EMPLOI DU TEMPS OFFERT NE RAPPORTE RIEN À L'ENSEIGNANT — même pour les
+     * séances pointées AVANT que la réception ne le coche offert.
+     *
+     * La ligne a été écrite au cas d'alors, à la part entière : la relire telle
+     * quelle affichait l'élève « gratuit » avec, à côté, une part à régler comme
+     * pour un élève ordinaire. L'élève reste listé — à zéro — et la séance
+     * n'est pas reconstituée non plus. Une part déjà réglée reste, elle, dans
+     * l'historique du mois (voir `teacherDueIsVoid`).
+     */
+    if (teacherDueIsVoid(db, u)) {
+      borne.add(`${u.studentId}|${day}`);
+      continue;
+    }
     const rec = recordOn(u.studentId, day);
     const idx =
       (rec ? monthOfRecord.get(rec.id) : undefined) ?? currentIndexOf.get(u.studentId) ?? 0;

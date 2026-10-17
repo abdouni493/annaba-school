@@ -19,6 +19,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const fetchAll = useData((s) => s.fetchAll);
   const clear = useData((s) => s.clear);
   const processWeeklyAbsences = useData((s) => s.processWeeklyAbsences);
+  const dropVoidTeacherDues = useData((s) => s.dropVoidTeacherDues);
 
   useEffect(() => {
     fetchSchool();
@@ -68,6 +69,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // billing (idempotent, throttled to once/day).
       if (user.role === "admin" || user.role === "reception") {
         processWeeklyAbsences();
+        // Les parts d'enseignant restées sur un emploi coché offert après coup
+        // quittent la base (idempotent) : la paie ne les lit déjà plus, les
+        // rapports non plus désormais.
+        dropVoidTeacherDues();
       }
     });
 

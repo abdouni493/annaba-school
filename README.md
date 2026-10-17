@@ -568,8 +568,23 @@ du temps par emploi du temps** (voir juste après).
 ```
 mois à 2000 DA, 4 séances, l'école garde 800   ->  séance 500 = école 200 + enseignant 300
 réduction 50% école / 10% enseignant           ->  séance 370 = école 100 + enseignant 270
+réduction 400 DA école / 200 DA enseignant     ->  mois 1400 = école 400 + enseignant 1000
+  (montant fixe = PAR MOIS)                         séance 350 = école 100 + enseignant 250
 sur un emploi du temps NON réduit              ->  séance 500 = école 200 + enseignant 300
 ```
+
+Un **montant fixe** est toujours celui du **mois** (« 500 DA de moins sur le mois ») : il se
+répartit sur les séances du mois de l'emploi du temps. Il était autrefois retiré tel quel de
+*chaque* séance — 500 DA de remise sur une part enseignant de 350 DA la séance effaçaient toute la
+part, et la paie affichait 0 DA pour l'élève. Une remise qui dépasse la part du mois s'arrête à
+zéro, jamais en dessous.
+
+Un emploi du temps **offert** (cas spécial) ne paie pas l'enseignant, **séances déjà pointées
+comprises** : si la réception coche l'emploi offert après coup, les parts encore ouvertes de cet
+élève sur cet emploi tombent — l'élève reste listé sur la paie, à 0 DA — quelle que soit la réponse
+donnée sur ses dettes. Seules les parts déjà versées restent dans l'historique. Les parts restées en
+base d'avant ce correctif sont retirées automatiquement au chargement de l'application (aucun script
+SQL à lancer).
 
 ### La gratuité se coche emploi du temps par emploi du temps
 
@@ -607,10 +622,10 @@ emploi du temps qu'elle lui coche, l'écran **pose la question** :
 | **Non** (par défaut) | le prix entier de la séance | sa part entière | la sienne, entière |
 | **Oui** | prix − les deux remises **de cet emploi** | sa part − **sa** remise | la sienne − **sa** remise |
 
-Chaque emploi du temps porte donc **sa propre** remise, en pourcentage ou en dinars, avec deux
-valeurs indépendantes — l'école accorde la sienne sur *sa* part, l'enseignant la sienne sur *la
-sienne*. Un même enfant peut être réduit de 50 % / 10 % en maths, de 1 000 DA en physique et payer
-l'anglais au tarif entier, sans qu'il faille lui créer trois fiches.
+Chaque emploi du temps porte donc **sa propre** remise, en pourcentage ou en dinars **par mois**,
+avec deux valeurs indépendantes — l'école accorde la sienne sur *sa* part, l'enseignant la sienne
+sur *la sienne*. Un même enfant peut être réduit de 50 % / 10 % en maths, de 1 000 DA par mois en
+physique et payer l'anglais au tarif entier, sans qu'il faille lui créer trois fiches.
 
 ```
 maths    réduction 50% école / 10% enseignant  ->  séance 370 = école 100 + enseignant 270

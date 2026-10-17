@@ -333,7 +333,8 @@ describe("les cas particuliers des élèves", () => {
           ? {
               ...st,
               studentCase: "reduction" as const,
-              caseReduction: { type: "amount" as const, schoolValue: 0, teacherValue: 50 },
+              // 200 DA sur le mois de 4 séances : 50 DA de moins par séance.
+              caseReduction: { type: "amount" as const, schoolValue: 0, teacherValue: 200 },
             }
           : st,
       ),
