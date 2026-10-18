@@ -75,7 +75,7 @@ ALTECH SCHOOL gère tout le quotidien d'une école privée : inscriptions, emplo
 **Fiche élève**
 - Identité, **numéro d'inscription**, deux téléphones (plusieurs élèves peuvent partager le même téléphone, ex. frères et sœurs), photo, niveau et année, carte **RFID**, compte de connexion.
 - Création et modification sur le **même écran** : identité, cas de facturation, emplois du temps, soldes.
-- Inscription à un emploi du temps : l'élève **entre là où en est le groupe** (mois M1, M2… et numéro de séance), le jour d'inscription compte, jamais l'heure.
+- Inscription à un emploi du temps : l'élève **entre là où en est le groupe** (mois M1, M2… et numéro de séance), le jour d'inscription compte, jamais l'heure. Il est **exempté des séances tenues avant lui** : elles restent vides sur sa ligne et son premier mois ne lui coûte que les séances restantes (création d'un élève comme ajout d'un élève existant depuis le tableau de bord).
 - **Désinscription** d'un groupe sans perte d'historique, et **réinscription** possible.
 
 **Cas de facturation** (réglables emploi du temps par emploi du temps)

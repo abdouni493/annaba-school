@@ -64,7 +64,8 @@ import {
   soldStatus,
   studentIsMaternelle,
   studentListPrice,
-  studentMonthPrice,
+  studentMonthPriceFrom,
+  cycleLead,
   studentName,
   teacherName,
   todayIso,
@@ -141,7 +142,9 @@ export function SoldManagerModal({
         const cycle = cycleOf(db, student.id, subId, code);
         // Son tarif à LUI : « école seule » ne paie que la part de l'école.
         const unit = studentListPrice(student, sub);
-        const monthPrice = studentMonthPrice(student, sub);
+        // Son mois d'entrée ne lui coûte que les séances tenues APRÈS son
+        // inscription : il est exempté de celles d'avant.
+        const monthPrice = studentMonthPriceFrom(student, sub, cycleLead(db, student.id, subId, code));
         // Un emploi du temps OFFERT n'a rien à recharger : son solde est « à
         // jour » par construction, quoi qu'il porte.
         const offered = isFreeSub(student, subId);
