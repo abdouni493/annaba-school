@@ -925,12 +925,28 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
   }
 
   const started = students.filter((s) => s.done > 0);
+  /**
+   * LES SÉANCES QUE CE MOIS A TENUES — jamais plus que son pack.
+   *
+   * On comptait les DATES distinctes de toutes les présences rangées dans ce
+   * mois. Or chaque élève a SON mois : un élève entré en cours de route, ou
+   * qui rattrape, vit son M1 pendant que le reste du groupe est déjà en M2,
+   * et ses dates s'ajoutaient à celles du groupe — la tuile affichait « 6/4 »
+   * ou « 7/4 ». Le mois tient la séance où l'élève le plus avancé en est
+   * (séances d'avant son arrivée comprises), plafonnée à la taille du mois.
+   */
+  let held = 0;
+  for (const st of students) {
+    const cycle = input.cyclesOf.get(st.studentId)?.[index];
+    if (cycle && cycle.done > 0) held = Math.max(held, cycle.lead + cycle.done);
+  }
+  held = Math.min(size, held || dates.length);
   // Le mois est CLOS quand son pack de séances a été tenu. Tout le groupe l'a
   // terminé, ou bien l'emploi a bien donné ses `size` séances et au moins un
   // élève est allé au bout : un élève inscrit en retard ne fige pas la paie —
   // les séances qu'il lui reste rouvriront simplement le mois.
   const allDone = started.length > 0 && started.every((s) => s.complete);
-  const packHeld = dates.length >= size && started.some((s) => s.complete);
+  const packHeld = held >= size && started.some((s) => s.complete);
   const state: MonthState =
     allDone || packHeld
       ? "done"
@@ -958,7 +974,7 @@ function buildMonth(db: Database, input: MonthInput): TeacherMonth {
     code,
     index,
     size,
-    held: dates.length,
+    held,
     dates,
     startDate: dates[0],
     endDate: state === "done" ? dates[dates.length - 1] : undefined,
