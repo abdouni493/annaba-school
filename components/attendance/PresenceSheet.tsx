@@ -120,7 +120,7 @@ import {
   studentCaseTone,
   studentListPrice,
   studentMatches,
-  studentMonthPrice,
+  studentMonthPriceFrom,
   studentAdvanceDebt,
   studentChargeDebt,
   studentDebtSummary,
@@ -3284,10 +3284,13 @@ function TeacherChildPayModal({
   /** Ses mois EN DETTE sur cet emploi du temps — ce qu'il y a à régler. */
   const owing = enrollmentCycles(db, student.id, subscriptionId).filter((c) => c.balance < 0);
   const current = currentCycleCode(db, student.id, subscriptionId);
-  const monthPrice = sub ? studentMonthPrice(student, sub) : 0;
+  /** Le prix d'UN mois pour lui — son mois d'entrée sans les séances tenues
+   *  avant son inscription, dont il est exempté. */
+  const monthPriceOf = (code: string) =>
+    sub ? studentMonthPriceFrom(student, sub, cycleLead(db, student.id, subscriptionId, code)) : 0;
 
   const [monthCode, setMonthCode] = useState(owing[0]?.code ?? current);
-  const [amount, setAmount] = useState(owing[0] ? -owing[0].balance : monthPrice);
+  const [amount, setAmount] = useState(owing[0] ? -owing[0].balance : monthPriceOf(current));
   const [busy, setBusy] = useState(false);
 
   const dueOf = (code: string) =>
@@ -3296,7 +3299,7 @@ function TeacherChildPayModal({
 
   const pick = (code: string) => {
     setMonthCode(code);
-    setAmount(dueOf(code) || monthPrice);
+    setAmount(dueOf(code) || monthPriceOf(code));
   };
 
   const submit = async (source: "cash" | "teacher_debt") => {

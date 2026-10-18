@@ -73,6 +73,7 @@ import {
   soldFor,
   studentSubscriptionHistory,
   studentMonthPrice,
+  studentMonthPriceFrom,
   nextRegistrationNumber,
   todayIso,
   formatDateFr,
@@ -712,9 +713,17 @@ function StudentFiche({
   const suggestFor = (subId: string) => {
     const sub = subscriptions.find((s) => s.id === subId);
     if (!sub) return 0;
-    return (
-      studentMonthPrice(ficheStudent, sub) || sub.pricePerSession * cycleSizeOf(sub)
-    );
+    // Il entre LÀ OÙ EN EST LE GROUPE : les séances tenues avant lui sur son
+    // mois d'entrée ne sont pas les siennes, il en est exempté. Un emploi
+    // qu'il suit déjà garde le prix du mois entier.
+    const joining = !editing?.subscriptionIds.includes(subId);
+    const lead = joining ? joinPointOf(subId).slotIndex : 0;
+    const full = studentMonthPrice(ficheStudent, sub) || sub.pricePerSession * cycleSizeOf(sub);
+    const size = cycleSizeOf(sub);
+    return lead > 0
+      ? studentMonthPriceFrom(ficheStudent, sub, lead) ||
+          money((full * (size - Math.min(size, lead))) / size)
+      : full;
   };
 
   const submit = async () => {

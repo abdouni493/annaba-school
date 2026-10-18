@@ -935,6 +935,26 @@ export function studentMonthPrice(student: Student | undefined, sub?: Subscripti
   return monthlyPriceOf(sub) || positiveMoney((sub.pricePerSession ?? 0) * cycleSizeOf(sub));
 }
 
+/**
+ * CE QUE LE MOIS D'ENTRÉE COÛTE À UN ÉLÈVE ARRIVÉ EN COURS DE ROUTE.
+ *
+ * Inscrit à la séance 3 d'un mois de 4, il est EXEMPTÉ des deux séances tenues
+ * avant lui : son mois ne lui coûte que les séances qui restent. `lead` est le
+ * nombre de séances de ce mois tenues avant son arrivée (voir `cycleLead`) ;
+ * à 0, c'est le prix du mois entier.
+ */
+export function studentMonthPriceFrom(
+  student: Student | undefined,
+  sub: Subscription | undefined,
+  lead: number,
+): number {
+  const full = studentMonthPrice(student, sub);
+  if (!sub || lead <= 0) return full;
+  const size = cycleSizeOf(sub);
+  const left = Math.max(0, size - Math.min(size, Math.round(lead)));
+  return positiveMoney((full * left) / size);
+}
+
 /** Net price of one séance for a given student on a given subscription. */
 export function studentSeancePrice(student: Student, sub: Subscription): number {
   return netPriceFor(studentListPrice(student, sub), student.subscriptionDiscounts?.[sub.id]);
@@ -2753,41 +2773,31 @@ export function joinPointFor(
   if (!sub) return { monthCode: "M1", slotIndex: 0 };
   const size = cycleSizeOf(sub);
 
-  // LÀ OÙ EN EST LE GROUPE, lu sur ses propres élèves : la séance qu'ils ont
-  // pointée ce jour-là (ou, rien n'étant pointé, celle qui les attend) est la
-  // n-ième depuis leur point d'entrée. C'est la colonne que la réception voit
-  // sur la feuille — « on est à la séance 3 » — et c'est CELLE-LÀ que le
-  // nouvel élève prend. Le calendrier brut de l'emploi ne sert qu'en dernier
-  // recours : un pointage isolé un autre jour (une correction, un élève d'un
-  // autre groupe venu en remplacement) y ajoutait une journée, et le nouvel
-  // élève démarrait à la séance SUIVANTE.
-  const positions = new Map<number, number>();
-  const vote = (p: number) => positions.set(p, (positions.get(p) ?? 0) + 1);
-  const peers = db.students.filter(
-    (st) => st.id !== exceptStudentId && st.subscriptionIds.includes(subscriptionId),
-  );
-  let heldToday = false;
-  for (const st of peers) {
-    const recs = cycleRecords(db, st.id, sub.sessionId);
-    if (recs.length === 0) continue;
-    const start = enrollmentStart(db, st.id, subscriptionId).offset;
-    const at = recs.findIndex((r) => dayKeyOf(r.timestamp) === date);
-    if (at >= 0) {
-      if (!heldToday) positions.clear();
-      heldToday = true;
-      vote(start + at);
-    } else if (!heldToday) {
-      vote(start + recs.filter((r) => dayKeyOf(r.timestamp) < date).length);
-    }
+  /**
+   * LÀ OÙ EN EST LE GROUPE : le nombre de séances que l'emploi du temps a
+   * réellement tenues — chaque JOUR où le groupe a été pointé compte pour une
+   * séance, quel que soit le nombre d'élèves pointés ce jour-là.
+   *
+   * Le point d'entrée se lisait sur un VOTE des élèves du groupe (la séance où
+   * chacun en était). Or la réception ne pointe souvent que les présents : un
+   * élève absent non pointé, ou inscrit en retard avant que les points
+   * d'entrée n'existent, paraissait EN RETARD sur le groupe — et l'égalité
+   * tranchant pour la séance la plus ancienne, le nouvel élève entrait à la
+   * séance 1 ou 2 alors que le groupe était à la 3 : ses séances d'avant
+   * s'ouvraient sur sa ligne comme s'il les devait.
+   *
+   * Seules les lignes d'un élève venu EN REMPLACEMENT d'un autre groupe sont
+   * écartées : sa visite n'est pas une séance de ce groupe-ci, et elle ne doit
+   * pas pousser le nouvel élève à la séance suivante.
+   */
+  const daySet = new Set<string>();
+  for (const rec of db.attendance) {
+    if (rec.sessionId !== sub.sessionId) continue;
+    if (rec.studentId === exceptStudentId) continue;
+    if (rec.substituteGroup || !consumesSeance(rec)) continue;
+    daySet.add(dayKeyOf(rec.timestamp));
   }
-  if (positions.size > 0) {
-    // La majorité l'emporte ; à égalité, la séance la plus ancienne — mieux
-    // vaut une case de trop à pointer qu'une séance du jour refusée.
-    const [offset] = [...positions.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
-    return { monthCode: `M${Math.floor(offset / size) + 1}`, slotIndex: offset % size };
-  }
-
-  const days = sessionSeanceDays(db, subscriptionId, exceptStudentId);
+  const days = [...daySet].sort();
   const held = days.indexOf(date);
   // Déjà pointée ce jour-là : il prend CETTE séance. Sinon il se range juste
   // après les séances qui la précèdent — la prochaine, ou celle du jour.
