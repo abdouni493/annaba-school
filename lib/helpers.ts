@@ -753,6 +753,20 @@ export function caseReductionLabel(reduction?: CaseReduction): string {
 }
 
 /**
+ * « FILS D'ENSEIGNANT » : LA REMISE (en %) QUE L'ÉCOLE ACCORDE SUR SA PART.
+ *
+ * Il ne paie que la part de l'école — l'enseignant n'est pas payé pour lui —
+ * et la réception peut encore réduire cette part d'un pourcentage. La valeur
+ * vit dans `caseReduction.schoolValue` (colonne jsonb déjà en base).
+ */
+export function teacherChildReductionPct(student: Student | undefined): number {
+  if (!student || student.studentCase !== "teacher_child") return 0;
+  const red = student.caseReduction;
+  if (!red || red.type !== "percent") return 0;
+  return Math.min(100, Math.max(0, red.schoolValue || 0));
+}
+
+/**
  * What ONE side of the split grants on ONE SÉANCE of a « cas réduction », SUR
  * CET EMPLOI DU TEMPS.
  *
@@ -780,6 +794,8 @@ export function caseReductionCut(
 ): number {
   const base = positiveMoney(part || 0);
   if (base <= 0) return 0;
+  const childPct = side === "school" ? teacherChildReductionPct(student) : 0;
+  if (childPct > 0) return Math.min(base, money((base * childPct) / 100));
   const red = reductionForSub(student, sub?.id);
   if (!red) return 0;
   const value = Math.max(0, side === "school" ? red.schoolValue || 0 : red.teacherValue || 0);
@@ -823,6 +839,8 @@ export function isSchoolOnlySub(
   subscriptionId?: string,
   teacherId?: string,
 ): boolean {
+  // Un fils d'enseignant ne paie QUE l'école, sur tous ses emplois du temps.
+  if (student?.studentCase === "teacher_child") return true;
   if (!student || student.studentCase !== "school_only") return false;
   const list = student.schoolOnlySubscriptionIds;
   if (list) {
@@ -836,6 +854,7 @@ export function isSchoolOnlySub(
 
 /** Les emplois du temps sur lesquels l'option « école seule » est ACTIVE. */
 export function schoolOnlySubIdsOf(student: Student | undefined): string[] {
+  if (student?.studentCase === "teacher_child") return student.subscriptionIds ?? [];
   if (!student || student.studentCase !== "school_only") return [];
   return student.schoolOnlySubscriptionIds ?? student.subscriptionIds ?? [];
 }
@@ -900,7 +919,9 @@ export function studentListPrice(
   // monde et l'enseignant touche sa part.
   if (isSchoolOnlySub(student, sub.id)) {
     const schoolPart = schoolPerSeanceOf(sub);
-    return schoolPart > 0 ? schoolPart : base;
+    // Fils d'enseignant : la part de l'école, moins la remise qu'elle accorde.
+    if (schoolPart > 0) return studentSchoolPerSeance(student, sub);
+    return positiveMoney(base - money((base * teacherChildReductionPct(student)) / 100));
   }
   // LA RÉDUCTION SE COCHE EMPLOI PAR EMPLOI : seul un emploi RÉDUIT sort du
   // tarif ordinaire. Sur les autres, la famille paie le prix entier — c'est ce
@@ -925,7 +946,8 @@ export function studentMonthPrice(student: Student | undefined, sub?: Subscripti
   if (!sub) return 0;
   if (isFreeSub(student, sub.id)) return 0;
   if (isSchoolOnlySub(student, sub.id)) {
-    return positiveMoney(schoolMonthShareOf(sub));
+    const pct = teacherChildReductionPct(student);
+    return positiveMoney(schoolMonthShareOf(sub) * (1 - pct / 100));
   }
   // Un emploi RÉDUIT se paie séance par séance au tarif réduit ; un emploi que
   // la réception n'a pas réduit garde le prix du mois de l'emploi du temps.
@@ -1399,6 +1421,57 @@ export function cycleRecords(
   return sessionAttendance(db, studentId, sessionId).filter(consumesSeance);
 }
 
+/**
+ * LE CALENDRIER DU GROUPE : les jours où l'emploi du temps a réellement tenu
+ * une séance, du plus ancien au plus récent — un jour par séance.
+ *
+ * C'est LUI qui découpe les mois, pour tous les élèves à la fois : la séance
+ * n° 21 d'un emploi de 20 séances est la séance 1 du M2, quel que soit le
+ * nombre de lignes qu'un élève a sur son compte. Le découpage se faisait
+ * élève par élève (sa 21ᵉ ligne = son M2) : un élève qu'on avait oublié de
+ * pointer une fois, ou qui portait une séance annulée, restait un cran en
+ * arrière, et la feuille du M1 s'ouvrait sur une colonne S21 que l'emploi du
+ * temps n'avait jamais prévue.
+ *
+ * Une séance ANNULÉE (ou une ligne d'un élève venu en remplacement) ne fait
+ * pas une séance du groupe.
+ */
+const seanceDayIndex = new WeakMap<AttendanceRecord[], Map<string, string[]>>();
+export function groupSeanceDays(db: Database, sessionId: string): string[] {
+  let bySession = seanceDayIndex.get(db.attendance);
+  if (!bySession) {
+    const sets = new Map<string, Set<string>>();
+    for (const rec of db.attendance) {
+      if (rec.substituteGroup || !consumesSeance(rec)) continue;
+      const set = sets.get(rec.sessionId);
+      if (set) set.add(dayKeyOf(rec.timestamp));
+      else sets.set(rec.sessionId, new Set([dayKeyOf(rec.timestamp)]));
+    }
+    bySession = new Map([...sets].map(([id, set]) => [id, [...set].sort()]));
+    seanceDayIndex.set(db.attendance, bySession);
+  }
+  return bySession.get(sessionId) ?? [];
+}
+
+/** Le rang (0 = première séance) de la séance du groupe tenue ce jour-là. Un
+ *  jour sans séance du groupe se range juste après celles qui le précèdent. */
+export function groupSeancePosition(db: Database, sessionId: string, iso: string): number {
+  const days = groupSeanceDays(db, sessionId);
+  const day = dayKeyOf(iso);
+  const at = days.indexOf(day);
+  return at >= 0 ? at : days.filter((d) => d < day).length;
+}
+
+/** Le mois (0 = M1) de l'emploi du temps auquel appartient une ligne. */
+export function recordMonthIndex(db: Database, rec: AttendanceRecord, size: number): number {
+  return Math.floor(groupSeancePosition(db, rec.sessionId, rec.timestamp) / Math.max(1, size));
+}
+
+/** Le groupe a-t-il tenu TOUTES les séances du mois `index` ? */
+export function groupMonthDone(db: Database, sessionId: string, index: number, size: number): boolean {
+  return groupSeanceDays(db, sessionId).length >= (index + 1) * size;
+}
+
 /** One month of one student on one emploi du temps. */
 export interface MonthCycle {
   code: string;
@@ -1498,23 +1571,29 @@ export function enrollmentCycles(
     credits[code] = (credits[code] ?? 0) + p.amountPaid;
   }
 
-  const fromRecords = Math.ceil((start.offset + records.length) / size);
+  // Chaque ligne tombe dans le mois DU GROUPE où sa séance a été tenue (voir
+  // `groupSeanceDays`) — jamais dans « sa n-ième ligne ».
+  const monthOfRec = new Map(records.map((a) => [a.id, recordMonthIndex(db, a, size)]));
+  const fromRecords = records.reduce((mx, a) => Math.max(mx, (monthOfRec.get(a.id) ?? 0) + 1), 0);
   const fromCredits = Object.keys(credits).reduce((mx, c) => Math.max(mx, monthOrder(c) + 1), 0);
   const count = Math.max(1, start.monthIndex + 1, fromRecords, fromCredits);
 
-  const clamp = (n: number) => Math.min(Math.max(n, 0), records.length);
   const out: MonthCycle[] = [];
   for (let i = 0; i < count; i++) {
     // What the month holds for HIM: the whole pack, minus the séances that ran
     // before he arrived (all of them on a month he was not there for).
     const lead = i < start.monthIndex ? size : i === start.monthIndex ? start.slotIndex : 0;
-    const slice = records.slice(clamp(i * size - start.offset), clamp((i + 1) * size - start.offset));
+    const slice = records.filter((a) => monthOfRec.get(a.id) === i);
     const code = `M${i + 1}`;
     const consumed = money(
       slice.reduce((t, a) => t + seanceChargeOf(db, a, student, sub), 0),
     );
     const credited = credits[code] ?? 0;
-    const complete = size - lead > 0 && slice.length >= size - lead;
+    // Le mois se ferme quand LE GROUPE a tenu ses séances, même si l'élève
+    // n'a pas été pointé sur chacune.
+    const complete =
+      size - lead > 0 &&
+      (slice.length >= size - lead || (!!sub && groupMonthDone(db, sub.sessionId, i, size)));
     out.push({
       code,
       index: i,
@@ -1527,7 +1606,11 @@ export function enrollmentCycles(
       credited,
       balance: credited - consumed,
       startDate: slice[0] ? dayOfIso(slice[0].timestamp) : undefined,
-      endDate: complete ? dayOfIso(slice[slice.length - 1].timestamp) : undefined,
+      endDate: complete
+        ? slice.length
+          ? dayOfIso(slice[slice.length - 1].timestamp)
+          : sub && groupSeanceDays(db, sub.sessionId)[(i + 1) * size - 1]
+        : undefined,
     });
   }
   return out;
@@ -1541,8 +1624,13 @@ export function currentCycleIndex(db: Database, studentId: string, subscriptionI
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   if (!sub) return 0;
   const size = cycleSizeOf(sub);
-  const { offset } = enrollmentStart(db, studentId, subscriptionId);
-  return Math.floor((offset + cycleRecords(db, studentId, sub.sessionId).length) / size);
+  const start = enrollmentStart(db, studentId, subscriptionId).monthIndex;
+  const records = cycleRecords(db, studentId, sub.sessionId);
+  if (records.length === 0) return start;
+  const last = records.reduce((mx, a) => Math.max(mx, recordMonthIndex(db, a, size)), 0);
+  // Le groupe a tenu toutes les séances de ce mois : TOUT le groupe passe à
+  // la séance 1 du mois suivant, pointé ou non sur chacune.
+  return Math.max(start, groupMonthDone(db, sub.sessionId, last, size) ? last + 1 : last);
 }
 
 export function currentCycleCode(db: Database, studentId: string, subscriptionId: string): string {
@@ -1579,10 +1667,8 @@ export function cycleOf(
 export function monthCodeOfAttendance(db: Database, record: AttendanceRecord): string | null {
   const sub = db.subscriptions.find((s) => s.sessionId === record.sessionId);
   if (!sub) return null;
-  const size = cycleSizeOf(sub);
-  const rows = cycleRecords(db, record.studentId, record.sessionId);
-  const pos = rows.findIndex((a) => a.id === record.id);
-  return pos < 0 ? null : `M${Math.floor(pos / size) + 1}`;
+  if (!consumesSeance(record)) return null;
+  return `M${recordMonthIndex(db, record, cycleSizeOf(sub)) + 1}`;
 }
 
 /** Current month of a whole GROUP: the month most of its students are on, so
@@ -2539,8 +2625,10 @@ export function studentCaseLabel(student: Student): string {
       }
       return "Cas spécial · gratuit";
     }
-    case "teacher_child":
-      return "Fils d'enseignant";
+    case "teacher_child": {
+      const pct = teacherChildReductionPct(student);
+      return pct > 0 ? `Fils d'enseignant · école seule -${pct}%` : "Fils d'enseignant · école seule";
+    }
     case "reduction": {
       // La réduction se coche emploi par emploi : une fiche partiellement
       // réduite doit se lire comme telle, sinon la paie se lit à l'envers.
@@ -2624,25 +2712,41 @@ export function cycleSlots(
   subscriptionId: string,
   code: string,
 ): AttendanceRecord[] {
+  return cycleSlotGrid(db, studentId, subscriptionId, code).filter(
+    (a): a is AttendanceRecord => !!a,
+  );
+}
+
+/**
+ * LES COLONNES D'UN MOIS, CASE PAR CASE : `size` cases exactement — la case n
+ * est la n-ième séance que LE GROUPE a tenue ce mois-là, et elle porte la
+ * ligne de cet élève ce jour-là (ou rien s'il n'a pas été pointé).
+ *
+ * Un mois de 20 séances a donc 20 colonnes, jamais 21 : une séance annulée
+ * n'est pas une séance du groupe et ne pousse rien d'un cran.
+ */
+export function cycleSlotGrid(
+  db: Database,
+  studentId: string,
+  subscriptionId: string,
+  code: string,
+): (AttendanceRecord | undefined)[] {
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   if (!sub) return [];
-  const cycles = enrollmentCycles(db, studentId, subscriptionId);
+  const size = cycleSizeOf(sub);
+  const grid: (AttendanceRecord | undefined)[] = Array.from({ length: size }, () => undefined);
   const idx = Math.max(0, monthOrder(code));
   // A month that ran before he was registered holds nothing of his.
-  if (idx < enrollmentStart(db, studentId, subscriptionId).monthIndex) return [];
-  const cycle = cycles[idx];
-  const all = sessionAttendance(db, studentId, sub.sessionId);
-  const billable = new Set((cycle?.records ?? []).map((r) => r.id));
-
-  // Window: right after the last séance of the previous month, up to the last
-  // séance of this one (or the newest row while the month is still open).
-  const prev = cycles[idx - 1];
-  const prevLast = prev?.records[prev.records.length - 1]?.id;
-  const from = prevLast ? all.findIndex((a) => a.id === prevLast) + 1 : 0;
-  const lastId = cycle?.complete ? cycle.records[cycle.records.length - 1]?.id : undefined;
-  const to = lastId ? all.findIndex((a) => a.id === lastId) + 1 : all.length;
-
-  return all.slice(from, Math.max(from, to)).filter((a) => billable.has(a.id) || !consumesSeance(a));
+  if (idx < enrollmentStart(db, studentId, subscriptionId).monthIndex) return grid;
+  const days = groupSeanceDays(db, sub.sessionId);
+  for (const rec of sessionAttendance(db, studentId, sub.sessionId)) {
+    const at = days.indexOf(dayKeyOf(rec.timestamp));
+    if (at < idx * size || at >= (idx + 1) * size) continue;
+    const slot = at - idx * size;
+    // Deux lignes le même jour : celle qui compte l'emporte sur l'annulée.
+    if (!grid[slot] || (consumesSeance(rec) && !consumesSeance(grid[slot]!))) grid[slot] = rec;
+  }
+  return grid;
 }
 
 /**
@@ -2675,22 +2779,9 @@ export function enrolledInMonth(
 }
 
 /** How many séance columns a month of this emploi shows. */
-export function slotCountFor(
-  db: Database,
-  subscriptionId: string,
-  studentIds: string[],
-  code: string,
-): number {
-  const sub = db.subscriptions.find((s) => s.id === subscriptionId);
-  const base = cycleSizeOf(sub);
-  return studentIds.reduce(
-    (mx, id) =>
-      Math.max(
-        mx,
-        cycleLead(db, id, subscriptionId, code) + cycleSlots(db, id, subscriptionId, code).length,
-      ),
-    base,
-  );
+export function slotCountFor(db: Database, subscriptionId: string): number {
+  // Toujours le nombre de séances que l'emploi du temps prévoit par mois.
+  return cycleSizeOf(db.subscriptions.find((s) => s.id === subscriptionId));
 }
 
 /** The days a GROUP actually held a séance during one of its months, oldest
@@ -2699,18 +2790,12 @@ export function sessionMonthDays(
   db: Database,
   subscriptionId: string,
   code: string,
-  exceptStudentId?: string,
 ): string[] {
   const sub = db.subscriptions.find((s) => s.id === subscriptionId);
   if (!sub) return [];
-  const days = new Set<string>();
-  for (const student of sessionEnrolledStudents(db, sub.sessionId)) {
-    if (student.id === exceptStudentId) continue;
-    for (const rec of cycleSlots(db, student.id, subscriptionId, code)) {
-      days.add(dayKeyOf(rec.timestamp));
-    }
-  }
-  return [...days].sort();
+  const size = cycleSizeOf(sub);
+  const idx = Math.max(0, monthOrder(code));
+  return groupSeanceDays(db, sub.sessionId).slice(idx * size, (idx + 1) * size);
 }
 
 /**
@@ -2819,7 +2904,7 @@ export function sessionMonthCodeOn(db: Database, sessionId: string, date: string
   const sub = db.subscriptions.find((s) => s.sessionId === sessionId);
   if (!sub) return "M1";
   const size = cycleSizeOf(sub);
-  const days = sessionSeanceDays(db, sub.id);
+  const days = groupSeanceDays(db, sessionId);
   const at = days.indexOf(date);
   const index = at >= 0 ? at : days.filter((d) => d < date).length;
   return `M${Math.floor(index / size) + 1}`;

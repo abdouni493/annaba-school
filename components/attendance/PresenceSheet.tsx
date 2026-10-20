@@ -91,7 +91,7 @@ import {
   cycleLead,
   cycleOf,
   cycleSizeOf,
-  cycleSlots,
+  cycleSlotGrid,
   currentCycleCode,
   dayKeyOf,
   enrolledInMonth,
@@ -118,6 +118,7 @@ import {
   studentCaseLabel,
   studentCaseLabelFor,
   studentCaseTone,
+  teacherChildReductionPct,
   studentListPrice,
   studentMatches,
   studentMonthPriceFrom,
@@ -302,7 +303,7 @@ export function PresenceSheet({
 
   const shown = roster.filter((st) => studentMatches(db, st, search));
 
-  const slotCount = sub ? slotCountFor(db, sub.id, roster.map((s) => s.id), monthCode) : cycleSizeOf(sub);
+  const slotCount = sub ? slotCountFor(db, sub.id) : cycleSizeOf(sub);
 
   const scheduledDay = session.days.includes(JS_DAYS[new Date(`${date}T12:00:00`).getDay()]);
 
@@ -755,8 +756,7 @@ export function PresenceSheet({
         date,
         language,
         rows: shown.map((st) => {
-          const slots = cycleSlots(db, st.id, sub.id, monthCode);
-          const lead = cycleLead(db, st.id, sub.id, monthCode);
+          const slots = cycleSlotGrid(db, st.id, sub.id, monthCode);
           const prevDebt =
             monthIndex > 0 ? Math.max(0, -cycleOf(db, st.id, sub.id, `M${monthIndex}`).balance) : 0;
           return {
@@ -764,7 +764,7 @@ export function PresenceSheet({
             name: studentName(st),
             phone: st.phone,
             slots: Array.from({ length: slotCount }, (_, i) =>
-              i < lead ? null : (slots[i - lead]?.status ?? null),
+              slots[i]?.status ?? null,
             ),
             sold: soldFor(db, st.id, sub.id),
             // Le cas se lit SUR CET EMPLOI DU TEMPS : une réduction cochée
@@ -2229,7 +2229,47 @@ function AddExistingStudentModal({
   onClose: () => void;
 }) {
   const db = useData();
+  const updateItem = useData((s) => s.updateItem);
+  const { addToast } = useToast();
   const [query, setQuery] = useState("");
+  /**
+   * « FILS D'ENSEIGNANT », réglable au moment de l'inscrire : il ne paie que
+   * la part de l'école, moins la remise (%) que l'école lui accorde.
+   */
+  const [child, setChild] = useState<Record<string, { on: boolean; fatherId: string; pct: number }>>({});
+  const childOf = (st: Student) =>
+    child[st.id] ?? {
+      on: st.studentCase === "teacher_child",
+      fatherId: st.teacherFatherId ?? "",
+      pct: teacherChildReductionPct(st),
+    };
+  const inscrire = (st: Student) => {
+    const c = childOf(st);
+    const was = st.studentCase === "teacher_child";
+    if (c.on) {
+      if (!c.fatherId) {
+        addToast({ type: "danger", title: "Fils d'enseignant", message: "Choisissez l'enseignant père." });
+        return;
+      }
+      const pct = Math.min(100, Math.max(0, c.pct || 0));
+      if (!was || c.fatherId !== st.teacherFatherId || pct !== teacherChildReductionPct(st)) {
+        updateItem("students", st.id, {
+          studentCase: "teacher_child",
+          isFree: false,
+          teacherFatherId: c.fatherId,
+          caseReduction: pct > 0 ? { type: "percent", schoolValue: pct, teacherValue: 0 } : undefined,
+        });
+      }
+    } else if (was) {
+      updateItem("students", st.id, {
+        studentCase: "normal",
+        teacherFatherId: undefined,
+        caseReduction: undefined,
+      });
+    }
+    const fresh = useData.getState().students.find((x) => x.id === st.id) ?? st;
+    onAdd(fresh);
+  };
 
   const point = joinPointFor(db, subscriptionId, date);
   const candidates = useMemo(() => {
@@ -2269,11 +2309,13 @@ function AddExistingStudentModal({
                 : "Aucun élève à ajouter."}
             </p>
           ) : (
-            candidates.map((st) => (
-              <div
-                key={st.id}
-                className="flex items-center justify-between gap-2 rounded-xl border border-line bg-surface p-2.5"
-              >
+            candidates.map((st) => {
+              const c = childOf(st);
+              const setC = (patch: Partial<typeof c>) =>
+                setChild((m) => ({ ...m, [st.id]: { ...c, ...patch } }));
+              return (
+              <div key={st.id} className="space-y-2 rounded-xl border border-line bg-surface p-2.5">
+              <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <strong className="block text-xs text-ink">{studentName(st)}</strong>
                   <span className="text-[10px] text-muted">
@@ -2285,13 +2327,54 @@ function AddExistingStudentModal({
                 <Button
                   size="sm"
                   disabled={busyId === st.id}
-                  onClick={() => onAdd(st)}
+                  onClick={() => inscrire(st)}
                   className="gap-1.5"
                 >
                   <UserRoundPlus className="h-3.5 w-3.5" /> Inscrire
                 </Button>
               </div>
-            ))
+              <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted">
+                <label className="flex items-center gap-1.5 font-semibold text-ink">
+                  <input
+                    type="checkbox"
+                    checked={c.on}
+                    onChange={(e) => setC({ on: e.target.checked })}
+                  />
+                  Fils d&apos;enseignant (école seule)
+                </label>
+                {c.on && (
+                  <>
+                    <Select
+                      value={c.fatherId}
+                      onChange={(e) => setC({ fatherId: e.target.value })}
+                      className="h-7 text-[11px]"
+                    >
+                      <option value="">— Enseignant père —</option>
+                      {db.teachers.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.firstName} {t.lastName}
+                        </option>
+                      ))}
+                    </Select>
+                    <span>Réduction école</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={c.pct || ""}
+                      onChange={(e) =>
+                        setC({ pct: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })
+                      }
+                      placeholder="0"
+                      className="h-7 w-16"
+                    />
+                    <span>%</span>
+                  </>
+                )}
+              </div>
+              </div>
+              );
+            })
           )}
         </div>
         <div className="flex justify-end border-t border-line pt-3">
@@ -2719,7 +2802,7 @@ function StudentRow({
   const sub = db.subscriptions.find((s) => s.id === subscriptionId)!;
   const label = session.title || moduleNameOf(db, session.moduleId);
 
-  const slots = cycleSlots(db, student.id, subscriptionId, monthCode);
+  const slots = cycleSlotGrid(db, student.id, subscriptionId, monthCode);
   /** séances of this month held before he was registered — never his */
   const lead = cycleLead(db, student.id, subscriptionId, monthCode);
   const cycle = cycleOf(db, student.id, subscriptionId, monthCode);
@@ -2778,8 +2861,8 @@ function StudentRow({
       {Array.from({ length: slotCount }, (_, i) => {
         // Before his arrival the séance simply is not his: the box stays empty
         // instead of reading like a pointage still to do.
-        const before = i < lead;
-        const rec: AttendanceRecord | undefined = before ? undefined : slots[i - lead];
+        const rec: AttendanceRecord | undefined = slots[i];
+        const before = !rec && i < lead;
         // Une case DÉJÀ POINTÉE se clique : c'est là qu'on retire une présence
         // ou une absence saisie par erreur, fût-elle d'un autre jour du mois,
         // et qu'on récupère ce qu'elle avait pris sur le solde.

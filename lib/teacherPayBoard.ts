@@ -38,7 +38,7 @@ import type {
 import {
   cycleLead,
   cycleOf,
-  cycleSlots,
+  cycleSlotGrid,
   monthlyPriceOf,
   teacherChildDebtEmploi,
   teacherMonthShareOf,
@@ -442,11 +442,11 @@ function monthSlots(
   monthCode: string,
 ): (string | null)[] {
   if (!emploi.subscriptionId) return [];
-  const rows = cycleSlots(db, studentId, emploi.subscriptionId, monthCode);
+  const rows = cycleSlotGrid(db, studentId, emploi.subscriptionId, monthCode);
   const lead = cycleLead(db, studentId, emploi.subscriptionId, monthCode);
   const size = cycleOf(db, studentId, emploi.subscriptionId, monthCode).size;
   return Array.from({ length: size }, (_, i) =>
-    i < lead ? "before" : (rows[i - lead]?.status ?? null),
+    rows[i] ? rows[i]!.status : i < lead ? "before" : null,
   );
 }
 

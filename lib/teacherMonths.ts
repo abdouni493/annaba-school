@@ -43,6 +43,8 @@ import {
   dayKeyOf,
   enrollmentCycles,
   enrollmentStart,
+  groupMonthDone,
+  recordMonthIndex,
   formatDays,
   isFreeSub,
   isSchoolOnlySub,
@@ -295,31 +297,6 @@ export interface TeacherEmploi {
 const byDate = (a: AttendanceRecord, b: AttendanceRecord) => a.timestamp.localeCompare(b.timestamp);
 
 /**
- * Le mois de CHAQUE ligne de présence d'un emploi du temps.
- *
- * Les lignes qui ne coûtent rien (une séance annulée) n'avancent pas le
- * compteur : elles sont simplement rattachées au mois en cours, exactement
- * comme la feuille de présence les affiche.
- *
- * `offset` est le point d'entrée de l'élève : inscrit en M2 sur la 3e séance,
- * ses présences sont comptées à partir de là — sa première séance appartient à
- * M2, pas à M1.
- */
-function recordMonths(
-  records: AttendanceRecord[],
-  size: number,
-  offset = 0,
-): Map<string, number> {
-  const out = new Map<string, number>();
-  let billable = offset;
-  for (const rec of records) {
-    out.set(rec.id, Math.floor(billable / Math.max(1, size)));
-    if (consumesSeance(rec)) billable += 1;
-  }
-  return out;
-}
-
-/**
  * Les élèves inscrits sur l'emploi, plus ceux qui y ont été pointés.
  *
  * Un élève « école seule » SUR CET EMPLOI DU TEMPS n'y figure pas : l'école est
@@ -481,10 +458,17 @@ function buildEmploi(db: Database, teacherId: string, session: ScheduleSession):
   for (const [studentId, rows] of recordsByStudent) {
     rows.sort(byDate);
     const offset = startOf.get(studentId) ?? (sub ? enrollmentStart(db, studentId, sub.id).offset : 0);
-    for (const [id, idx] of recordMonths(rows, size, offset)) monthOfRecord.set(id, idx);
+    // Le mois se lit sur le calendrier DU GROUPE (voir `groupSeanceDays`).
+    for (const rec of rows) monthOfRecord.set(rec.id, recordMonthIndex(db, rec, size));
+    const last = rows
+      .filter(consumesSeance)
+      .reduce((mx, rec) => Math.max(mx, monthOfRecord.get(rec.id) ?? 0), -1);
+    const startIdx = Math.floor(offset / size);
     currentIndexOf.set(
       studentId,
-      Math.floor((offset + rows.filter(consumesSeance).length) / size),
+      last < 0
+        ? startIdx
+        : Math.max(startIdx, groupMonthDone(db, session.id, last, size) ? last + 1 : last),
     );
   }
   // Un élève inscrit et pas encore pointé vit déjà le mois de son entrée.

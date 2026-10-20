@@ -72,6 +72,7 @@ import {
   registrationNumberOf,
   soldFor,
   studentSubscriptionHistory,
+  teacherChildReductionPct,
   studentMonthPrice,
   studentMonthPriceFrom,
   nextRegistrationNumber,
@@ -274,6 +275,14 @@ function StudentFiche({
   );
   const [teacherFatherId, setTeacherFatherId] = useState(editing?.teacherFatherId ?? "");
   const [teacherSearch, setTeacherSearch] = useState("");
+  /** « Fils d'enseignant » : la remise (%) que l'école accorde sur SA part. */
+  const [childPct, setChildPct] = useState<number>(() =>
+    editing?.studentCase === "teacher_child" ? teacherChildReductionPct(editing) : 0,
+  );
+  const childReduction: CaseReduction | undefined =
+    studentCase === "teacher_child" && childPct > 0
+      ? { type: "percent", schoolValue: Math.min(100, childPct), teacherValue: 0 }
+      : undefined;
   /**
    * « RÉDUCTION » : LA REMISE SE COCHE EMPLOI DU TEMPS PAR EMPLOI DU TEMPS.
    *
@@ -699,9 +708,10 @@ function StudentFiche({
         freeSubscriptionIds: freeList,
         schoolOnlySubscriptionIds: schoolOnlyList,
         subscriptionReductions: reductionList,
+        caseReduction: childReduction,
       }) as Student,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [editing, studentCase, isFree, freeKey, schoolOnlyKey, reductionListKey],
+    [editing, studentCase, isFree, freeKey, schoolOnlyKey, reductionListKey, childPct],
   );
 
   /**
@@ -833,7 +843,9 @@ function StudentFiche({
            * celle qui reste est celle que la réception vient de saisir.
            */
           subscriptionReductions: reductionList,
-          caseReduction: undefined,
+          // Seul le « fils d'enseignant » porte encore une remise générale :
+          // celle que l'école accorde sur sa part.
+          caseReduction: childReduction,
           unpaidTeacherIds:
             studentCase === "school_only" ? derivedUnpaidTeacherIds : undefined,
           /**
@@ -999,6 +1011,7 @@ function StudentFiche({
         // La réduction se coche emploi par emploi : la table dit lesquels, et
         // les emplois qui n'y sont pas se calculent normalement.
         subscriptionReductions: reductionList,
+        caseReduction: childReduction,
         unpaidTeacherIds:
           studentCase === "school_only" ? derivedUnpaidTeacherIds : undefined,
         subscriptionIds: subIds,
@@ -1292,9 +1305,26 @@ function StudentFiche({
               <div className="space-y-1.5">
                 <p className="text-[10px] text-muted">
                   {studentCase === "teacher_child"
-                    ? "L'école est payée sur le salaire de l'enseignant père."
+                    ? "Il ne paie QUE la part de l'école (l'enseignant n'est pas payé pour lui), réglée par la famille ou sur le salaire de l'enseignant père."
                     : "Facultatif : des enseignants qui ne seront JAMAIS payés pour cet élève, même hors des emplois cochés ci-dessous."}
                 </p>
+                {studentCase === "teacher_child" && (
+                  <label className="flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[11px] text-ink">
+                    <span className="font-semibold">Réduction sur la part de l&apos;école</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={childPct || ""}
+                      onChange={(e) =>
+                        setChildPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))
+                      }
+                      placeholder="0"
+                      className="h-7 w-20"
+                    />
+                    <span className="font-bold">%</span>
+                  </label>
+                )}
                 <Input
                   value={teacherSearch}
                   onChange={(e) => setTeacherSearch(e.target.value)}
