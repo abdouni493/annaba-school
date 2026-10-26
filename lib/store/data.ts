@@ -1030,6 +1030,11 @@ interface DataActions {
   /** Turns the weekly-absence billing on/off for a single module. */
   setModuleAbsenceRule: (moduleId: string, enabled: boolean, daysWindow?: number) => Promise<void>;
   deleteFrom: <K extends keyof Database>(key: K, id: string) => void;
+  /**
+   * Retient un acompte EN PARTIE : l'acompte est ramené à `keep` DA (la part que
+   * le prochain règlement solde) et le reste devient un nouvel acompte dû.
+   */
+  splitAcompte: (id: string, keep: number) => void;
   push: <K extends keyof Database>(
     key: K,
     item: Database[K] extends Array<infer T> ? T : never,
@@ -4917,6 +4922,28 @@ export const useData = create<DataStore>((set, get) => ({
   push: (key, item) => {
     const row = signed(item as object) as typeof item;
     set((state) => ({ [key]: [...(state[key] as unknown[]), row] }) as Partial<DataStore>);
+  },
+
+  splitAcompte: (id, keep) => {
+    const a = get().acomptes.find((x) => x.id === id);
+    if (!a || a.paid) return;
+    const kept = money(Math.max(0, Math.min(a.amount, keep)));
+    const rest = money(a.amount - kept);
+    if (kept <= 0 || rest <= 0) return;
+    const remainder: TeacherAcompte = {
+      ...a,
+      id: uid("ac"),
+      amount: rest,
+      description: a.description?.startsWith("Reste") ? a.description : `Reste — ${a.description || "Acompte"}`,
+      paid: false,
+      paymentId: undefined,
+    };
+    set((state) => ({
+      acomptes: [
+        ...state.acomptes.map((x) => (x.id === id ? { ...x, amount: kept } : x)),
+        remainder,
+      ],
+    }));
   },
 
   updateItem: (key, id, updatedFields) => {

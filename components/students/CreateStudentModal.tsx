@@ -387,15 +387,19 @@ function StudentFiche({
   const isFree = studentCase === "special";
   const isSchoolOnly = studentCase === "school_only";
   const isReduction = studentCase === "reduction";
+  /** Fils d'enseignant : il choisit lui aussi, emploi par emploi, « école seule »
+   *  ou « école + enseignant ». */
+  const isTeacherChild = studentCase === "teacher_child";
+  const perSubSchoolOnly = isSchoolOnly || isTeacherChild;
   /** Cet emploi du temps est-il offert à l'élève tel que la fiche est cochée ? */
   const freeOn = (subId: string) => isFree && freeSubIds.includes(subId);
   /** L'option « école seulement » est-elle ACTIVE sur cet emploi du temps ? */
-  const schoolOnlyOn = (subId: string) => isSchoolOnly && schoolOnlySubIds.includes(subId);
+  const schoolOnlyOn = (subId: string) => perSubSchoolOnly && schoolOnlySubIds.includes(subId);
   /** La réduction est-elle ACTIVE sur cet emploi du temps ? */
   const reductionOn = (subId: string) => isReduction && !!subReductions[subId];
   /** Ce que la fiche enregistrera : rien à écrire hors du cas spécial. */
   const freeList = isFree ? subIds.filter((id) => freeSubIds.includes(id)) : undefined;
-  const schoolOnlyList = isSchoolOnly
+  const schoolOnlyList = perSubSchoolOnly
     ? subIds.filter((id) => schoolOnlySubIds.includes(id))
     : undefined;
   /**
@@ -1305,7 +1309,7 @@ function StudentFiche({
               <div className="space-y-1.5">
                 <p className="text-[10px] text-muted">
                   {studentCase === "teacher_child"
-                    ? "Il ne paie QUE la part de l'école (l'enseignant n'est pas payé pour lui), réglée par la famille ou sur le salaire de l'enseignant père."
+                    ? "Pour chaque emploi du temps coché plus bas, choisissez : « école seulement » (il ne paie que la part de l'école, l'enseignant de cet emploi n'est PAS payé pour lui) ou « école + enseignant » (tarif normal, l'enseignant est payé pour lui). La part due est réglée par la famille ou sur le salaire de l'enseignant père."
                     : "Facultatif : des enseignants qui ne seront JAMAIS payés pour cet élève, même hors des emplois cochés ci-dessous."}
                 </p>
                 {studentCase === "teacher_child" && (
@@ -1636,7 +1640,7 @@ function StudentFiche({
                           activé ici ne paie que l'école et disparaît de la fiche de
                           paie de l'enseignant ; ce qui ne l'est pas se calcule
                           normalement, et l'élève y apparaît comme tout le monde. */}
-                      {isSchoolOnly && (
+                      {perSubSchoolOnly && (
                         <label
                           className={`mt-2 flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
                             schoolOnlyOn(subId)

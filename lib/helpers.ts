@@ -794,7 +794,10 @@ export function caseReductionCut(
 ): number {
   const base = positiveMoney(part || 0);
   if (base <= 0) return 0;
-  const childPct = side === "school" ? teacherChildReductionPct(student) : 0;
+  // La remise du fils d'enseignant ne vaut que sur ses emplois « école seule » :
+  // sur un emploi payé école + enseignant, il paie le tarif ordinaire.
+  const childPct =
+    side === "school" && isSchoolOnlySub(student, sub?.id) ? teacherChildReductionPct(student) : 0;
   if (childPct > 0) return Math.min(base, money((base * childPct) / 100));
   const red = reductionForSub(student, sub?.id);
   if (!red) return 0;
@@ -839,10 +842,16 @@ export function isSchoolOnlySub(
   subscriptionId?: string,
   teacherId?: string,
 ): boolean {
-  // Un fils d'enseignant ne paie QUE l'école, sur tous ses emplois du temps.
-  if (student?.studentCase === "teacher_child") return true;
-  if (!student || student.studentCase !== "school_only") return false;
+  if (!student) return false;
   const list = student.schoolOnlySubscriptionIds;
+  // Fils d'enseignant : la réception choisit, emploi par emploi, « école seule »
+  // ou « école + enseignant ». Sans liste (fiches d'avant) : école seule partout.
+  if (student.studentCase === "teacher_child") {
+    if (!list) return true;
+    if (!subscriptionId) return list.length > 0;
+    return list.includes(subscriptionId);
+  }
+  if (student.studentCase !== "school_only") return false;
   if (list) {
     if (!subscriptionId) return list.length > 0;
     return list.includes(subscriptionId);
@@ -854,7 +863,8 @@ export function isSchoolOnlySub(
 
 /** Les emplois du temps sur lesquels l'option « école seule » est ACTIVE. */
 export function schoolOnlySubIdsOf(student: Student | undefined): string[] {
-  if (student?.studentCase === "teacher_child") return student.subscriptionIds ?? [];
+  if (student?.studentCase === "teacher_child")
+    return student.schoolOnlySubscriptionIds ?? student.subscriptionIds ?? [];
   if (!student || student.studentCase !== "school_only") return [];
   return student.schoolOnlySubscriptionIds ?? student.subscriptionIds ?? [];
 }
@@ -2627,6 +2637,14 @@ export function studentCaseLabel(student: Student): string {
     }
     case "teacher_child": {
       const pct = teacherChildReductionPct(student);
+      const only = student.schoolOnlySubscriptionIds;
+      const followed = student.subscriptionIds ?? [];
+      if (only && followed.some((id) => !only.includes(id))) {
+        const n = followed.filter((id) => only.includes(id)).length;
+        return n > 0
+          ? `Fils d'enseignant · ${n} emploi(s) école seule${pct > 0 ? ` -${pct}%` : ""}`
+          : "Fils d'enseignant · école + enseignant";
+      }
       return pct > 0 ? `Fils d'enseignant · école seule -${pct}%` : "Fils d'enseignant · école seule";
     }
     case "reduction": {
@@ -2673,6 +2691,11 @@ export function studentCaseLabel(student: Student): string {
  * Ce libellé-ci ne dit donc que ce qui vaut POUR CET EMPLOI DU TEMPS.
  */
 export function studentCaseLabelFor(student: Student, subscriptionId?: string): string {
+  if (subscriptionId && student.studentCase === "teacher_child") {
+    if (!isSchoolOnlySub(student, subscriptionId)) return "Fils d'enseignant · école + enseignant";
+    const pct = teacherChildReductionPct(student);
+    return pct > 0 ? `Fils d'enseignant · école seule -${pct}%` : "Fils d'enseignant · école seule";
+  }
   if (subscriptionId && student.studentCase === "reduction") {
     const red = reductionForSub(student, subscriptionId);
     // Réduction NON active ici : il est un élève comme les autres sur cet

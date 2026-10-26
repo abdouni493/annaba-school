@@ -38,6 +38,10 @@ import { buildTeacherPaymentReport } from "@/lib/reports/teacherPayment";
 import { buildTeacherSettlementReceipt } from "@/lib/reports/teacherSettlement";
 import { buildTeacherPayslip, type PayslipEmploi } from "@/lib/reports/teacherPayslip";
 import { TeacherPayCenter } from "@/components/teachers/TeacherPayCenter";
+import {
+  SettlementFigure,
+  TeacherDeductionsHistory,
+} from "@/components/teachers/TeacherDeductionsHistory";
 import { PayBoardView } from "@/components/teachers/PayBoardView";
 import { buildTeacherMonthPayslip } from "@/lib/reports/teacherMonthPayslip";
 import { TeacherMonthsModal } from "@/components/teachers/TeacherMonthsModal";
@@ -239,7 +243,7 @@ export function TeachersPage() {
   const [printEnd, setPrintEnd] = useState("");
 
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
-  const [detailsTab, setDetailsTab] = useState<"info" | "finance" | "sessions">("info");
+  const [detailsTab, setDetailsTab] = useState<"info" | "finance" | "acomptes" | "absences" | "sessions">("info");
   const [sessionFilter, setSessionFilter] = useState<"all" | "paid" | "unpaid">("all");
 
   // ---- List search / filters ------------------------------------------------
@@ -1752,38 +1756,56 @@ export function TeachersPage() {
 
             {/* Modal Tabs navigation — school teachers only; a passager has his
                 own single-page file above. */}
-            <div className={`flex border-b border-line gap-1.5 pb-0.5 ${selectedTeacher.isPassager ? "hidden" : ""}`}>
-              <button
-                onClick={() => setDetailsTab("info")}
-                className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-colors border-b-2 -mb-0.5 ${
-                  detailsTab === "info"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted hover:text-ink hover:bg-canvas/50"
-                }`}
-              >
-                📅 Emploi du Temps
-              </button>
-              <button
-                onClick={() => setDetailsTab("finance")}
-                className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-colors border-b-2 -mb-0.5 ${
-                  detailsTab === "finance"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted hover:text-ink hover:bg-canvas/50"
-                }`}
-              >
-                💸 Historique Financier
-              </button>
-              <button
-                onClick={() => setDetailsTab("sessions")}
-                className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-colors border-b-2 -mb-0.5 ${
-                  detailsTab === "sessions"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted hover:text-ink hover:bg-canvas/50"
-                }`}
-              >
-                📊 Historique des Séances
-              </button>
+            <div
+              className={`flex flex-wrap gap-1.5 rounded-2xl border border-line bg-canvas p-1.5 ${
+                selectedTeacher.isPassager ? "hidden" : ""
+              }`}
+            >
+              {(
+                [
+                  { id: "info", label: "📅 Emploi du temps", on: "bg-primary text-white" },
+                  { id: "finance", label: "💸 Règlements & finances", on: "bg-success text-white" },
+                  {
+                    id: "acomptes",
+                    label: `💰 Acomptes (${getTeacherAcomptes(selectedTeacher.id).length})`,
+                    on: "bg-warning text-white",
+                  },
+                  {
+                    id: "absences",
+                    label: `🚫 Absences (${getTeacherAbsences(selectedTeacher.id).length})`,
+                    on: "bg-danger text-white",
+                  },
+                  { id: "sessions", label: "📊 Séances", on: "bg-ink text-surface" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setDetailsTab(tab.id)}
+                  className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold transition-all ${
+                    detailsTab === tab.id
+                      ? `${tab.on} shadow-md`
+                      : "text-muted hover:bg-surface hover:text-ink"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
+
+            {!selectedTeacher.isPassager && detailsTab === "acomptes" && (
+              <TeacherDeductionsHistory
+                teacher={selectedTeacher}
+                kind="acompte"
+                onAdd={() => openAcompte(selectedTeacher)}
+              />
+            )}
+            {!selectedTeacher.isPassager && detailsTab === "absences" && (
+              <TeacherDeductionsHistory
+                teacher={selectedTeacher}
+                kind="absence"
+                onAdd={() => openAbsence(selectedTeacher)}
+              />
+            )}
 
             {/* TAB CONTENT: Info / Schedule */}
             {!selectedTeacher.isPassager && detailsTab === "info" && (
@@ -2055,68 +2077,48 @@ export function TeachersPage() {
                       </p>
                     ) : (
                       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                        {settlements.map((pay) => (
+                        {settlements.map((pay) => {
+                          const sum = (rows?: { amount: number }[]) =>
+                            (rows ?? []).reduce((t, r) => t + r.amount, 0);
+                          const expTotal = sum(pay.expenses);
+                          const acTotal = sum(pay.acomptes);
+                          const childTotal = sum(pay.childDebts) + sum(pay.childCharges);
+                          const retained = expTotal + acTotal + childTotal;
+                          return (
                           <div
                             key={pay.id}
-                            className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-success/20 bg-success/5 p-3 text-xs"
+                            className="overflow-hidden rounded-2xl border border-success/30 bg-gradient-to-br from-success/10 via-surface to-surface text-xs shadow-sm transition-shadow hover:shadow-md"
                           >
-                            <div className="min-w-0">
-                              <strong className="block text-ink">
-                                {formatDA(pay.amount)} net
-                                <Badge tone="neutral" className="ml-1.5 text-[9px]">
-                                  {pay.method === "percent"
-                                    ? `${pay.percentage ?? 0} %`
-                                    : pay.method === "group"
-                                      ? "par groupe"
-                                      : "montant fixe"}
-                                </Badge>
-                              </strong>
-                              <span className="block text-[10px] text-muted">
-                                {new Date(pay.paidAt).toLocaleString("fr-DZ", {
-                                  day: "2-digit",
-                                  month: "2-digit",
-                                  year: "numeric",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                                {pay.gross != null && ` · brut ${formatDA(pay.gross)}`}
-                                {(pay.expenses?.length ?? 0) + (pay.acomptes?.length ?? 0) > 0 &&
-                                  ` · ${(pay.expenses?.length ?? 0)} dépense(s), ${(pay.acomptes?.length ?? 0)} acompte(s) retenus`}
-                                {(pay.childDebts?.length ?? 0) > 0 &&
-                                  ` · ${pay.childDebts!.length} scolarité(s) d'enfant retenue(s)`}
-                                {(pay.arrears?.length ?? 0) > 0 &&
-                                  ` · ${pay.arrears!.length} arriéré(s) débloqué(s)`}
-                              </span>
-                              {(pay.months ?? []).length > 0 && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {(pay.months ?? []).map((m, i) => (
-                                    <Badge key={`${m.sessionId}-${m.monthCode}-${i}`} tone="primary" className="text-[9px]">
-                                      {m.title} · {m.monthCode} · {m.seances} séance(s) ·{" "}
-                                      {formatDA(m.gross)}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
-                              {(pay.arrears ?? []).length > 0 && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {(pay.arrears ?? []).map((a, i) => (
-                                    <Badge
-                                      key={`${a.studentId}-${a.monthCode}-${i}`}
-                                      tone="success"
-                                      className="text-[9px]"
-                                    >
-                                      ⏱ {a.studentName} · {a.emploi} {a.monthCode} ·{" "}
-                                      {formatDA(a.amount)}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
-                              {/* La scolarité d'un enfant retenue sur ce
-                                  règlement, avec SON emploi du temps : la même
-                                  pastille que les arriérés, pour qu'on lise
-                                  sans ouvrir quel cours du fils a été payé. */}
-                              <SettlementChildBadges payment={pay} />
-                            </div>
+                            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-success/20 bg-success/10 px-3 py-2">
+                              <div className="min-w-0">
+                                <strong className="flex flex-wrap items-center gap-1.5 text-sm text-ink">
+                                  <span className="font-mono text-success">{formatDA(pay.amount)}</span>
+                                  <span className="text-[10px] font-semibold text-muted">net versé</span>
+                                  <Badge tone="neutral" className="text-[9px]">
+                                    {pay.method === "percent"
+                                      ? `${pay.percentage ?? 0} %`
+                                      : pay.method === "group"
+                                        ? "par groupe"
+                                        : "montant fixe"}
+                                  </Badge>
+                                </strong>
+                                <span className="block text-[10px] text-muted">
+                                  🗓{" "}
+                                  {new Date(pay.paidAt).toLocaleString("fr-DZ", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                  {pay.createdByName ? ` · par ${pay.createdByName}` : ""}
+                                </span>
+                                {pay.description && (
+                                  <span className="block truncate text-[10px] italic text-muted">
+                                    {pay.description}
+                                  </span>
+                                )}
+                              </div>
                             {/* Voir · Modifier · Imprimer · Supprimer */}
                             <div className="flex shrink-0 items-center gap-1">
                               <button
@@ -2149,8 +2151,62 @@ export function TeachersPage() {
                                 <Trash2 className="h-4 w-4" />
                               </button>
                             </div>
+                            </div>
+                            <div className="space-y-2 p-3">
+                              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+                                <SettlementFigure
+                                  label="Brut"
+                                  value={formatDA(pay.gross ?? pay.amount + retained)}
+                                  tone="text-primary"
+                                />
+                                <SettlementFigure label="Acomptes" value={`− ${formatDA(acTotal)}`} tone="text-warning" />
+                                <SettlementFigure label="Dépenses" value={`− ${formatDA(expTotal)}`} tone="text-warning" />
+                                <SettlementFigure label="Enfants" value={`− ${formatDA(childTotal)}`} tone="text-danger" />
+                                <SettlementFigure label="Net" value={formatDA(pay.amount)} tone="text-success" />
+                              </div>
+                              {(pay.months ?? []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(pay.months ?? []).map((m, i) => (
+                                    <Badge key={`${m.sessionId}-${m.monthCode}-${i}`} tone="primary" className="text-[9px]">
+                                      📚 {m.title} · {m.groupName} · {m.monthCode} · {m.seances} séance(s) ·{" "}
+                                      {m.students} élève(s) · {formatDA(m.gross)}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              {(pay.acomptes ?? []).length + (pay.expenses ?? []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(pay.acomptes ?? []).map((a, i) => (
+                                    <Badge key={`ac-${a.id}-${i}`} tone="warning" className="text-[9px]">
+                                      💰 Acompte{a.description ? ` · ${a.description}` : ""} · −{formatDA(a.amount)}
+                                    </Badge>
+                                  ))}
+                                  {(pay.expenses ?? []).map((e, i) => (
+                                    <Badge key={`ex-${e.id}-${i}`} tone="warning" className="text-[9px]">
+                                      🧾 {e.label} · −{formatDA(e.amount)}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              {(pay.arrears ?? []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(pay.arrears ?? []).map((a, i) => (
+                                    <Badge
+                                      key={`${a.studentId}-${a.monthCode}-${i}`}
+                                      tone="success"
+                                      className="text-[9px]"
+                                    >
+                                      ⏱ {a.studentName} · {a.emploi} {a.monthCode} ·{" "}
+                                      {formatDA(a.amount)}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              <SettlementChildBadges payment={pay} />
+                            </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

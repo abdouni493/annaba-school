@@ -228,6 +228,9 @@ export interface BoardDeduction extends TeacherPayDeductionLine {
    *  et le mois se lisent sur `emploi` / `monthCode`, hérités de la ligne) */
   studentId?: string;
   subscriptionId?: string;
+  /** acompte : ce qu'il reste à retenir en tout (la ligne peut n'en retenir
+   *  qu'une partie sur ce règlement ; le reste revient au suivant) */
+  remaining?: number;
 }
 
 /** Tout ce que l'écran d'un mois affiche, avant que la réception ne coche. */
@@ -547,6 +550,7 @@ function buildDeductions(db: Database, teacher: Teacher): BoardDeduction[] {
       description: a.description,
       date: a.date.slice(0, 10),
       amount: a.amount,
+      remaining: a.paid ? 0 : a.amount,
       paid: !!a.paid,
       selectable: !a.paid,
     });
