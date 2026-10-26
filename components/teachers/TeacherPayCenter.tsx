@@ -234,6 +234,7 @@ function PayCenter({ teacher, onClose }: { teacher: Teacher; onClose: () => void
               exit={{ opacity: 0, x: -12 }}
               transition={{ duration: 0.18 }}
             >
+              <OpenAcomptesAlert teacherId={teacher.id} />
               <EmploiList emplois={emplois} onPick={setSessionId} />
             </motion.div>
           ) : !monthCode ? (
@@ -272,6 +273,35 @@ function PayCenter({ teacher, onClose }: { teacher: Teacher; onClose: () => void
         </AnimatePresence>
       </div>
     </Modal>
+  );
+}
+
+/** Les acomptes pas encore (entièrement) retenus : ils restent en alerte sur
+ *  l'écran de paie et se retiennent sur n'importe quel emploi du temps. */
+function OpenAcomptesAlert({ teacherId }: { teacherId: string }) {
+  const acomptes = useData((s) => s.acomptes);
+  const open = acomptes.filter((a) => a.teacherId === teacherId && !a.paid);
+  if (open.length === 0) return null;
+  const total = money(open.reduce((s, a) => s + a.amount, 0));
+  return (
+    <div className="mb-3 rounded-2xl border-2 border-warning/50 bg-warning/10 p-3.5">
+      <strong className="flex items-center gap-1.5 text-sm text-warning">
+        <AlertTriangle className="h-4 w-4" /> {open.length} acompte(s) à retenir — {formatDA(total)}
+      </strong>
+      <span className="block text-[11px] leading-relaxed text-muted">
+        Ouvrez n&apos;importe quel emploi du temps puis un mois : l&apos;acompte figure dans la table
+        3 des retenues, en totalité ou en partie. Il reste ici tant qu&apos;il n&apos;est pas
+        entièrement retenu.
+      </span>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {open.map((a) => (
+          <Badge key={a.id} tone="warning" className="gap-1 text-[10px]">
+            <Wallet className="h-3 w-3" /> {formatDateFr(a.date.slice(0, 10))} · {formatDA(a.amount)}
+            {a.description ? ` · ${a.description}` : ""}
+          </Badge>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -612,11 +642,12 @@ function MonthBoard({
     deleteTeacherPayment,
     updateTeacherPayment,
     addSold,
+    splitAcompte,
   } = db;
   const { language } = useSettings();
   const { addToast } = useToast();
 
-  const board: PayBoard = useMemo(
+  const rawBoard: PayBoard = useMemo(
     () => buildPayBoard(db, teacher, emploi, monthCode),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -632,6 +663,27 @@ function MonthBoard({
       db.teacherPayments,
     ],
   );
+
+  /**
+   * ACOMPTE RETENU EN PARTIE : la réception peut ne reprendre qu'une partie
+   * d'un acompte sur ce règlement. Le reste reste dû, affiché en alerte, et
+   * revient sur le règlement de N'IMPORTE QUEL emploi du temps jusqu'à ce que
+   * l'acompte soit entièrement retenu.
+   */
+  const [acompteCuts, setAcompteCuts] = useState<Record<string, number>>({});
+  const board: PayBoard = useMemo(() => {
+    if (Object.keys(acompteCuts).length === 0) return rawBoard;
+    return {
+      ...rawBoard,
+      deductions: rawBoard.deductions.map((d) =>
+        d.kind === "acompte" && d.selectable && acompteCuts[d.id] != null
+          ? { ...d, amount: Math.min(d.remaining ?? d.amount, Math.max(0, acompteCuts[d.id])) }
+          : d,
+      ),
+    };
+  }, [rawBoard, acompteCuts]);
+  const openAcomptes = rawBoard.deductions.filter((d) => d.kind === "acompte" && d.selectable);
+  const openAcomptesTotal = money(openAcomptes.reduce((s, d) => s + (d.remaining ?? d.amount), 0));
 
   /**
    * CE QUI EST COCHÉ.
@@ -809,7 +861,7 @@ function MonthBoard({
     const chosenArrears = board.arrears.filter((r) => arrearKeys.includes(r.key));
     const chosenPassagers = board.passagers.filter((r) => passagerIds.includes(r.id));
     const chosenDeductions = board.deductions.filter(
-      (d) => d.selectable && deductionIds.includes(d.id),
+      (d) => d.selectable && deductionIds.includes(d.id) && (d.kind !== "acompte" || d.amount > 0),
     );
 
     // Une scolarité d'enfant ENCORE DUE est soldée par ce règlement : le solde
@@ -862,6 +914,13 @@ function MonthBoard({
     const paidAt = new Date().toISOString();
     setBusy(true);
     try {
+      // Un acompte retenu en partie est scindé AVANT le règlement : la part
+      // retenue est soldée par ce règlement, le reste demeure un acompte dû.
+      for (const d of chosenDeductions) {
+        if (d.kind !== "acompte") continue;
+        const full = d.remaining ?? d.amount;
+        if (d.amount > 0 && d.amount < full) splitAcompte(d.id, d.amount);
+      }
       const res = await payTeacherSessions({
         teacherId: teacher.id,
         dueIds: chosenStudents.flatMap((r) => r.dueIds),
@@ -884,7 +943,9 @@ function MonthBoard({
             ? `Complément ${emploi.title} · ${monthCode} — ${teacher.firstName} ${teacher.lastName}`
             : `Règlement ${emploi.title} · ${monthCode} — ${teacher.firstName} ${teacher.lastName}`),
         expenseIds: chosenDeductions.filter((d) => d.kind === "expense").map((d) => d.id),
-        acompteIds: chosenDeductions.filter((d) => d.kind === "acompte").map((d) => d.id),
+        acompteIds: chosenDeductions
+          .filter((d) => d.kind === "acompte" && d.amount > 0)
+          .map((d) => d.id),
         childDebtIds: chosenDeductions.filter((d) => d.kind === "child_debt").map((d) => d.id),
         childCharges,
         details: [
@@ -1017,6 +1078,22 @@ function MonthBoard({
           </Badge>
         </div>
       </div>
+
+      {openAcomptes.length > 0 && (
+        <div className="flex flex-wrap items-start gap-3 rounded-2xl border-2 border-warning/50 bg-warning/10 p-3.5">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+          <div className="min-w-0 flex-1">
+            <strong className="block text-sm text-warning">
+              {openAcomptes.length} acompte(s) encore dû(s) — {formatDA(openAcomptesTotal)} à retenir
+            </strong>
+            <span className="block text-[11px] leading-relaxed text-muted">
+              Retenez-le(s) sur ce règlement (table 3 : montant modifiable pour une retenue
+              partielle) ou sur celui de n&apos;importe quel autre emploi du temps. L&apos;alerte
+              reste affichée tant que l&apos;acompte n&apos;est pas entièrement retenu.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ---- ce mois est-il déjà réglé ? ---------------------------------- */}
       {settlement && (
@@ -1658,6 +1735,11 @@ function MonthBoard({
                     row={d}
                     locked={busy}
                     checked={deductionIds.includes(d.id)}
+                    onCut={
+                      d.kind === "acompte" && d.selectable
+                        ? (v) => setAcompteCuts((prev) => ({ ...prev, [d.id]: v }))
+                        : undefined
+                    }
                     onToggle={() =>
                       setDeductionIds((prev) =>
                         prev.includes(d.id) ? prev.filter((x) => x !== d.id) : [...prev, d.id],
@@ -2093,6 +2175,7 @@ function DeductionLine({
   checked,
   locked: busy,
   onToggle,
+  onCut,
 }: {
   row: BoardDeduction;
   checked: boolean;
@@ -2100,8 +2183,11 @@ function DeductionLine({
    *  une retenue reste retenable même sur un mois dont la table 1 est figée. */
   locked: boolean;
   onToggle: () => void;
+  /** acompte : le montant retenu sur CE règlement (partiel possible) */
+  onCut?: (amount: number) => void;
 }) {
   const kind = DED_KIND[row.kind];
+  const full = row.remaining ?? row.amount;
   return (
     <tr className={`border-t border-line/60 ${row.paid ? "opacity-60" : checked ? "bg-danger/5" : ""}`}>
       <td className="px-2 py-2 text-center">
@@ -2129,11 +2215,34 @@ function DeductionLine({
       </td>
       <td className="px-2 py-2 text-center">
         <Badge tone={row.paid ? "success" : "warning"} className="text-[9px]">
-          {row.paid ? "Déjà retenue" : "À retenir"}
+          {row.paid ? "Déjà retenue" : onCut && row.amount < full ? "Retenue partielle" : "À retenir"}
         </Badge>
       </td>
       <td className="px-2 py-2 text-right font-mono font-bold text-danger">
-        − {formatDA(row.amount)}
+        {onCut ? (
+          <div className="flex flex-col items-end gap-0.5">
+            <span className="flex items-center gap-1">
+              −
+              <input
+                type="number"
+                min={0}
+                max={full}
+                value={row.amount}
+                disabled={busy || !checked}
+                onChange={(e) => onCut(Math.min(full, Math.max(0, Number(e.target.value) || 0)))}
+                className="h-7 w-24 rounded-md border border-line bg-surface px-1.5 text-right font-mono text-[11px] text-danger disabled:opacity-50"
+              />
+              DA
+            </span>
+            {row.amount < full && (
+              <span className="text-[9px] font-semibold text-warning">
+                reste {formatDA(money(full - row.amount))} sur {formatDA(full)}
+              </span>
+            )}
+          </div>
+        ) : (
+          <>− {formatDA(row.amount)}</>
+        )}
       </td>
     </tr>
   );
