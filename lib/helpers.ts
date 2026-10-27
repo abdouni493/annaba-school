@@ -1505,7 +1505,11 @@ export interface MonthCycle {
   consumed: number;
   /** money credited to that month */
   credited: number;
-  /** credited − consumed. NEGATIVE = the student owes that much on that month. */
+  /** reste positif du mois précédent, reporté sur celui-ci */
+  carriedIn: number;
+  /** reste positif de ce mois, reporté sur le suivant (le mois finit alors à 0) */
+  carriedOut: number;
+  /** carriedIn + credited − consumed − carriedOut. NEGATIVE = the student owes that much on that month. */
   balance: number;
   /** day the month opened (first billable séance) */
   startDate?: string;
@@ -1586,9 +1590,13 @@ export function enrollmentCycles(
   const monthOfRec = new Map(records.map((a) => [a.id, recordMonthIndex(db, a, size)]));
   const fromRecords = records.reduce((mx, a) => Math.max(mx, (monthOfRec.get(a.id) ?? 0) + 1), 0);
   const fromCredits = Object.keys(credits).reduce((mx, c) => Math.max(mx, monthOrder(c) + 1), 0);
-  const count = Math.max(1, start.monthIndex + 1, fromRecords, fromCredits);
+  let count = Math.max(1, start.monthIndex + 1, fromRecords, fromCredits);
 
+  // LE RESTE SUIT L'ÉLÈVE. Ce qu'un mois n'a pas consommé (arrivé en cours de
+  // mois, absences offertes…) passe au mois suivant, de mois en mois, au lieu
+  // de rester bloqué sur un mois clos. Une dette, elle, reste sur son mois.
   const out: MonthCycle[] = [];
+  let carry = 0;
   for (let i = 0; i < count; i++) {
     // What the month holds for HIM: the whole pack, minus the séances that ran
     // before he arrived (all of them on a month he was not there for).
@@ -1599,11 +1607,17 @@ export function enrollmentCycles(
       slice.reduce((t, a) => t + seanceChargeOf(db, a, student, sub), 0),
     );
     const credited = credits[code] ?? 0;
+    const carriedIn = carry;
     // Le mois se ferme quand LE GROUPE a tenu ses séances, même si l'élève
     // n'a pas été pointé sur chacune.
     const complete =
       size - lead > 0 &&
       (slice.length >= size - lead || (!!sub && groupMonthDone(db, sub.sessionId, i, size)));
+    const left = money(carriedIn + credited - consumed);
+    // Le mois clos (ou déjà suivi d'un autre) passe son reste au suivant.
+    const passes = left > 0 && (complete || i < count - 1);
+    if (passes && i === count - 1) count++;
+    carry = passes ? left : 0;
     out.push({
       code,
       index: i,
@@ -1614,7 +1628,9 @@ export function enrollmentCycles(
       complete,
       consumed,
       credited,
-      balance: credited - consumed,
+      carriedIn,
+      carriedOut: carry,
+      balance: passes ? 0 : left,
       startDate: slice[0] ? dayOfIso(slice[0].timestamp) : undefined,
       endDate: complete
         ? slice.length
@@ -1669,6 +1685,8 @@ export function cycleOf(
     complete: false,
     consumed: 0,
     credited: 0,
+    carriedIn: 0,
+    carriedOut: 0,
     balance: 0,
   };
 }
