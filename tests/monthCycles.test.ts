@@ -121,6 +121,26 @@ describe("les mois appartiennent à l'emploi du temps, pas au calendrier", () =>
 });
 
 describe("le solde : de l'argent, débité séance par séance", () => {
+  it("le reste d'un mois clos passe au mois suivant, de mois en mois", async () => {
+    const sub = freshBoard(4);
+    // Arrivé à la 2e séance de M1, il paie un mois entier (4 séances).
+    const student = useData.getState().students.find((st) => st.id === STU)!;
+    student.subscriptionDates![SUB] = { ...student.subscriptionDates![SUB], joinMonthCode: "M1", joinSlotIndex: 1 };
+    await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: 4 * sub.pricePerSession });
+    for (const day of scheduledDays(3)) {
+      await useData.getState().setPresence({ studentId: STU, sessionId: "ses-1", date: day, status: "present" });
+    }
+
+    const m1 = cycleOf(useData.getState(), STU, SUB, "M1");
+    expect(m1.complete).toBe(true);
+    expect(m1.carriedOut).toBe(sub.pricePerSession);
+    expect(m1.balance).toBe(0);
+    const m2 = cycleOf(useData.getState(), STU, SUB, "M2");
+    expect(m2.carriedIn).toBe(sub.pricePerSession);
+    expect(m2.balance).toBe(sub.pricePerSession);
+    expect(soldFor(useData.getState(), STU, SUB)).toBe(sub.pricePerSession);
+  });
+
   it("un versement crédite le solde du mois en cours, une présence le débite", async () => {
     const sub = freshBoard(4);
     await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: 2400 });
