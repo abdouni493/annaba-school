@@ -441,6 +441,7 @@ export function SoldManagerModal({
                       <Tile
                         label={`Versé sur ${r.code}`}
                         value={formatDA(r.cycle.credited)}
+                        hint={r.cycle.carriedIn > 0 ? `+${formatDA(r.cycle.carriedIn)} reporté` : undefined}
                         tone="neutral"
                       />
                       <Tile

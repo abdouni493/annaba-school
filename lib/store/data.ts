@@ -684,6 +684,12 @@ interface DataActions {
   convertStudentCase: (args: {
     studentId: string;
     mode: "clear" | "reprice" | "keep";
+    /**
+     * Les SEULS emplois du temps concernés — ceux dont le cas vient de
+     * changer. Absent : tous ses emplois, et « clear » fait aussi tomber ses
+     * restes d'anciens versements et ses frais d'inscription.
+     */
+    subscriptionIds?: string[];
   }) => Promise<{ ok: boolean; repriced?: number; waived?: number }>;
   /**
    * RETIRE LES PARTS D'ENSEIGNANT QU'UN CAS A RENDUES CADUQUES.
@@ -3104,15 +3110,19 @@ export const useData = create<DataStore>((set, get) => ({
 
   repriceSessions: (sessionIds) => applyReprice(set, repricePlan(get(), sessionIds)),
 
-  convertStudentCase: async ({ studentId, mode }) => {
+  convertStudentCase: async ({ studentId, mode, subscriptionIds }) => {
     const db = get();
     const student = db.students.find((s) => s.id === studentId);
     if (!student) return { ok: false };
     if (mode === "keep") return { ok: true, repriced: 0, waived: 0 };
 
     // TOUS ses emplois du temps, ceux qu'il a quittés compris : sortir d'un
-    // groupe n'a jamais effacé ce qu'on y devait.
-    const subIds = studentSubscriptionIdsOf(db, student);
+    // groupe n'a jamais effacé ce qu'on y devait. Une conversion EMPLOI PAR
+    // EMPLOI ne touche que ceux dont le cas a changé.
+    const scoped = !!subscriptionIds;
+    const subIds = studentSubscriptionIdsOf(db, student).filter(
+      (id) => !scoped || subscriptionIds!.includes(id),
+    );
     const sessionIds = subIds
       .map((id) => db.subscriptions.find((x) => x.id === id)?.sessionId)
       .filter((id): id is string => !!id);
@@ -3175,12 +3185,16 @@ export const useData = create<DataStore>((set, get) => ({
       // Un reste d'ancien versement est de la scolarité impayée : il tombe avec
       // le reste. Les frais d'inscription aussi — ils font partie de ce que la
       // famille devait au tarif d'avant.
-      payments: state.payments.map((pay) =>
-        pay.studentId === studentId && pay.rest > 0 ? { ...pay, rest: 0 } : pay,
-      ),
-      students: state.students.map((st) =>
-        st.id === studentId ? { ...st, registrationDue: 0 } : st,
-      ),
+      // Une conversion limitée à quelques emplois ne touche qu'à leurs mois :
+      // les frais et les restes appartiennent à la fiche entière.
+      payments: scoped
+        ? state.payments
+        : state.payments.map((pay) =>
+            pay.studentId === studentId && pay.rest > 0 ? { ...pay, rest: 0 } : pay,
+          ),
+      students: scoped
+        ? state.students
+        : state.students.map((st) => (st.id === studentId ? { ...st, registrationDue: 0 } : st)),
     }));
 
     return { ok: true, repriced: offered.size, waived: waivedTotal };

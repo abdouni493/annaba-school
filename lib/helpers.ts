@@ -1983,7 +1983,9 @@ export interface MonthProposal {
   mine: number;
   /** ce qu'il a déjà versé sur ce mois */
   credited: number;
-  /** séances que ce versement couvre déjà */
+  /** le reste du mois précédent, reporté sur celui-ci : il paie aussi ce mois */
+  carried: number;
+  /** séances que ce versement (report compris) couvre déjà */
   covered: number;
   /** séances qu'il doit encore, comptées DEPUIS SA PREMIÈRE du mois */
   billable: number;
@@ -2030,13 +2032,18 @@ export function monthProposal(
 
   const mine = Math.max(0, cycle.size - cycle.lead);
   const credited = positiveMoney(cycle.credited);
-  const total = positiveMoney(mine * unit - credited);
-  const covered = unit > 0 ? Math.min(mine, Math.floor(credited / unit)) : 0;
+  // Le reste d'un mois clos a déjà payé une partie de celui-ci : le guichet ne
+  // le réclame pas une seconde fois.
+  const carried = positiveMoney(cycle.carriedIn);
+  const funds = money(credited + carried);
+  const total = positiveMoney(mine * unit - funds);
+  const covered = unit > 0 ? Math.min(mine, Math.floor(funds / unit + 1e-9)) : 0;
 
   return {
     unit,
     mine,
     credited,
+    carried,
     covered,
     billable: Math.max(0, mine - covered),
     total,

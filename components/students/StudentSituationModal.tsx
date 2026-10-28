@@ -133,6 +133,10 @@ interface SituationRow {
   cancelled: number;
   consumed: number;
   credited: number;
+  /** reste du mois précédent, reporté sur celui-ci */
+  carriedIn: number;
+  /** reste de ce mois, reporté sur le suivant */
+  carriedOut: number;
   /** ce qu'il doit encore sur CE mois */
   due: number;
   /** ce qu'il a d'avance sur ce mois */
@@ -287,6 +291,8 @@ export function StudentSituationModal({
         cancelled: slots.filter((a) => a.status === "cancelled").length,
         consumed: cycle.consumed,
         credited: cycle.credited,
+        carriedIn: cycle.carriedIn,
+        carriedOut: cycle.carriedOut,
         due: Math.max(0, -cycle.balance),
         advance: Math.max(0, cycle.balance),
         complete: cycle.complete,
@@ -885,6 +891,11 @@ export function StudentSituationModal({
                               <Badge tone="success" className="font-mono" title={`Versé sur ${r.code}`}>
                                 {formatDA(r.credited)}
                               </Badge>
+                              {r.carriedIn > 0 && (
+                                <Badge tone="primary" className="font-mono" title="Reste du mois précédent, reporté">
+                                  +{formatDA(r.carriedIn)} reporté
+                                </Badge>
+                              )}
                               {r.due > 0 ? (
                                 <Badge tone="danger" className="font-mono" title="Reste dû sur ce mois">
                                   reste {formatDA(r.due)}
@@ -898,6 +909,7 @@ export function StudentSituationModal({
                             <span className="mt-0.5 block text-[9px] text-muted">
                               consommé {formatDA(r.consumed)}
                               {r.advance > 0 ? ` · ${formatDA(r.advance)} d'avance` : ""}
+                              {r.carriedOut > 0 ? ` · ${formatDA(r.carriedOut)} reportés sur M${r.index + 2}` : ""}
                             </span>
                           </td>
 
