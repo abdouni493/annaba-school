@@ -8,6 +8,7 @@ import {
   enrollmentCycles,
   monthCodeLabel,
   monthOrder,
+  monthProposal,
   registrationNumberOf,
   soldFor,
   soldStatus,
@@ -139,6 +140,10 @@ describe("le solde : de l'argent, débité séance par séance", () => {
     expect(m2.carriedIn).toBe(sub.pricePerSession);
     expect(m2.balance).toBe(sub.pricePerSession);
     expect(soldFor(useData.getState(), STU, SUB)).toBe(sub.pricePerSession);
+    // Le guichet ne réclame pas sur M2 ce que le report a déjà payé.
+    const proposal = monthProposal(useData.getState(), STU, SUB, "M2");
+    expect(proposal.carried).toBe(sub.pricePerSession);
+    expect(proposal.total).toBe(3 * sub.pricePerSession);
   });
 
   it("un versement crédite le solde du mois en cours, une présence le débite", async () => {

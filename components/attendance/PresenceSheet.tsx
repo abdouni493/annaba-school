@@ -2914,6 +2914,16 @@ function StudentRow({
           <Badge tone="success" className="font-mono" title={`Versé sur ${monthCode}`}>
             {formatDA(cycle.credited)}
           </Badge>
+          {/* Le reste du mois précédent a suivi l'élève : il paie ce mois-ci. */}
+          {cycle.carriedIn > 0 && (
+            <Badge
+              tone="primary"
+              className="font-mono"
+              title={`Reste de M${monthIndex} reporté sur ${monthCode}`}
+            >
+              +{formatDA(cycle.carriedIn)} reporté
+            </Badge>
+          )}
           {monthDue > 0 ? (
             <Badge tone="danger" className="font-mono" title={`Reste dû sur ${monthCode}`}>
               reste {formatDA(monthDue)}
@@ -2963,6 +2973,11 @@ function StudentRow({
           {cycle.complete ? " · mois clos" : ""}
           {cycle.lead > 0 ? ` · entré à la séance ${cycle.lead + 1}` : ""}
         </span>
+        {cycle.carriedOut > 0 && (
+          <span className="block text-[9px] font-semibold text-success">
+            Reste {formatDA(cycle.carriedOut)} → reporté sur M{monthIndex + 2}
+          </span>
+        )}
         <span className={`block text-[9px] font-semibold ${soldTone === "danger" ? "text-danger" : "text-muted"}`}>
           Solde de l&apos;emploi :{" "}
           {sold < 0 ? `${formatDA(-sold)} dus` : `${formatDA(sold)} d'avance`}
@@ -3369,8 +3384,14 @@ function TeacherChildPayModal({
   const current = currentCycleCode(db, student.id, subscriptionId);
   /** Le prix d'UN mois pour lui — son mois d'entrée sans les séances tenues
    *  avant son inscription, dont il est exempté. */
+  // Le reste reporté du mois précédent en paie déjà une partie.
   const monthPriceOf = (code: string) =>
-    sub ? studentMonthPriceFrom(student, sub, cycleLead(db, student.id, subscriptionId, code)) : 0;
+    sub
+      ? positiveMoney(
+          studentMonthPriceFrom(student, sub, cycleLead(db, student.id, subscriptionId, code)) -
+            cycleOf(db, student.id, subscriptionId, code).carriedIn,
+        )
+      : 0;
 
   const [monthCode, setMonthCode] = useState(owing[0]?.code ?? current);
   const [amount, setAmount] = useState(owing[0] ? -owing[0].balance : monthPriceOf(current));

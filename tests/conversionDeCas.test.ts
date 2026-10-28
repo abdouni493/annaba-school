@@ -188,6 +188,32 @@ describe("les dettes du cas précédent", () => {
     expect(amounts).toEqual([schoolPerSeanceOf(sub), sub.pricePerSession].sort((a, b) => a - b));
   });
 
+  it("emploi par emploi : effacer ne touche qu'à l'emploi devenu offert", async () => {
+    await attend(3);
+    const owed = studentDebtSummary(useData.getState(), STU);
+    expect(owed.registrationDue).toBe(1500);
+
+    setCase("special", { freeSubscriptionIds: [SUB] });
+    const res = await useData
+      .getState()
+      .convertStudentCase({ studentId: STU, mode: "clear", subscriptionIds: [SUB] });
+    expect(res.waived).toBe(owed.soldDebt);
+
+    const after = studentDebtSummary(useData.getState(), STU);
+    expect(after.soldDebt).toBe(0);
+    // Les frais d'inscription appartiennent à la fiche : ils restent dus.
+    expect(after.registrationDue).toBe(1500);
+  });
+
+  it("emploi par emploi : un emploi hors périmètre n'est pas recalculé", async () => {
+    await attend(2);
+    setCase("school_only", { schoolOnlySubscriptionIds: [SUB] });
+    const res = await useData
+      .getState()
+      .convertStudentCase({ studentId: STU, mode: "reprice", subscriptionIds: ["sub-other"] });
+    expect(res.repriced).toBe(0);
+  });
+
   it("le mois d'un « école seule » se lit à la part de l'école", () => {
     const sub = useData.getState().subscriptions.find((s) => s.id === SUB)!;
     expect(schoolMonthShareOf(sub)).toBe(2800);

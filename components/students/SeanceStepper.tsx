@@ -60,7 +60,7 @@ export function SeanceStepper({
   const cycle = cycleOf(db, student.id, subscriptionId, monthCode);
   // Le calcul vit dans `monthProposal` : la feuille de présence l'affiche, elle
   // ne le refait pas.
-  const { unit, mine, credited, billable, total: cap, current } = monthProposal(
+  const { unit, mine, credited, carried, billable, total: cap, current } = monthProposal(
     db,
     student.id,
     subscriptionId,
@@ -138,10 +138,19 @@ export function SeanceStepper({
             son mois compte <strong className="text-ink">{mine} séance(s)</strong> à partir de sa{" "}
             <strong className="text-ink">1re</strong>
             {cycle.lead > 0 ? ` (il est entré à la séance ${cycle.lead + 1} du groupe)` : ""} ;
-            {credited > 0 ? (
+            {credited > 0 || carried > 0 ? (
               <>
                 {" "}
-                il en a déjà versé {formatDA(credited)}, il en reste donc{" "}
+                {credited > 0 && <>il en a déjà versé {formatDA(credited)}{carried > 0 ? ", " : ""}</>}
+                {carried > 0 && (
+                  <>
+                    <strong className="text-success">
+                      {formatDA(carried)} reportés du mois précédent
+                    </strong>{" "}
+                    le paient déjà en partie
+                  </>
+                )}
+                , il en reste donc{" "}
                 <strong className="text-ink">{billable}</strong> à payer, soit {formatDA(cap)}.
               </>
             ) : (

@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { useState, useEffect } from "react";
 import { useData, uid } from "@/lib/store/data";
 import { deleteRoleUser } from "@/lib/accounts/users";
@@ -8,7 +9,6 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { Input, Select } from "@/components/ui/SearchInput";
-import { PageHeader } from "@/components/layout/PageHeader";
 import {
   Trash2,
   Edit,
@@ -29,6 +29,12 @@ import {
   Repeat,
   Receipt,
   Wallet,
+  Users,
+  Gift,
+  GraduationCap,
+  Phone,
+  ChevronRight,
+  X,
 } from "lucide-react";
 import type {
   AbsencePenalty,
@@ -72,7 +78,7 @@ import {
 import { AttendanceBreakdown } from "@/components/students/AttendanceBreakdown";
 import { CreateStudentModal } from "@/components/students/CreateStudentModal";
 import { StudentSituationModal } from "@/components/students/StudentSituationModal";
-import { formatDA } from "@/lib/utils";
+import { formatDA, positiveMoney } from "@/lib/utils";
 import { SoldManagerModal } from "@/components/students/SoldManagerModal";
 import {
   ChargeCard,
@@ -1682,77 +1688,151 @@ export function StudentsPage() {
     printHtmlDocument(html);
   };
 
+  // Les chiffres du bandeau et des filtres : comptés une fois par rendu.
+  const debtStudents = students.filter(
+    (s) => debtFor(s) > 0 || (s.registrationDue ?? 0) > 0 || studentChargeDebt(db, s.id) > 0,
+  );
+  const debtAmount = debtStudents.reduce(
+    (t, s) => t + debtFor(s) + (s.registrationDue ?? 0) + studentChargeDebt(db, s.id),
+    0,
+  );
+  const lowStudents = students.filter(isSoonToRunOut);
+  const freeCount = students.filter((s) => s.isFree).length;
+  const filterChips: { value: typeof filterType; label: string; count: number; tone: string }[] = [
+    { value: "all", label: "Tous", count: students.length, tone: "primary" },
+    { value: "debt", label: "En dette", count: debtStudents.length, tone: "danger" },
+    { value: "soon", label: "Solde faible", count: lowStudents.length, tone: "warning" },
+    { value: "paid", label: "À jour", count: students.length - debtStudents.length, tone: "success" },
+    { value: "free", label: "Cas spéciaux", count: freeCount, tone: "primary" },
+  ];
+  const shownStudents = getFilteredStudents();
+
   return (
     <div>
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-        <PageHeader emoji="🎓" title="Étudiants" subtitle="Gérer les inscriptions et abonnements des élèves" />
+      {/* ---- en-tête : la page, ses chiffres, ses actions ------------------ */}
+      <div className="relative mb-5 overflow-hidden rounded-3xl bg-gradient-primary p-5 text-white card-shadow sm:p-6">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-white/10" />
+        <div className="pointer-events-none absolute -bottom-24 right-32 h-44 w-44 rounded-full bg-white/5" />
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 ring-1 ring-white/30">
+              <GraduationCap className="h-6 w-6" />
+            </span>
+            <div>
+              <h1 className="text-xl font-black md:text-2xl">Étudiants</h1>
+              <p className="text-sm text-white/75">Inscriptions, soldes et suivi des élèves</p>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={() => {
-              const lowStus = students.filter(isSoonToRunOut);
-              setSelectedAlertStudentIds(lowStus.map((s) => s.id));
-              setIsAlertLowBalanceOpen(true);
-            }}
-            variant="outline"
-            className="flex items-center gap-2 border-danger/30 hover:border-danger hover:bg-danger/10 text-danger relative"
-          >
-            <Bell className="h-4 w-4 text-danger" /> Alertes soldes
-            {students.filter(isSoonToRunOut).length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-danger text-white text-[9px] font-bold h-4.5 w-4.5 rounded-full flex items-center justify-center pulse-glow">
-                {students.filter(isSoonToRunOut).length}
-              </span>
-            )}
-          </Button>
-          {can("situation") && (
-            <Button
-              onClick={() => setSituationOpen(true)}
-              variant="outline"
-              className="flex items-center gap-2"
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                setSelectedAlertStudentIds(lowStudents.map((s) => s.id));
+                setIsAlertLowBalanceOpen(true);
+              }}
+              className="relative flex h-10 items-center gap-2 rounded-xl bg-white/15 px-3.5 text-sm font-semibold ring-1 ring-white/25 transition-colors hover:bg-white/25"
             >
-              <Search className="h-4 w-4" /> Situation d&apos;un élève
-            </Button>
-          )}
-          {can("scan") && (
-            <Button onClick={() => setIsScanOpen(true)} variant="secondary" className="flex items-center gap-2">
-              <Scan className="h-4 w-4" /> Scanner RFID
-            </Button>
-          )}
-          {can("create") && (
-            <Button onClick={() => setIsCreateOpen(true)} className="flex items-center gap-2">
-              <Plus className="h-4 w-4" /> Nouvel Étudiant
-            </Button>
-          )}
+              <Bell className="h-4 w-4" /> Alertes soldes
+              {lowStudents.length > 0 && (
+                <span className="pulse-glow absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white ring-2 ring-white/40">
+                  {lowStudents.length}
+                </span>
+              )}
+            </button>
+            {can("situation") && (
+              <button
+                onClick={() => setSituationOpen(true)}
+                className="flex h-10 items-center gap-2 rounded-xl bg-white/15 px-3.5 text-sm font-semibold ring-1 ring-white/25 transition-colors hover:bg-white/25"
+              >
+                <Search className="h-4 w-4" /> Situation d&apos;un élève
+              </button>
+            )}
+            {can("scan") && (
+              <button
+                onClick={() => setIsScanOpen(true)}
+                className="flex h-10 items-center gap-2 rounded-xl bg-white/15 px-3.5 text-sm font-semibold ring-1 ring-white/25 transition-colors hover:bg-white/25"
+              >
+                <Scan className="h-4 w-4" /> Scanner RFID
+              </button>
+            )}
+            {can("create") && (
+              <button
+                onClick={() => setIsCreateOpen(true)}
+                className="flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-primary shadow-sm transition-transform hover:-translate-y-0.5"
+              >
+                <Plus className="h-4 w-4" /> Nouvel élève
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Les quatre chiffres que la réception regarde en premier. */}
+        <div className="relative mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            { label: "Élèves", value: String(students.length), icon: Users },
+            {
+              label: "En dette",
+              value: String(debtStudents.length),
+              sub: debtAmount > 0 ? formatDA(debtAmount) : undefined,
+              icon: AlertTriangle,
+            },
+            { label: "Solde faible", value: String(lowStudents.length), icon: Bell },
+            { label: "Cas spéciaux", value: String(freeCount), icon: Gift },
+          ].map((k) => (
+            <div key={k.label} className="rounded-2xl bg-white/12 p-3 ring-1 ring-white/20 backdrop-blur-sm">
+              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-white/70">
+                <k.icon className="h-3.5 w-3.5" /> {k.label}
+              </span>
+              <span className="mt-1 flex items-baseline gap-2">
+                <strong className="text-2xl font-black leading-none">{k.value}</strong>
+                {k.sub && <span className="truncate font-mono text-[11px] text-white/80">{k.sub}</span>}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Filter panel */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6 bg-surface border border-line p-3 rounded-2xl">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+      {/* ---- recherche + filtres ------------------------------------------- */}
+      <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-line bg-surface p-2.5 shadow-sm lg:flex-row lg:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Rechercher par n° d'inscription (00001), nom, téléphone ou email..."
-            className="pl-9"
+            placeholder="N° d'inscription (00001), nom, téléphone ou email…"
+            className="border-transparent bg-canvas pl-9"
           />
         </div>
-        <div className="flex gap-1">
-          <Button size="sm" variant={filterType === "all" ? "primary" : "outline"} onClick={() => setFilterType("all")}>
-            Tous
-          </Button>
-          <Button size="sm" variant={filterType === "soon" ? "primary" : "outline"} onClick={() => setFilterType("soon")}>
-            Solde faible
-          </Button>
-          <Button size="sm" variant={filterType === "debt" ? "primary" : "outline"} onClick={() => setFilterType("debt")}>
-            En dette
-          </Button>
-          <Button size="sm" variant={filterType === "paid" ? "primary" : "outline"} onClick={() => setFilterType("paid")}>
-            À jour
-          </Button>
-          <Button size="sm" variant={filterType === "free" ? "primary" : "outline"} onClick={() => setFilterType("free")}>
-            Cas Spéciaux
-          </Button>
+        <div className="flex gap-1 overflow-x-auto rounded-xl bg-canvas p-1">
+          {filterChips.map((f) => {
+            const on = filterType === f.value;
+            return (
+              <button
+                key={f.value}
+                onClick={() => setFilterType(f.value)}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                  on ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
+                }`}
+              >
+                {f.label}
+                <span
+                  className={`min-w-5 rounded-full px-1.5 py-px text-center text-[10px] font-bold ${
+                    on
+                      ? f.tone === "danger"
+                        ? "bg-danger text-white"
+                        : f.tone === "warning"
+                          ? "bg-warning text-white"
+                          : f.tone === "success"
+                            ? "bg-success text-white"
+                            : "bg-primary text-white"
+                      : "bg-muted/15 text-muted"
+                  }`}
+                >
+                  {f.count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1893,333 +1973,289 @@ export function StudentsPage() {
       })()}
 
       {/* Students list */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {getFilteredStudents().map((stu) => {
+      {shownStudents.length === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-line bg-surface px-6 py-14 text-center">
+          <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary">
+            <Users className="h-6 w-6" />
+          </span>
+          <strong className="text-sm text-ink">Aucun élève ne correspond</strong>
+          <span className="mt-1 text-xs text-muted">Modifiez la recherche ou choisissez un autre filtre.</span>
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {shownStudents.map((stu) => {
           const isOverlaid = overlayStudentId === stu.id;
           const debt = debtFor(stu);
           /** ses frais hors scolarité, avances de l'école comprises */
           const chargeDue = studentChargeDebt(db, stu.id);
+          const feeDue = positiveMoney(stu.registrationDue ?? 0);
           const number = registrationNumberOf(db, stu);
           const caseLabel = studentCaseLabel(stu);
+          const owes = debt > 0 || chargeDue > 0 || feeDue > 0;
+          const low = !owes && isSoonToRunOut(stu);
+          const state = owes
+            ? { label: "En dette", cls: "bg-danger/12 text-danger", bar: "bg-gradient-danger" }
+            : low
+              ? { label: "Solde faible", cls: "bg-warning/15 text-warning", bar: "bg-gradient-warning" }
+              : { label: "À jour", cls: "bg-success/12 text-success", bar: "bg-gradient-success" };
+          const initials = `${stu.firstName?.[0] ?? ""}${stu.lastName?.[0] ?? ""}`.toUpperCase();
+          const parent = parents.find((p) => p.id === stu.parentId);
 
           return (
-            <Card
+            <div
               key={stu.id}
-              className={`relative overflow-visible ${
-                debt > 0 || chargeDue > 0
-                  ? "border-2 border-danger/60 shadow-[0_0_0_3px_rgba(239,68,68,0.08)]"
-                  : ""
+              className={`group relative flex flex-col overflow-hidden rounded-2xl border bg-surface shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
+                owes ? "border-danger/40" : "border-line"
               }`}
             >
-              <CardBody className="flex flex-col justify-between h-64 relative">
-                {/* Overlay Action Buttons displayed ABOVE the card when three dots are clicked */}
-                {isOverlaid && (
-                  <div className="absolute inset-0 z-20 flex flex-col rounded-2xl bg-primary-600/95 text-white backdrop-blur-sm">
-                    {/* Header stays put while the actions scroll under it */}
-                    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/20 px-3 py-2">
-                      <span className="truncate text-xs font-bold">
+              <span className={`h-1 w-full ${state.bar}`} />
+
+              {/* Toutes les actions, regroupées : ouvertes par « ⋯ » au-dessus de la carte. */}
+              {isOverlaid && (
+                <div className="absolute inset-0 z-20 flex flex-col bg-surface/97 backdrop-blur-sm">
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-primary text-[10px] font-black text-white">
+                        {initials}
+                      </span>
+                      <span className="truncate text-xs font-black text-ink">
                         {stu.firstName} {stu.lastName}
                       </span>
-                      <button
-                        onClick={() => setOverlayStudentId(null)}
-                        className="shrink-0 rounded-lg bg-white/15 px-2 py-0.5 text-[10px] font-semibold hover:bg-white/25"
-                      >
-                        Fermer
-                      </button>
-                    </div>
-
-                    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-                      {/* ONE money action: the soldes of every emploi du temps
-                          are consulted, alerted on and recharged from here. */}
-                      {can("pay") && (
-                      <div>
-                        <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
-                          Paiement
-                        </span>
-                        <button
-                          onClick={() => openSoldManager(stu)}
-                          className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${
-                            debt > 0
-                              ? "bg-danger text-white hover:bg-danger/80"
-                              : "bg-white text-primary hover:bg-white/90"
-                          }`}
-                        >
-                          <Wallet className="h-4 w-4 shrink-0" />
-                          <span className="min-w-0 text-start">
-                            Payer &amp; recharger les soldes
-                            <span
-                              className={`block text-[9px] font-semibold ${
-                                debt > 0 ? "text-white/80" : "text-primary/70"
-                              }`}
-                            >
-                              {debt > 0
-                                ? `Dette de ${formatDA(debt)} à régler`
-                                : "Soldes par emploi du temps, mois par mois"}
-                            </span>
-                          </span>
-                        </button>
-                      </div>
-                      )}
-
-                      {/* LA DETTE QUI N'EST PAS DE LA SCOLARITÉ — un livre, une
-                          tenue, une sortie, un transport, ou ce que l'école a
-                          avancé de sa caisse. On la crée ici, et on l'encaisse
-                          au même endroit. */}
-                      {can("charges") && (
-                      <div>
-                        <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
-                          Dettes &amp; frais divers
-                        </span>
-                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                          <button
-                            onClick={() => openChargeForm(stu)}
-                            className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                          >
-                            <Plus className="h-3.5 w-3.5" /> Nouveau frais
-                          </button>
-                          <button
-                            onClick={() => openCharges(stu, chargeDue > 0 ? "pay" : "list")}
-                            className={`flex items-center justify-center gap-1.5 rounded-xl py-2 font-semibold ${
-                              chargeDue > 0
-                                ? "bg-danger text-white hover:bg-danger/80"
-                                : "bg-white/15 hover:bg-white/25"
-                            }`}
-                          >
-                            <Receipt className="h-3.5 w-3.5" />
-                            {chargeDue > 0 ? formatDA(chargeDue) : "Ses frais"}
-                          </button>
-                        </div>
-                      </div>
-                      )}
-
-                      {/* Fiche */}
-                      <div>
-                        <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
-                          Fiche élève
-                        </span>
-                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                          {can("view") && (
-                            <button
-                              onClick={() => openDetails(stu)}
-                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                            >
-                              <Eye className="h-3.5 w-3.5" /> Détails
-                            </button>
-                          )}
-                          {can("edit") && (
-                            <button
-                              onClick={() => openEdit(stu)}
-                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                            >
-                              <Edit className="h-3.5 w-3.5" /> Modifier
-                            </button>
-                          )}
-                          {can("print_file") && (
-                            <button
-                              onClick={() => handlePrintStudent(stu)}
-                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                            >
-                              <Printer className="h-3.5 w-3.5" /> Imprimer fiche
-                            </button>
-                          )}
-                          {can("print_payments") && (
-                            <button
-                              onClick={() => openPrintPayments(stu)}
-                              className="flex items-center justify-center gap-1.5 rounded-xl bg-white/15 py-2 font-semibold hover:bg-white/25"
-                            >
-                              <Printer className="h-3.5 w-3.5" /> Paiements
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Envoi WhatsApp — l'action de relance la plus fréquente
-                          sur une fiche en dette. */}
-                      {can("whatsapp") && (
-                      <div>
-                        <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-white/60">
-                          Contact
-                        </span>
-                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                          <button
-                            onClick={() => openWhatsApp(stu, "student")}
-                            disabled={!isSendablePhone(stu.phone)}
-                            title={
-                              isSendablePhone(stu.phone)
-                                ? "Envoyer un message WhatsApp à l'élève"
-                                : "Aucun numéro exploitable pour cet élève"
-                            }
-                            className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/90 py-2 font-semibold hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            <MessageCircle className="h-3.5 w-3.5" /> Élève
-                          </button>
-                          {(() => {
-                            const parent = parents.find((p) => p.id === stu.parentId);
-                            const canSend = isSendablePhone(parent?.phone);
-                            return (
-                              <button
-                                onClick={() => openWhatsApp(stu, "parent")}
-                                disabled={!canSend}
-                                title={
-                                  !parent
-                                    ? "Aucun parent rattaché à cet élève"
-                                    : canSend
-                                      ? `Envoyer un message WhatsApp à ${parent.firstName} ${parent.lastName}`
-                                      : "Le parent rattaché n'a pas de numéro exploitable"
-                                }
-                                className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/90 py-2 font-semibold hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                <MessageCircle className="h-3.5 w-3.5" /> Parent
-                              </button>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                      )}
-
-                      {can("delete") && (
-                        <button
-                          onClick={() => handleDelete(stu.id)}
-                          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-danger py-2 text-[11px] font-bold hover:bg-danger/80"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" /> Supprimer l&apos;élève
-                        </button>
-                      )}
-                    </div>
+                    </span>
+                    <button
+                      onClick={() => setOverlayStudentId(null)}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-primary-50 hover:text-ink"
+                      title="Fermer"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
-                )}
 
-                <div>
-                  <div className="flex items-start justify-between">
+                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+                    {/* ONE money action: the soldes of every emploi du temps
+                        are consulted, alerted on and recharged from here. */}
+                    {can("pay") && (
+                      <button
+                        onClick={() => openSoldManager(stu)}
+                        className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-start text-white shadow-sm transition hover:brightness-110 ${
+                          debt > 0 ? "bg-gradient-danger" : "bg-gradient-primary"
+                        }`}
+                      >
+                        <Wallet className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block text-[12px] font-bold">Payer &amp; recharger les soldes</span>
+                          <span className="block text-[10px] text-white/80">
+                            {debt > 0
+                              ? `Dette de ${formatDA(debt)} à régler`
+                              : "Soldes par emploi du temps, mois par mois"}
+                          </span>
+                        </span>
+                      </button>
+                    )}
+
+                    {/* LA DETTE QUI N'EST PAS DE LA SCOLARITÉ — un livre, une
+                        tenue, une sortie, un transport, ou ce que l'école a
+                        avancé de sa caisse. On la crée ici, et on l'encaisse
+                        au même endroit. */}
+                    {can("charges") && (
+                      <ActionGroup label="Dettes & frais divers">
+                        <ActionTile icon={Plus} label="Nouveau frais" onClick={() => openChargeForm(stu)} />
+                        <ActionTile
+                          icon={Receipt}
+                          label={chargeDue > 0 ? formatDA(chargeDue) : "Ses frais"}
+                          tone={chargeDue > 0 ? "danger" : undefined}
+                          onClick={() => openCharges(stu, chargeDue > 0 ? "pay" : "list")}
+                        />
+                      </ActionGroup>
+                    )}
+
+                    <ActionGroup label="Fiche élève">
+                      {can("view") && <ActionTile icon={Eye} label="Détails" onClick={() => openDetails(stu)} />}
+                      {can("edit") && <ActionTile icon={Edit} label="Modifier" onClick={() => openEdit(stu)} />}
+                      {can("print_file") && (
+                        <ActionTile icon={Printer} label="Imprimer fiche" onClick={() => handlePrintStudent(stu)} />
+                      )}
+                      {can("print_payments") && (
+                        <ActionTile icon={Printer} label="Paiements" onClick={() => openPrintPayments(stu)} />
+                      )}
+                    </ActionGroup>
+
+                    {/* Envoi WhatsApp — l'action de relance la plus fréquente
+                        sur une fiche en dette. */}
+                    {can("whatsapp") && (
+                      <ActionGroup label="Contact WhatsApp">
+                        <ActionTile
+                          icon={MessageCircle}
+                          label="Élève"
+                          tone="whatsapp"
+                          disabled={!isSendablePhone(stu.phone)}
+                          title={
+                            isSendablePhone(stu.phone)
+                              ? "Envoyer un message WhatsApp à l'élève"
+                              : "Aucun numéro exploitable pour cet élève"
+                          }
+                          onClick={() => openWhatsApp(stu, "student")}
+                        />
+                        <ActionTile
+                          icon={MessageCircle}
+                          label="Parent"
+                          tone="whatsapp"
+                          disabled={!isSendablePhone(parent?.phone)}
+                          title={
+                            !parent
+                              ? "Aucun parent rattaché à cet élève"
+                              : isSendablePhone(parent.phone)
+                                ? `Envoyer un message WhatsApp à ${parent.firstName} ${parent.lastName}`
+                                : "Le parent rattaché n'a pas de numéro exploitable"
+                          }
+                          onClick={() => openWhatsApp(stu, "parent")}
+                        />
+                      </ActionGroup>
+                    )}
+
+                    {can("delete") && (
+                      <button
+                        onClick={() => handleDelete(stu.id)}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-danger/40 py-2 text-[11px] font-bold text-danger transition-colors hover:bg-danger hover:text-white"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Supprimer l&apos;élève
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-1 flex-col gap-3 p-4">
+                {/* ---- qui ---- */}
+                <div className="flex items-start gap-3">
+                  <button
+                    type="button"
+                    onClick={() => openDetails(stu)}
+                    title="Voir la fiche de l'élève"
+                    className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-primary text-sm font-black text-white shadow-sm transition-transform hover:scale-105"
+                  >
+                    {initials || <User className="h-5 w-5" />}
+                  </button>
+                  <div className="min-w-0 flex-1">
                     <button
                       type="button"
                       onClick={() => openDetails(stu)}
-                      title="Voir la fiche de l'élève"
-                      className="flex items-center gap-2 text-start rounded-xl hover:bg-primary-50/60 transition-colors p-0.5 -m-0.5"
+                      className="block max-w-full truncate text-start text-[15px] font-black text-ink transition-colors hover:text-primary"
                     >
-                      <div className="h-10 w-10 shrink-0 bg-primary/10 rounded-xl flex flex-col items-center justify-center font-bold text-primary leading-none">
-                        <span className="text-[8px] font-semibold uppercase tracking-wide text-primary/70">
-                          N°
-                        </span>
-                        <span className="font-mono text-[10px]">{number}</span>
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-sm font-bold text-ink hover:text-primary transition-colors">
-                          {stu.firstName} {stu.lastName}
-                        </h4>
-                        <span className="block text-[10px] text-muted">{stu.phone || "—"}</span>
-                        {stu.phone2 && (
-                          <span className="block text-[10px] text-muted">
-                            2<sup>e</sup> : {stu.phone2}
-                          </span>
-                        )}
-                        {caseLabel && (
-                          <Badge tone={studentCaseTone(stu)} className="mt-0.5 text-[9px]">
-                            {caseLabel}
-                          </Badge>
-                        )}
-                      </div>
+                      {stu.firstName} {stu.lastName}
                     </button>
-
-                    <button
-                      onClick={() => setOverlayStudentId(stu.id)}
-                      className="p-1 rounded-lg hover:bg-primary-50 text-muted hover:text-ink transition-colors"
-                    >
-                      <MoreVertical className="h-5 w-5" />
-                    </button>
-                  </div>
-
-                  {/* Only what actually drives an action at the desk: the
-                      total the student owes, clickable to see the details. */}
-                  <div className="mt-3 space-y-1.5 text-xs">
-                    <button
-                      onClick={() => openDetails(stu)}
-                      title={debt > 0 ? "Voir le détail des dettes" : "Compte à jour"}
-                      className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-start transition-colors ${
-                        debt > 0
-                          ? "border-danger/50 bg-danger/10 hover:bg-danger/20"
-                          : "border-success/40 bg-success/10 hover:bg-success/20"
-                      }`}
-                    >
-                      <span>
-                        <span className="block text-[9px] font-semibold uppercase tracking-wide text-muted">
-                          Dette totale
-                        </span>
-                        <strong className={`block text-base ${debt > 0 ? "text-danger" : "text-success"}`}>
-                          {debt > 0 ? `${formatDA(debt)}` : "Aucune"}
-                        </strong>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
+                      <span className="rounded-md bg-primary-50 px-1.5 font-mono font-bold text-primary">
+                        N° {number}
                       </span>
-                      {debt > 0 ? (
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-danger">
-                          <AlertTriangle className="h-3.5 w-3.5" /> Voir le détail
-                        </span>
-                      ) : (
-                        <span className="text-lg">✅</span>
+                      <span className="flex items-center gap-1">
+                        <Phone className="h-3 w-3" /> {stu.phone || "—"}
+                      </span>
+                      {stu.phone2 && <span>· {stu.phone2}</span>}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${state.cls}`}>
+                        {state.label}
+                      </span>
+                      {caseLabel && (
+                        <Badge tone={studentCaseTone(stu)} className="text-[10px]">
+                          {caseLabel}
+                        </Badge>
                       )}
-                    </button>
-
-                    {/* LES FRAIS : une alerte à part, parce qu'ils ne se
-                        règlent pas comme la scolarité et ne retiennent la paie
-                        de personne. Un clic ouvre directement l'encaissement. */}
-                    {chargeDue > 0 ? (
-                      <button
-                        onClick={() => openCharges(stu, "pay")}
-                        title="Régler ses frais : livres, tenues, sorties, avances de l'école…"
-                        className="flex w-full items-center justify-between rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-start transition-colors hover:bg-danger/20"
-                      >
-                        <span>
-                          <span className="block text-[9px] font-semibold uppercase tracking-wide text-muted">
-                            Dettes &amp; frais divers
-                          </span>
-                          <strong className="block text-sm text-danger">
-                            {formatDA(chargeDue)}
-                          </strong>
-                        </span>
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-danger">
-                          <Receipt className="h-3.5 w-3.5" /> Encaisser
-                        </span>
-                      </button>
-                    ) : null}
-
-                    {/* LES FRAIS D'INSCRIPTION — une alerte à part, sur la
-                        carte elle-même, et CLIQUABLE : un clic ouvre
-                        l'encaissement, et l'alerte disparaît dès qu'il ne
-                        reste plus rien à payer. */}
-                    {stu.registrationDue && stu.registrationDue > 0 ? (
-                      <button
-                        onClick={() => openRegistrationFee(stu)}
-                        title="Encaisser les frais d'inscription — en une fois ou en plusieurs"
-                        className="flex w-full animate-pulse items-center justify-between rounded-xl border border-danger/60 bg-danger/10 px-3 py-2 text-start transition-colors hover:animate-none hover:bg-danger/20"
-                      >
-                        <span>
-                          <span className="block text-[9px] font-semibold uppercase tracking-wide text-muted">
-                            Frais d&apos;inscription dus
-                          </span>
-                          <strong className="block text-sm text-danger">
-                            {formatDA(stu.registrationDue)}
-                          </strong>
-                        </span>
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-danger">
-                          <Receipt className="h-3.5 w-3.5" /> Encaisser
-                        </span>
-                      </button>
-                    ) : stu.registrationFeeAssessed ? (
-                      <div className="flex justify-between text-[10px] text-success bg-success/15 px-2 py-0.5 rounded">
-                        <span>Frais d&apos;inscription</span>
-                        <strong>Payé ✔</strong>
-                      </div>
-                    ) : null}
+                    </div>
                   </div>
+                  <button
+                    onClick={() => setOverlayStudentId(stu.id)}
+                    title="Toutes les actions"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-primary-50 hover:text-ink"
+                  >
+                    <MoreVertical className="h-5 w-5" />
+                  </button>
                 </div>
 
-                <div className="border-t border-line pt-2 mt-2">
-                  <span className="text-[10px] text-muted block mb-1">
-                    Emplois du temps ({stu.subscriptionIds.length}) :
+                {/* ---- ce qu'il doit : le chiffre qui fait agir le guichet ---- */}
+                <div className="grid grid-cols-1 gap-1.5">
+                  <button
+                    onClick={() => openDetails(stu)}
+                    title={debt > 0 ? "Voir le détail des dettes" : "Compte à jour"}
+                    className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-start transition-colors ${
+                      debt > 0 ? "bg-danger/10 hover:bg-danger/15" : "bg-success/10 hover:bg-success/15"
+                    }`}
+                  >
+                    <span>
+                      <span className="block text-[10px] font-bold uppercase tracking-wider text-muted">
+                        Dette de scolarité
+                      </span>
+                      <strong className={`block font-mono text-lg leading-tight ${debt > 0 ? "text-danger" : "text-success"}`}>
+                        {debt > 0 ? formatDA(debt) : "Aucune"}
+                      </strong>
+                    </span>
+                    {debt > 0 ? (
+                      <span className="flex items-center gap-1 text-[10px] font-bold text-danger">
+                        Détail <ChevronRight className="h-3.5 w-3.5" />
+                      </span>
+                    ) : (
+                      <CheckCircle className="h-5 w-5 text-success" />
+                    )}
+                  </button>
+
+                  {/* LES FRAIS et LES FRAIS D'INSCRIPTION : des alertes à part,
+                      parce qu'ils ne se règlent pas comme la scolarité. Un clic
+                      ouvre directement l'encaissement. */}
+                  {(chargeDue > 0 || feeDue > 0) && (
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {chargeDue > 0 && (
+                        <button
+                          onClick={() => openCharges(stu, "pay")}
+                          title="Régler ses frais : livres, tenues, sorties, avances de l'école…"
+                          className={`rounded-xl border border-danger/30 bg-danger/5 px-2.5 py-1.5 text-start transition-colors hover:bg-danger/10 ${
+                            feeDue > 0 ? "" : "col-span-2"
+                          }`}
+                        >
+                          <span className="block text-[9px] font-bold uppercase tracking-wider text-muted">
+                            Frais divers
+                          </span>
+                          <strong className="flex items-center gap-1 font-mono text-[13px] text-danger">
+                            <Receipt className="h-3 w-3" /> {formatDA(chargeDue)}
+                          </strong>
+                        </button>
+                      )}
+                      {feeDue > 0 && (
+                        <button
+                          onClick={() => openRegistrationFee(stu)}
+                          title="Encaisser les frais d'inscription — en une fois ou en plusieurs"
+                          className={`rounded-xl border border-danger/40 bg-danger/5 px-2.5 py-1.5 text-start transition-colors hover:bg-danger/10 ${
+                            chargeDue > 0 ? "" : "col-span-2"
+                          }`}
+                        >
+                          <span className="block text-[9px] font-bold uppercase tracking-wider text-muted">
+                            Frais d&apos;inscription
+                          </span>
+                          <strong className="flex items-center gap-1 font-mono text-[13px] text-danger">
+                            <Receipt className="h-3 w-3" /> {formatDA(feeDue)}
+                          </strong>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {feeDue <= 0 && stu.registrationFeeAssessed && (
+                    <span className="flex items-center gap-1 text-[10px] font-semibold text-success">
+                      <CheckCircle className="h-3 w-3" /> Frais d&apos;inscription payés
+                    </span>
+                  )}
+                </div>
+
+                {/* ---- ses emplois du temps, un par ligne ---- */}
+                <div className="mt-auto">
+                  <span className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                    <BookOpen className="h-3 w-3" /> Emplois du temps · {stu.subscriptionIds.length}
                   </span>
                   {stu.subscriptionIds.length === 0 ? (
-                    <span className="text-[10px] text-muted italic">Non inscrit</span>
+                    <span className="block rounded-lg bg-canvas px-2.5 py-1.5 text-[11px] italic text-muted">
+                      Non inscrit
+                    </span>
                   ) : (
-                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                    <div className="max-h-[86px] space-y-1 overflow-y-auto pe-0.5">
                       {stu.subscriptionIds.map((id) => {
                         const sub = subscriptions.find((x) => x.id === id);
                         const sold = soldFor(db, stu.id, id);
@@ -2229,22 +2265,77 @@ export function StudentsPage() {
                         // est jugé au tarif que CET élève paie sur CET emploi.
                         const reduced = !!reductionForSub(stu, id);
                         const st = offered ? "ok" : soldStatus(sold, studentListPrice(stu, sub));
-                        const tone =
-                          st === "debt" ? "danger" : st === "empty" || st === "low" ? "warning" : "success";
+                        const dot =
+                          st === "debt" ? "bg-danger" : st === "empty" || st === "low" ? "bg-warning" : "bg-success";
+                        const soldCls =
+                          st === "debt" ? "text-danger" : st === "empty" || st === "low" ? "text-warning" : "text-ink";
                         const month = currentCycleIndex(db, stu.id, id) + 1;
                         return (
-                          <Badge key={id} tone={tone} className="text-[9px] px-1 py-0.5 whitespace-normal">
-                            {getModuleLabel(id)} · M{month}
-                            {offered ? " · offert" : ` · ${formatDA(sold)}`}
-                            {reduced ? " · réduit" : ""}
-                          </Badge>
+                          <div
+                            key={id}
+                            className="flex items-center gap-2 rounded-lg bg-canvas px-2.5 py-1.5 text-[11px]"
+                          >
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+                            <span className="min-w-0 flex-1 truncate font-semibold text-ink">
+                              {getModuleLabel(id)}
+                            </span>
+                            <span className="shrink-0 rounded bg-primary-50 px-1 text-[9px] font-bold text-primary">
+                              M{month}
+                            </span>
+                            {reduced && (
+                              <span className="shrink-0 rounded bg-warning/15 px-1 text-[9px] font-bold text-warning">
+                                réduit
+                              </span>
+                            )}
+                            <span className={`shrink-0 font-mono text-[11px] font-bold ${offered ? "text-success" : soldCls}`}>
+                              {offered ? "offert" : formatDA(sold)}
+                            </span>
+                          </div>
                         );
                       })}
                     </div>
                   )}
                 </div>
-              </CardBody>
-            </Card>
+              </div>
+
+              {/* ---- les gestes du quotidien, à un clic ---- */}
+              <div className="flex items-center gap-1 border-t border-line bg-canvas/50 px-2 py-1.5">
+                {can("pay") && (
+                  <button
+                    onClick={() => openSoldManager(stu)}
+                    className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg text-[11px] font-bold text-white shadow-sm transition hover:brightness-110 ${
+                      debt > 0 ? "bg-gradient-danger" : "bg-gradient-primary"
+                    }`}
+                  >
+                    <Wallet className="h-3.5 w-3.5" /> {debt > 0 ? "Régler" : "Payer"}
+                  </button>
+                )}
+                {can("view") && (
+                  <CardIconButton icon={Eye} title="Détails" onClick={() => openDetails(stu)} />
+                )}
+                {can("edit") && (
+                  <CardIconButton icon={Edit} title="Modifier" onClick={() => openEdit(stu)} />
+                )}
+                {can("whatsapp") && (
+                  <CardIconButton
+                    icon={MessageCircle}
+                    title={
+                      isSendablePhone(stu.phone)
+                        ? "WhatsApp à l'élève"
+                        : "Aucun numéro exploitable pour cet élève"
+                    }
+                    disabled={!isSendablePhone(stu.phone)}
+                    className="hover:bg-emerald-500/15 hover:text-emerald-600"
+                    onClick={() => openWhatsApp(stu, "student")}
+                  />
+                )}
+                <CardIconButton
+                  icon={MoreVertical}
+                  title="Toutes les actions"
+                  onClick={() => setOverlayStudentId(stu.id)}
+                />
+              </div>
+            </div>
           );
         })}
       </div>
@@ -2553,6 +2644,11 @@ export function StudentsPage() {
                                       </td>
                                       <td className="py-1.5 text-right font-mono text-success">
                                         {formatDA(c.credited)}
+                                        {c.carriedIn > 0 && (
+                                          <span className="block text-[9px] font-semibold text-primary">
+                                            +{formatDA(c.carriedIn)} reporté
+                                          </span>
+                                        )}
                                       </td>
                                       <td className="py-1.5 text-right font-mono text-muted">
                                         {formatDA(c.consumed)}
@@ -2563,6 +2659,11 @@ export function StudentsPage() {
                                         }`}
                                       >
                                         {formatDA(c.balance)}
+                                        {c.carriedOut > 0 && (
+                                          <span className="block text-[9px] font-semibold text-success">
+                                            {formatDA(c.carriedOut)} → M{c.index + 2}
+                                          </span>
+                                        )}
                                       </td>
                                     </tr>
                                   ))}
@@ -3731,5 +3832,78 @@ export function StudentsPage() {
         />
       )}
     </div>
+  );
+}
+
+// ---- Les boutons des cartes élèves -----------------------------------------
+
+/** Un groupe d'actions du menu « ⋯ » d'une carte, sous son intitulé. */
+function ActionGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-muted">{label}</span>
+      <div className="grid grid-cols-2 gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+/** Une action du menu « ⋯ » : icône + libellé, même gabarit partout. */
+function ActionTile({
+  icon: Icon,
+  label,
+  tone,
+  disabled,
+  title,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  tone?: "danger" | "whatsapp";
+  disabled?: boolean;
+  title?: string;
+  onClick: () => void;
+}) {
+  const cls =
+    tone === "danger"
+      ? "border-danger/40 bg-danger/10 text-danger hover:bg-danger hover:text-white"
+      : tone === "whatsapp"
+        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white"
+        : "border-line bg-canvas text-ink hover:border-primary/40 hover:bg-primary-50 hover:text-primary";
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`flex items-center justify-center gap-1.5 rounded-xl border py-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${cls}`}
+    >
+      <Icon className="h-3.5 w-3.5" /> {label}
+    </button>
+  );
+}
+
+/** Un bouton-icône de la barre d'actions en pied de carte. */
+function CardIconButton({
+  icon: Icon,
+  title,
+  disabled,
+  className = "",
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  disabled?: boolean;
+  className?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-primary-50 hover:text-primary disabled:cursor-not-allowed disabled:opacity-35 ${className}`}
+    >
+      <Icon className="h-4 w-4" />
+    </button>
   );
 }

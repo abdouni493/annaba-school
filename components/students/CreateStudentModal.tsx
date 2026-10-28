@@ -33,6 +33,7 @@
  * that opened that month stay blank on his row, and M1 never lists him.
  */
 
+import * as React from "react";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useData, uid } from "@/lib/store/data";
@@ -42,7 +43,21 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
-import { BookOpen, Building2, Check, Gift, Percent, Trash2, Wallet } from "lucide-react";
+import {
+  AlertTriangle,
+  BookOpen,
+  Building2,
+  Check,
+  ChevronDown,
+  Gift,
+  GraduationCap,
+  KeyRound,
+  Percent,
+  Tag,
+  Trash2,
+  UserRound,
+  Wallet,
+} from "lucide-react";
 import { resetUserPassword, updateUserEmail } from "@/lib/accounts/users";
 import { formatDA, money } from "@/lib/utils";
 import {
@@ -61,7 +76,7 @@ import {
 import {
   cycleSizeOf,
   joinPointFor,
-  studentDebtSummary,
+  studentSoldDebtRows,
   schoolPerSeanceOf,
   studentListPrice,
   studentSchoolPerSeance,
@@ -374,7 +389,7 @@ function StudentFiche({
    *    la part due à son enseignant suit ;
    *  - `clear`   : elles sont EFFACÉES : il n'aura pas à les payer.
    */
-  const [debtMode, setDebtMode] = useState<"keep" | "reprice" | "clear">("keep");
+  const [debtAnswers, setDebtAnswers] = useState<Record<string, "keep" | "convert">>({});
   const [busy, setBusy] = useState(false);
 
   // edit only: the portal login, which a fiche being created does not have yet
@@ -524,24 +539,6 @@ function StudentFiche({
    */
   const feeAssessedNow = feeAlreadyAsked || feeSubIds.length > 0;
 
-  /**
-   * LE CAS CHANGE-T-IL, ET QUE TRAÎNE-T-IL DERRIÈRE LUI ?
-   *
-   * La question ne se pose que sur une fiche existante, quand le cas choisi
-   * n'est plus celui qui est enregistré ET que l'élève doit encore quelque
-   * chose en SCOLARITÉ — les mois dans le rouge, les restes d'anciens
-   * versements, les frais d'inscription. Les frais divers (un livre, une
-   * tenue) n'en sont pas : ils ne dépendent d'aucun cas.
-   */
-  const savedCase: StudentCase = editing?.studentCase ?? (editing?.isFree ? "special" : "normal");
-  const caseChanged = isEdit && studentCase !== savedCase;
-  const currentDebt = useMemo(
-    () => (editing ? studentDebtSummary(db, editing.id) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [db.payments, db.attendance, db.enrollments, db.students, editing?.id],
-  );
-  const debtTotal = positiveMoney(currentDebt?.total ?? 0);
-  const asksAboutDebt = caseChanged && debtTotal > 0;
   /** Ce que la famille règle aujourd'hui, plafonné au montant réclamé. */
   const feePaid = Math.min(positiveMoney(feePaidNow), feeRequired);
   /** Ce qui reste en DETTE sur sa fiche — créer l'élève reste toujours possible. */
@@ -719,6 +716,37 @@ function StudentFiche({
   );
 
   /**
+   * LES EMPLOIS DU TEMPS QUI CHANGENT DE CAS EN TRAÎNANT DES DETTES.
+   *
+   * Un élève payé au tarif plein qui devient offert, réduit ou « école seule »
+   * sur un emploi traîne ce qu'il y devait AU TARIF D'AVANT. La question se pose
+   * emploi par emploi — la gratuité et la réduction se cochent ainsi — et
+   * seulement là où la séance lui coûte désormais MOINS et où il doit encore
+   * quelque chose. La réception répond à chacune avant d'enregistrer :
+   *  - devenu OFFERT  : effacer ses dettes, ou les garder ;
+   *  - devenu RÉDUIT  : appliquer la réduction à ses dettes, ou les garder.
+   */
+  const caseConversions = useMemo(() => {
+    if (!editing) return [];
+    const debtBySub = new Map<string, number>();
+    for (const row of studentSoldDebtRows(db, editing.id)) {
+      debtBySub.set(row.subscriptionId, money((debtBySub.get(row.subscriptionId) ?? 0) + row.debt));
+    }
+    const out: { subId: string; debt: number; before: number; after: number; toFree: boolean }[] = [];
+    for (const [subId, debt] of debtBySub) {
+      const sub = db.subscriptions.find((x) => x.id === subId);
+      if (!sub || debt <= 0) continue;
+      const before = studentListPrice(editing, sub);
+      const after = studentListPrice(ficheStudent, sub);
+      if (after >= before) continue;
+      out.push({ subId, debt, before, after, toFree: after <= 0 });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, ficheStudent, db.payments, db.attendance, db.subscriptions]);
+  const unansweredConversion = caseConversions.find((c) => !debtAnswers[c.subId]);
+
+  /**
    * Suggested opening solde of an emploi: the price of one of its months FOR
    * HIM. An « école seule » élève ne paie que la part de l'école, donc son mois
    * coûte cette part-là et pas le prix complet — et un emploi RÉDUIT coûte son
@@ -812,6 +840,17 @@ function StudentFiche({
     }
 
     // ---- editing an existing fiche ---------------------------------------
+    // Ses dettes d'avant : la réception tranche, l'application ne devine pas.
+    if (editing && unansweredConversion) {
+      addToast({
+        type: "warning",
+        title: "Ses dettes attendent une réponse",
+        message: `${subLabel(unansweredConversion.subId)} — ${formatDA(unansweredConversion.debt)} dus : ${
+          unansweredConversion.toFree ? "les effacer" : "leur appliquer la réduction"
+        } ou les garder telles quelles ?`,
+      });
+      return;
+    }
     if (editing) {
       setBusy(true);
       try {
@@ -910,9 +949,16 @@ function StudentFiche({
          * demandé. On agit APRÈS avoir écrit le cas et APRÈS les inscriptions,
          * pour que le recalcul lise l'élève tel qu'il est désormais.
          */
-        let converted: { repriced?: number; waived?: number } = {};
-        if (asksAboutDebt && debtMode !== "keep") {
-          converted = await convertStudentCase({ studentId: editing.id, mode: debtMode });
+        const converted = { repriced: 0, waived: 0 };
+        for (const c of caseConversions) {
+          if (debtAnswers[c.subId] !== "convert") continue;
+          const res = await convertStudentCase({
+            studentId: editing.id,
+            mode: c.toFree ? "clear" : "reprice",
+            subscriptionIds: [c.subId],
+          });
+          converted.repriced += res.repriced ?? 0;
+          converted.waived = money(converted.waived + (res.waived ?? 0));
         }
         /**
          * UN EMPLOI COCHÉ OFFERT (ou « école seulement ») NE PAIE PLUS
@@ -938,11 +984,10 @@ function StudentFiche({
               ? `${subIds.length} emploi(s) du temps · ${formatDA(totalSold)} versés en plus`
               : `${subIds.length} emploi(s) du temps`) +
             feeNote +
-            (debtMode === "clear" && (converted.waived ?? 0) > 0
-              ? ` · ${formatDA(converted.waived ?? 0)} de dettes effacées`
-              : debtMode === "reprice" && (converted.repriced ?? 0) > 0
-                ? ` · ${converted.repriced} séance(s) recalculée(s) au nouveau cas`
-                : "") +
+            (converted.waived > 0 ? ` · ${formatDA(converted.waived)} de dettes effacées` : "") +
+            (converted.repriced > 0 && converted.waived <= 0
+              ? ` · ${converted.repriced} séance(s) recalculée(s) au nouveau cas`
+              : "") +
             (droppedDues > 0
               ? ` · ${droppedDues} part(s) enseignant retirée(s) : l'enseignant n'est plus payé pour cet élève sur ces emplois du temps`
               : "") +
@@ -1158,113 +1203,173 @@ function StudentFiche({
           onAnswer={(active) => answerReductionAsk(asking, active)}
         />
       )}
-      <Modal open onClose={onClose} title={isEdit ? "Modifier l'élève" : "Nouvel élève"} wide>
-        <div className="space-y-4">
-          {/* identity */}
-          <div className="rounded-xl border border-line bg-canvas/30 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                👤 Informations personnelles
-              </span>
-              <Badge tone="primary" className="font-mono">
-                N° {shownNumber}
+      <Modal
+        open
+        onClose={onClose}
+        title={isEdit ? "Modifier l'élève" : "Nouvel élève"}
+        wide
+        footer={
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
+              <Badge tone="primary" className="gap-1">
+                <BookOpen className="h-3 w-3" /> {subIds.length} emploi(s)
               </Badge>
+              {totalSold > 0 && (
+                <Badge tone="success" className="gap-1 font-mono">
+                  <Wallet className="h-3 w-3" /> {formatDA(totalSold)}
+                </Badge>
+              )}
+              {unansweredConversion && (
+                <Badge tone="danger" className="gap-1">
+                  <AlertTriangle className="h-3 w-3" /> Dettes : réponse attendue
+                </Badge>
+              )}
             </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onClose} disabled={busy}>
+                Annuler
+              </Button>
+              <Button onClick={submit} disabled={busy} className="min-w-40">
+                <Check className="h-4 w-4" />
+                {busy
+                  ? isEdit
+                    ? "Enregistrement…"
+                    : "Création…"
+                  : isEdit
+                    ? "Enregistrer"
+                    : "Créer l'élève"}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {/* ---- en-tête : qui est-il, où en est la fiche ---------------- */}
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-primary p-4 text-white">
+            <div className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/10" />
+            <div className="pointer-events-none absolute -bottom-16 right-20 h-32 w-32 rounded-full bg-white/5" />
+            <div className="relative flex items-center gap-3">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-lg font-black uppercase ring-1 ring-white/30 backdrop-blur">
+                {`${firstName.trim()[0] ?? ""}${lastName.trim()[0] ?? ""}` || (
+                  <UserRound className="h-6 w-6" />
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/70">
+                  {isEdit ? "Fiche de l'élève" : "Nouvelle inscription"}
+                </p>
+                <p className="truncate text-lg font-black leading-tight">
+                  {`${firstName} ${lastName}`.trim() || "Prénom Nom"}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold">
+                  <span className="rounded-full bg-white/20 px-2 py-0.5 font-mono">N° {shownNumber}</span>
+                  <span className="rounded-full bg-white/20 px-2 py-0.5">
+                    {STUDENT_CASE_OPTIONS.find((o) => o.value === studentCase)?.label}
+                  </span>
+                  {(enrollLevel || enrollYear) && (
+                    <span className="rounded-full bg-white/20 px-2 py-0.5">
+                      {[enrollLevel, enrollYear].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ---- 1. identité --------------------------------------------- */}
+          <FicheSection step={1} icon={UserRound} title="Identité" hint="Le nom et les numéros de la famille.">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-muted">Prénom</label>
+              <Field label="Prénom">
                 <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Amine" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-muted">Nom</label>
+              </Field>
+              <Field label="Nom">
                 <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Benali" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-muted">
-                  Téléphone (optionnel)
-                </label>
+              </Field>
+              <Field label="Téléphone" optional>
                 <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0555 12 34 56" />
-              </div>
+              </Field>
               {/* Le second numéro : la mère, l'oncle, le voisin — celui qu'on
                   compose quand le premier ne répond pas. Jamais exigé. */}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-muted">
-                  Deuxième téléphone (optionnel)
-                </label>
+              <Field label="Deuxième téléphone" optional hint="Numéro de secours, affiché à côté du premier.">
                 <Input
                   value={phone2}
                   onChange={(e) => setPhone2(e.target.value)}
                   placeholder="0661 98 76 54"
                 />
-                <p className="mt-1 text-[10px] text-muted">
-                  Numéro de secours — il s&apos;affiche sur la fiche de l&apos;élève à côté du
-                  premier.
-                </p>
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs font-semibold text-muted">
-                  Date de naissance (optionnel)
-                </label>
+              </Field>
+              <Field label="Date de naissance" optional className="sm:col-span-2">
                 <Input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} />
-              </div>
+              </Field>
             </div>
-          </div>
 
-          {/* portal login — only an existing fiche has one */}
-          {isEdit && (
-            <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                🔐 Compte du portail &amp; badge
-              </span>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-muted">
-                    Email de connexion
-                  </label>
-                  <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+            {/* portal login — only an existing fiche has one; secondary, so folded */}
+            {isEdit && (
+              <details className="group mt-3 rounded-xl border border-line bg-canvas/40">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-bold text-ink">
+                  <span className="flex items-center gap-1.5">
+                    <KeyRound className="h-3.5 w-3.5 text-primary" /> Compte du portail &amp; badge
+                  </span>
+                  <ChevronDown className="h-4 w-4 text-muted transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="grid grid-cols-1 gap-3 border-t border-line p-3 sm:grid-cols-3">
+                  <Field label="Email de connexion">
+                    <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+                  </Field>
+                  <Field label="Nouveau mot de passe">
+                    <Input
+                      value={editPassword}
+                      onChange={(e) => setEditPassword(e.target.value)}
+                      placeholder="Laisser vide"
+                    />
+                  </Field>
+                  <Field label="Carte RFID">
+                    <Input value={editRfid} onChange={(e) => setEditRfid(e.target.value)} />
+                  </Field>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-muted">
-                    Nouveau mot de passe
-                  </label>
-                  <Input
-                    value={editPassword}
-                    onChange={(e) => setEditPassword(e.target.value)}
-                    placeholder="Laisser vide pour ne pas changer"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-muted">Carte RFID</label>
-                  <Input value={editRfid} onChange={(e) => setEditRfid(e.target.value)} />
-                </div>
-              </div>
-            </div>
-          )}
+              </details>
+            )}
+          </FicheSection>
 
-          {/* billing case */}
-          <div className="space-y-2 rounded-xl border border-line bg-canvas/30 p-3">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
-              🎫 Cas de l&apos;élève
-            </span>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {STUDENT_CASE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => pickCase(opt.value)}
-                  className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
-                    studentCase === opt.value
-                      ? "border-primary bg-primary text-white"
-                      : "border-line bg-surface text-ink hover:bg-primary-50"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+          {/* ---- 2. cas de facturation ----------------------------------- */}
+          <FicheSection
+            step={2}
+            icon={Tag}
+            title="Cas de l'élève"
+            hint="Comment il paie. Gratuité, réduction et « école seule » se règlent ensuite emploi par emploi."
+          >
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {STUDENT_CASE_OPTIONS.map((opt) => {
+                const card = CASE_CARDS[opt.value];
+                const on = studentCase === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => pickCase(opt.value)}
+                    className={`group flex flex-col items-start gap-1.5 rounded-xl border p-2.5 text-start transition-all ${
+                      on
+                        ? "border-primary bg-primary-50 shadow-sm ring-2 ring-primary/20"
+                        : "border-line bg-canvas/40 hover:border-primary/40 hover:bg-primary-50/40"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                        on ? "bg-gradient-primary text-white" : "bg-surface text-muted group-hover:text-primary"
+                      }`}
+                    >
+                      <card.icon className="h-3.5 w-3.5" />
+                    </span>
+                    <span className={`text-[11px] font-black leading-tight ${on ? "text-primary" : "text-ink"}`}>
+                      {opt.label}
+                    </span>
+                    <span className="text-[9px] leading-snug text-muted">{card.detail}</span>
+                  </button>
+                );
+              })}
             </div>
 
             {studentCase === "special" && (
-              <p className="rounded-lg bg-primary-50/50 p-2 text-[10px] leading-relaxed text-muted">
+              <p className="mt-3 rounded-xl border border-primary/20 bg-primary-50/50 p-2.5 text-[11px] leading-relaxed text-muted">
                 Études gratuites, <strong className="text-ink">emploi du temps par emploi du
                 temps</strong> : chaque emploi coché ci-dessous arrive « Offert » — ni l&apos;école
                 ni l&apos;enseignant ne sont payés pour lui. Décochez « Offert » sur un emploi et
@@ -1282,7 +1387,7 @@ function StudentFiche({
             )}
 
             {studentCase === "school_only" && (
-              <p className="rounded-lg bg-warning/10 p-2 text-[10px] leading-relaxed text-muted">
+              <p className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-2.5 text-[11px] leading-relaxed text-muted">
                 Seule l&apos;école est payée, <strong className="text-ink">emploi du temps par
                 emploi du temps</strong> : chaque emploi coché plus bas arrive avec l&apos;option
                 ACTIVE — la famille n&apos;y verse que la part de l&apos;école, l&apos;enseignant
@@ -1306,7 +1411,7 @@ function StudentFiche({
             )}
 
             {(studentCase === "teacher_child" || studentCase === "school_only") && (
-              <div className="space-y-1.5">
+              <div className="mt-3 space-y-2 rounded-xl border border-line bg-canvas/40 p-2.5">
                 <p className="text-[10px] text-muted">
                   {studentCase === "teacher_child"
                     ? "Pour chaque emploi du temps coché plus bas, choisissez : « école seulement » (il ne paie que la part de l'école, l'enseignant de cet emploi n'est PAS payé pour lui) ou « école + enseignant » (tarif normal, l'enseignant est payé pour lui). La part due est réglée par la famille ou sur le salaire de l'enseignant père."
@@ -1375,107 +1480,6 @@ function StudentFiche({
             )}
 
             {/* -----------------------------------------------------------
-                 LE CAS CHANGE, ET IL RESTE DES DETTES.
-
-                 Un élève ordinaire qui devient gratuit, « école seulement » ou
-                 réduit traîne ce qu'il devait AU TARIF D'AVANT. L'école
-                 tranche — l'application ne décide jamais à sa place — et les
-                 trois réponses possibles sont dites en toutes lettres, avec ce
-                 que chacune fait au compte de l'élève.
-                 ----------------------------------------------------------- */}
-            {asksAboutDebt && (
-              <div className="space-y-2 rounded-xl border border-danger/40 bg-danger/5 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-danger">
-                    ⚠️ Ses dettes du cas précédent
-                  </span>
-                  <Badge tone="danger" className="font-mono font-bold">
-                    {formatDA(debtTotal)}
-                  </Badge>
-                </div>
-                <p className="text-[10px] leading-relaxed text-muted">
-                  Il passe de{" "}
-                  <strong className="text-ink">
-                    {STUDENT_CASE_OPTIONS.find((o) => o.value === savedCase)?.label ?? savedCase}
-                  </strong>{" "}
-                  à{" "}
-                  <strong className="text-ink">
-                    {STUDENT_CASE_OPTIONS.find((o) => o.value === studentCase)?.label ??
-                      studentCase}
-                  </strong>{" "}
-                  et doit encore {formatDA(debtTotal)}{" "}
-                  {currentDebt && currentDebt.soldDebt > 0
-                    ? `(dont ${formatDA(currentDebt.soldDebt)} de scolarité`
-                    : "("}
-                  {currentDebt && currentDebt.registrationDue > 0
-                    ? `, ${formatDA(currentDebt.registrationDue)} de frais d'inscription`
-                    : ""}
-                  ). Que devient cette somme&nbsp;?
-                </p>
-                <div className="space-y-1.5">
-                  {(
-                    [
-                      {
-                        value: "keep" as const,
-                        title: "Garder les dettes telles quelles",
-                        detail:
-                          "Ce qu'il doit reste dû au tarif d'avant. Le nouveau cas ne vaudra que pour les séances à venir.",
-                      },
-                      {
-                        value: "reprice" as const,
-                        title: "Garder les dettes, mais les recalculer au nouveau cas",
-                        detail:
-                          "Ses séances non encore réglées sont re-tarifées : la réduction s'applique, « école seule » ramène la séance à la part de l'école — et la part due à son enseignant suit. Les séances déjà réglées à l'enseignant ne bougent pas.",
-                      },
-                      {
-                        value: "clear" as const,
-                        title: "Effacer les dettes précédentes",
-                        detail:
-                          "Il n'aura rien à payer : ses séances impayées passent en offertes, les restes d'anciens versements et les frais d'inscription tombent à zéro. Ce qu'il a déjà versé lui reste acquis.",
-                      },
-                    ]
-                  ).map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setDebtMode(opt.value)}
-                      className={`flex w-full gap-2 rounded-lg border px-2.5 py-2 text-start transition-colors ${
-                        debtMode === opt.value
-                          ? "border-primary bg-primary-50/70"
-                          : "border-line bg-surface hover:bg-primary-50/40"
-                      }`}
-                    >
-                      <span
-                        className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
-                          debtMode === opt.value ? "border-primary bg-primary" : "border-line"
-                        }`}
-                      >
-                        {debtMode === opt.value && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                        )}
-                      </span>
-                      <span className="min-w-0">
-                        <strong className="block text-[11px] text-ink">{opt.title}</strong>
-                        <span className="block text-[10px] leading-relaxed text-muted">
-                          {opt.detail}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                {/* La paie de l'enseignant ne dépend pas de cette réponse : sur un
-                    emploi offert, il n'est plus payé pour cet élève. */}
-                {isFree && (
-                  <p className="rounded-lg bg-success/10 p-2 text-[10px] leading-relaxed text-success">
-                    Quel que soit votre choix, l&apos;enseignant n&apos;est plus payé pour cet élève
-                    sur les emplois du temps <strong>offerts</strong> — séances déjà pointées
-                    comprises. Seules les parts déjà réglées restent dans son historique.
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* -----------------------------------------------------------
                  « RÉDUCTION » — PLUS AUCUNE REMISE GÉNÉRALE.
 
                  La remise se coche EMPLOI DU TEMPS PAR EMPLOI DU TEMPS, comme
@@ -1483,7 +1487,7 @@ function StudentFiche({
                  bas pose sa question ; sans réponse, il se calcule normalement.
                  ----------------------------------------------------------- */}
             {isReduction && (
-              <p className="rounded-lg bg-warning/10 p-2 text-[10px] leading-relaxed text-muted">
+              <p className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-2.5 text-[11px] leading-relaxed text-muted">
                 La réduction se règle{" "}
                 <strong className="text-ink">emploi du temps par emploi du temps</strong> : à chaque
                 emploi coché plus bas, l&apos;écran demande si la réduction s&apos;y applique.
@@ -1508,28 +1512,25 @@ function StudentFiche({
                 )}
               </p>
             )}
-          </div>
+          </FicheSection>
 
-          {/* inscriptions + soldes */}
-          <div className="space-y-3 rounded-xl border border-line bg-canvas/30 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
-                <BookOpen className="h-3.5 w-3.5" /> Emplois du temps de l&apos;élève
-              </span>
-              <span className="text-[10px] font-semibold text-muted">
+          {/* ---- 3. emplois du temps + ce qu'il verse -------------------- */}
+          <FicheSection
+            step={3}
+            icon={BookOpen}
+            title="Emplois du temps & paiement"
+            hint={
+              isEdit
+                ? "Retirez-en un, cochez-en un autre : ce qui part est désinscrit sans rien perdre, ce qui arrive l'inscrit là où en est le groupe."
+                : "Il entre sur chaque emploi là où en est le groupe ; son avance est versée sur ce mois-là."
+            }
+            aside={
+              <Badge tone={subIds.length > 0 ? "primary" : "neutral"} className="shrink-0">
                 {subIds.length} sélectionné(s)
-              </span>
-            </div>
-
-            {isEdit && (
-              <p className="text-[10px] leading-relaxed text-muted">
-                Le tableau ci-dessous rappelle sa <strong>classe</strong>, son{" "}
-                <strong>année</strong> et les <strong>emplois du temps</strong> qu&apos;il suit,
-                avec le solde de chacun. Retirez-en un, cochez-en un autre dans la liste, puis{" "}
-                <strong>Enregistrer les modifications</strong> : ce qui part est désinscrit sans
-                rien perdre de son historique, ce qui arrive l&apos;inscrit là où en est le groupe.
-              </p>
-            )}
+              </Badge>
+            }
+          >
+          <div className="space-y-3">
 
             <ClassTimingPicker
               selectedSubIds={subIds}
@@ -1585,13 +1586,18 @@ function StudentFiche({
                   return (
                     <div
                       key={subId}
-                      className={`rounded-xl border p-2.5 ${
-                        offered ? "border-success/40 bg-success/5" : "border-line bg-surface"
+                      className={`relative overflow-hidden rounded-2xl border p-3 ps-4 ${
+                        offered ? "border-success/40 bg-success/5" : "border-line bg-canvas/30"
                       }`}
                     >
+                      <span
+                        className={`absolute inset-y-0 start-0 w-1 ${
+                          offered ? "bg-success" : reduced ? "bg-warning" : "bg-gradient-primary"
+                        }`}
+                      />
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <strong className="block text-[11px] text-ink">{subLabel(subId)}</strong>
+                          <strong className="block text-[12px] font-black text-ink">{subLabel(subId)}</strong>
                           <span className="text-[10px] text-muted">
                             {cycleSizeOf(sub)} séances / mois ·{" "}
                             {offered ? (
@@ -1628,7 +1634,7 @@ function StudentFiche({
                             clearReduction(subId);
                             setReductionAsk((prev) => prev.filter((id) => id !== subId));
                           }}
-                          className="shrink-0 text-muted hover:text-danger"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
                           title="Retirer cet emploi du temps"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -1642,7 +1648,7 @@ function StudentFiche({
                           normalement, et l'élève y apparaît comme tout le monde. */}
                       {perSubSchoolOnly && (
                         <label
-                          className={`mt-2 flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+                          className={`mt-2.5 flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2 transition-colors ${
                             schoolOnlyOn(subId)
                               ? "border-warning/50 bg-warning/10"
                               : "border-line bg-canvas/40"
@@ -1696,7 +1702,7 @@ function StudentFiche({
                       {/* La gratuité, emploi par emploi — cochée par défaut */}
                       {isFree && (
                         <label
-                          className={`mt-2 flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+                          className={`mt-2.5 flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2 transition-colors ${
                             offered ? "border-success/40 bg-success/10" : "border-line bg-canvas/40"
                           }`}
                         >
@@ -1738,7 +1744,7 @@ function StudentFiche({
                            ------------------------------------------------- */}
                       {isReduction && (
                         <div
-                          className={`mt-2 rounded-lg border px-2.5 py-1.5 ${
+                          className={`mt-2.5 rounded-xl border px-3 py-2 ${
                             reduced ? "border-warning/50 bg-warning/10" : "border-line bg-canvas/40"
                           }`}
                         >
@@ -1869,7 +1875,7 @@ function StudentFiche({
                         </div>
                       )}
 
-                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                      <div className="mt-2.5 flex flex-wrap items-end gap-2 border-t border-line/70 pt-2.5">
                         {offered ? (
                           <span className="text-[10px] font-semibold text-success">
                             Rien à encaisser sur cet emploi du temps.
@@ -1913,16 +1919,17 @@ function StudentFiche({
                   );
                 })}
 
-                <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary-50/40 px-3 py-2">
-                  <span className="text-xs font-semibold text-muted">
+                <div className="flex items-center justify-between rounded-xl bg-gradient-primary px-3.5 py-2.5 text-white">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-white/85">
+                    <Wallet className="h-3.5 w-3.5" />
                     {isEdit ? "Total encaissé maintenant" : "Avance totale versée à l'inscription"}
                   </span>
-                  <strong className="text-sm text-primary">{formatDA(totalSold)}</strong>
+                  <strong className="font-mono text-base">{formatDA(totalSold)}</strong>
                 </div>
 
                 {!isEdit && totalSold > 0 && (
                   <p className="rounded-xl border border-success/40 bg-success/10 p-2.5 text-[10px] leading-relaxed text-success">
-                    🧾 Après la création, l&apos;écran proposera d&apos;imprimer le{" "}
+                    Après la création, l&apos;écran proposera d&apos;imprimer le{" "}
                     <strong>reçu de cette avance</strong> puis le{" "}
                     <strong>bon d&apos;inscription</strong>. L&apos;avance entre dans la caisse et
                     apparaît aussitôt dans l&apos;historique des paiements de l&apos;élève, emploi
@@ -1931,7 +1938,7 @@ function StudentFiche({
                 )}
 
                 <p className="text-[10px] text-muted">
-                  ℹ️ L&apos;élève entre sur chaque emploi du temps LÀ OÙ EN EST LE GROUPE : son
+                  L&apos;élève entre sur chaque emploi du temps LÀ OÙ EN EST LE GROUPE : son
                   solde est versé sur ce mois-là, les séances déjà tenues avant lui restent vides
                   sur sa ligne et les mois précédents ne le comptent pas.
                 </p>
@@ -1950,7 +1957,7 @@ function StudentFiche({
                   <div className="space-y-2 rounded-xl border border-warning/40 bg-warning/5 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-warning">
-                        🎫 Frais d&apos;inscription requis
+                        Frais d&apos;inscription requis
                       </span>
                       <Badge tone="warning" className="font-mono font-bold">
                         {formatDA(feeRequired)}
@@ -2016,30 +2023,220 @@ function StudentFiche({
 
                 {!feeAlreadyAsked && feeRequired === 0 && (school?.registrationFee ?? 0) > 0 && paidSubIds.length > 0 && (
                   <p className="text-[10px] text-muted">
-                    ℹ️ Aucun frais d&apos;inscription pour cet élève : les emplois du temps cochés
+                    Aucun frais d&apos;inscription pour cet élève : les emplois du temps cochés
                     n&apos;entrent pas dans le périmètre défini sur la page Abonnements.
                   </p>
                 )}
               </div>
             )}
           </div>
+          </FicheSection>
 
-          <div className="flex justify-end gap-2 border-t border-line pt-4">
-            <Button variant="outline" onClick={onClose} disabled={busy}>
-              Annuler
-            </Button>
-            <Button onClick={submit} disabled={busy}>
-              {busy
-                ? isEdit
-                  ? "Enregistrement…"
-                  : "Création…"
-                : isEdit
-                  ? "Enregistrer les modifications"
-                  : "Créer l'élève"}
-            </Button>
-          </div>
+          {/* -----------------------------------------------------------
+               LE CAS CHANGE, ET IL RESTE DES DETTES — EMPLOI PAR EMPLOI.
+
+               Un élève payé au tarif plein qui devient offert ou réduit sur
+               un emploi traîne ce qu'il y devait AU TARIF D'AVANT. Chaque
+               emploi concerné pose SA question, et l'enregistrement attend
+               une réponse pour chacun. Le nouveau cas vaut, lui, dès la
+               prochaine séance, quelle que soit la réponse.
+               ----------------------------------------------------------- */}
+          {caseConversions.length > 0 && (
+            <FicheSection
+              step={4}
+              tone="danger"
+              icon={AlertTriangle}
+              title="Ses dettes au tarif d'avant"
+              hint="Le nouveau cas s'applique dès la prochaine séance. Pour ce qu'il doit déjà, choisissez sur chaque emploi du temps."
+              aside={
+                <Badge tone="danger" className="font-mono font-bold">
+                  {formatDA(caseConversions.reduce((t, c) => t + c.debt, 0))}
+                </Badge>
+              }
+            >
+              <div className="space-y-2.5">
+              {caseConversions.map((c) => {
+                const answer = debtAnswers[c.subId];
+                const choices = [
+                  {
+                    value: "convert" as const,
+                    title: c.toFree ? "Effacer ses dettes" : "Appliquer la réduction",
+                    detail: c.toFree
+                      ? "Ses séances impayées passent en offertes : il ne doit plus rien ici."
+                      : `Ses séances impayées sont recalculées à ${formatDA(c.after)} la séance.`,
+                    Icon: c.toFree ? Gift : Percent,
+                  },
+                  {
+                    value: "keep" as const,
+                    title: "Garder les dettes",
+                    detail: `Les ${formatDA(c.debt)} restent dus au tarif d'avant (${formatDA(c.before)} la séance).`,
+                    Icon: Wallet,
+                  },
+                ];
+                return (
+                  <div
+                    key={c.subId}
+                    className={`rounded-xl border bg-surface p-2.5 ${
+                      answer ? "border-line" : "border-danger/50 ring-2 ring-danger/10"
+                    }`}
+                  >
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <strong className="min-w-0 truncate text-[12px] text-ink">
+                        {subLabel(c.subId)}
+                      </strong>
+                      <div className="flex items-center gap-1.5">
+                        <Badge tone={c.toFree ? "success" : "primary"} className="text-[9px]">
+                          {c.toFree ? "devient offert" : `${formatDA(c.before)} → ${formatDA(c.after)}`}
+                        </Badge>
+                        <Badge tone="danger" className="font-mono">
+                          {formatDA(c.debt)}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="grid gap-1.5 sm:grid-cols-2">
+                      {choices.map(({ value, title, detail, Icon }) => {
+                        const on = answer === value;
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => setDebtAnswers((prev) => ({ ...prev, [c.subId]: value }))}
+                            className={`flex gap-2 rounded-lg border px-2.5 py-2 text-start transition-all ${
+                              on
+                                ? "border-primary bg-primary-50 shadow-sm"
+                                : "border-line bg-canvas/40 hover:border-primary/40 hover:bg-primary-50/40"
+                            }`}
+                          >
+                            <span
+                              className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${
+                                on ? "bg-primary text-white" : "bg-muted/15 text-muted"
+                              }`}
+                            >
+                              <Icon className="h-3.5 w-3.5" />
+                            </span>
+                            <span className="min-w-0">
+                              <strong className="block text-[11px] text-ink">{title}</strong>
+                              <span className="block text-[10px] leading-relaxed text-muted">
+                                {detail}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {/* La paie de l'enseignant ne dépend pas de cette réponse : sur un
+                  emploi offert, il n'est plus payé pour cet élève. */}
+              {caseConversions.some((c) => c.toFree) && (
+                <p className="rounded-lg bg-success/10 p-2 text-[10px] leading-relaxed text-success">
+                  Quel que soit votre choix, l&apos;enseignant n&apos;est plus payé pour cet élève
+                  sur les emplois du temps <strong>offerts</strong> — séances déjà pointées
+                  comprises. Seules les parts déjà réglées restent dans son historique.
+                </p>
+              )}
+              </div>
+            </FicheSection>
+          )}
+
         </div>
       </Modal>
     </>
   );
 }
+
+// ---- Présentation de la fiche ---------------------------------------------
+
+/** Une étape de la fiche : numéro, icône, titre, et ce qu'on y décide. */
+function FicheSection({
+  step,
+  icon: Icon,
+  title,
+  hint,
+  aside,
+  tone = "primary",
+  children,
+}: {
+  step?: number;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  hint?: React.ReactNode;
+  aside?: React.ReactNode;
+  tone?: "primary" | "danger";
+  children: React.ReactNode;
+}) {
+  const danger = tone === "danger";
+  return (
+    <section
+      className={`rounded-2xl border p-3.5 sm:p-4 ${
+        danger ? "border-danger/30 bg-danger/5" : "border-line bg-surface shadow-sm"
+      }`}
+    >
+      <header className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span
+            className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+              danger ? "bg-danger/15 text-danger" : "bg-primary-50 text-primary"
+            }`}
+          >
+            <Icon className="h-4.5 w-4.5" />
+            {step !== undefined && (
+              <span
+                className={`absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-black text-white ring-2 ring-surface ${
+                  danger ? "bg-danger" : "bg-primary"
+                }`}
+              >
+                {step}
+              </span>
+            )}
+          </span>
+          <div className="min-w-0">
+            <h3 className={`text-sm font-black ${danger ? "text-danger" : "text-ink"}`}>{title}</h3>
+            {hint && <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{hint}</p>}
+          </div>
+        </div>
+        {aside}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+/** Un champ libellé — le même gabarit pour tous les champs de la fiche. */
+function Field({
+  label,
+  optional,
+  hint,
+  className,
+  children,
+}: {
+  label: string;
+  optional?: boolean;
+  hint?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={className}>
+      <label className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-ink">
+        {label}
+        {optional && <span className="font-medium text-muted">· facultatif</span>}
+      </label>
+      {children}
+      {hint && <p className="mt-1 text-[10px] text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+/** Ce que chaque cas veut dire, en une ligne, sur sa carte de choix. */
+const CASE_CARDS: Record<
+  StudentCase,
+  { icon: React.ComponentType<{ className?: string }>; detail: string }
+> = {
+  normal: { icon: UserRound, detail: "Tarif plein, école + enseignant" },
+  special: { icon: Gift, detail: "Gratuit, emploi par emploi" },
+  teacher_child: { icon: GraduationCap, detail: "Rattaché à un enseignant" },
+  reduction: { icon: Percent, detail: "Remise, emploi par emploi" },
+  school_only: { icon: Building2, detail: "Seule l'école est payée" },
+};
