@@ -56,6 +56,7 @@ import {
   teacherPerSeanceOf,
   classLabel,
   dayKeyOf,
+  dayPointageBySession,
   formatDateFr,
   formatDays,
   groupName,
@@ -195,33 +196,15 @@ function AdminDashboard() {
   );
 
   /**
-   * How far the pointage of that day has gone, créneau by créneau — built in
-   * one pass over les présences du jour, pas un balayage par emploi.
+   * How far the pointage of that day has gone, créneau by créneau — read like
+   * the sheet each badge opens, never more pointés than élèves (voir
+   * `dayPointageBySession`).
    */
-  const progress = useMemo(() => {
-    const marks = new Map<string, number>();
-    for (const a of attendance) {
-      if (dayKeyOf(a.timestamp) !== date) continue;
-      marks.set(a.sessionId, (marks.get(a.sessionId) ?? 0) + 1);
-    }
-    const rosterOf = new Map<string, number>();
-    for (const st of students) {
-      for (const id of st.subscriptionIds) rosterOf.set(id, (rosterOf.get(id) ?? 0) + 1);
-    }
-    const bySession = new Map<string, string>();
-    for (const sub of subscriptions) bySession.set(sub.sessionId, sub.id);
-
-    const out = new Map<string, { roster: number; marked: number; priced: boolean }>();
-    for (const s of sessions) {
-      const subId = bySession.get(s.id);
-      out.set(s.id, {
-        roster: subId ? rosterOf.get(subId) ?? 0 : 0,
-        marked: marks.get(s.id) ?? 0,
-        priced: !!subId,
-      });
-    }
-    return out;
-  }, [sessions, subscriptions, students, attendance, date]);
+  const progress = useMemo(
+    () => dayPointageBySession(db, date),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, subscriptions, students, attendance, date],
+  );
 
   const progressOf = (s: ScheduleSession) =>
     progress.get(s.id) ?? { roster: 0, marked: 0, priced: false };
@@ -237,9 +220,12 @@ function AdminDashboard() {
   }).length;
   const remainingCount = dayTimings.length - doneCount;
 
-  const dayMarks = attendance.filter(
-    (a) => dayKeyOf(a.timestamp) === date && dayTimings.some((s) => s.id === a.sessionId),
-  ).length;
+  // Des ÉLÈVES pointés : une ligne en double sur le même élève ne compte qu'une fois.
+  const dayMarks = new Set(
+    attendance
+      .filter((a) => dayKeyOf(a.timestamp) === date && dayTimings.some((s) => s.id === a.sessionId))
+      .map((a) => `${a.studentId}|${a.sessionId}`),
+  ).size;
 
   /**
    * LE TARIF DE CHAQUE EMPLOI DU TEMPS DU JOUR, DANS LE DÉTAIL.

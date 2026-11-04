@@ -128,7 +128,11 @@ describe("le solde : de l'argent, débité séance par séance", () => {
     const student = useData.getState().students.find((st) => st.id === STU)!;
     student.subscriptionDates![SUB] = { ...student.subscriptionDates![SUB], joinMonthCode: "M1", joinSlotIndex: 1 };
     await useData.getState().addSold({ studentId: STU, subscriptionId: SUB, amount: 4 * sub.pricePerSession });
-    for (const day of scheduledDays(3)) {
+    // La 1re séance a eu lieu sans lui — un camarade du groupe y a été pointé —
+    // et il suit les trois suivantes : son M1 est au complet.
+    const [first, ...his] = scheduledDays(4);
+    await useData.getState().setPresence({ studentId: "stu-4", sessionId: "ses-1", date: first, status: "present" });
+    for (const day of his) {
       await useData.getState().setPresence({ studentId: STU, sessionId: "ses-1", date: day, status: "present" });
     }
 
