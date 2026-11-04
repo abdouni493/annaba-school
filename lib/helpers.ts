@@ -1422,13 +1422,52 @@ export function sessionAttendance(
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
+/**
+ * UNE SÉANCE PAR JOUR : les lignes d'un élève sur un emploi du temps, au plus
+ * UNE par journée, de la plus ancienne à la plus récente.
+ *
+ * Un emploi du temps ne tient qu'une séance par jour, et le pointage le sait :
+ * il réécrit la ligne du jour au lieu d'en ajouter une. Mais rien en base
+ * n'interdit deux lignes le même jour — deux postes de la réception qui
+ * pointent en même temps, un badge passé pendant qu'on clique sur la feuille.
+ * La feuille n'en montrait qu'une (une case par séance), alors que le compteur
+ * du mois et le solde les comptaient toutes : un mois de 4 séances affichait
+ * « 5/4 » et l'élève payait la même séance deux fois.
+ *
+ * La ligne qui fait foi est celle que la case de la feuille affiche : celle qui
+ * consomme la séance l'emporte sur une annulée, et à égalité la première
+ * écrite. Mois, compteur et solde se lisent tous sur cette liste.
+ */
+const seanceRowsCache = new WeakMap<AttendanceRecord[], AttendanceRecord[]>();
+export function seanceRows(
+  db: Database,
+  studentId: string,
+  sessionId: string,
+): AttendanceRecord[] {
+  const rows = attendanceOf(db, studentId, sessionId);
+  const cached = seanceRowsCache.get(rows);
+  if (cached) return cached;
+  const byDay = new Map<string, AttendanceRecord>();
+  const ordered = [...rows].sort(
+    (a, b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id),
+  );
+  for (const rec of ordered) {
+    const day = dayKeyOf(rec.timestamp);
+    const kept = byDay.get(day);
+    if (!kept || (consumesSeance(rec) && !consumesSeance(kept))) byDay.set(day, rec);
+  }
+  const out = ordered.filter((rec) => byDay.get(dayKeyOf(rec.timestamp)) === rec);
+  if (rows.length > 0) seanceRowsCache.set(rows, out);
+  return out;
+}
+
 /** …limited to the rows that actually burn a séance (they set the pace). */
 export function cycleRecords(
   db: Database,
   studentId: string,
   sessionId: string,
 ): AttendanceRecord[] {
-  return sessionAttendance(db, studentId, sessionId).filter(consumesSeance);
+  return seanceRows(db, studentId, sessionId).filter(consumesSeance);
 }
 
 /**
@@ -1492,12 +1531,14 @@ export interface MonthCycle {
    * Séances of that month the student was NOT part of — he was registered
    * after they had been held. 0 on an ordinary month, `startSlot` on the month
    * he arrived on, and the whole `size` on a month that ran before him.
-   * What he can still attend is therefore `size - lead`.
+   * A séance of those he was pointed on all the same is HIS, and is not
+   * counted here. What he can still attend is therefore `size - lead`, and
+   * `done` never goes past it.
    */
   lead: number;
-  /** the billable rows of that month, in order */
+  /** the billable rows of that month, in order — one per séance (see `seanceRows`) */
   records: AttendanceRecord[];
-  /** how many of the `size` séances are already used */
+  /** how many of the `size` séances are already used — séances, not rows */
   done: number;
   /** the month is over: its last séance has been recorded */
   complete: boolean;
@@ -1587,7 +1628,12 @@ export function enrollmentCycles(
 
   // Chaque ligne tombe dans le mois DU GROUPE où sa séance a été tenue (voir
   // `groupSeanceDays`) — jamais dans « sa n-ième ligne ».
-  const monthOfRec = new Map(records.map((a) => [a.id, recordMonthIndex(db, a, size)]));
+  const posOfRec = new Map(
+    records.map((a) => [a.id, sub ? groupSeancePosition(db, sub.sessionId, a.timestamp) : 0]),
+  );
+  const monthOfRec = new Map(
+    records.map((a) => [a.id, Math.floor((posOfRec.get(a.id) ?? 0) / Math.max(1, size))]),
+  );
   const fromRecords = records.reduce((mx, a) => Math.max(mx, (monthOfRec.get(a.id) ?? 0) + 1), 0);
   const fromCredits = Object.keys(credits).reduce((mx, c) => Math.max(mx, monthOrder(c) + 1), 0);
   let count = Math.max(1, start.monthIndex + 1, fromRecords, fromCredits);
@@ -1598,10 +1644,28 @@ export function enrollmentCycles(
   const out: MonthCycle[] = [];
   let carry = 0;
   for (let i = 0; i < count; i++) {
-    // What the month holds for HIM: the whole pack, minus the séances that ran
-    // before he arrived (all of them on a month he was not there for).
-    const lead = i < start.monthIndex ? size : i === start.monthIndex ? start.slotIndex : 0;
     const slice = records.filter((a) => monthOfRec.get(a.id) === i);
+    /**
+     * LES CASES DU MOIS QU'IL OCCUPE — une par séance du groupe, jamais plus.
+     *
+     * Le compteur de la ligne se lit « séances suivies / séances qui sont les
+     * siennes ». Il comptait ses LIGNES, alors que la feuille montre des CASES :
+     * deux lignes sur la même séance faisaient « 5/4 » sur un mois de 4.
+     */
+    const slots = new Set(slice.map((a) => (posOfRec.get(a.id) ?? 0) - i * size));
+    // What the month holds for HIM: the whole pack, minus the séances that ran
+    // before he arrived (all of them on a month he was not there for)…
+    const entryLead = i < start.monthIndex ? size : i === start.monthIndex ? start.slotIndex : 0;
+    // …SAUF celles où il a quand même été pointé. Venu avant la date retenue
+    // pour son inscription (pointé après coup, réinscrit, ou le calendrier du
+    // groupe a bougé depuis), la séance est bel et bien la sienne : sa case est
+    // pleine sur la feuille et elle est facturée. La laisser dans les séances
+    // « d'avant lui » affichait « 4/3 » — plus de séances suivies que de
+    // séances à suivre.
+    let pointedBefore = 0;
+    for (const s of slots) if (s < entryLead) pointedBefore++;
+    const lead = entryLead - pointedBefore;
+    const done = slots.size;
     const code = `M${i + 1}`;
     const consumed = money(
       slice.reduce((t, a) => t + seanceChargeOf(db, a, student, sub), 0),
@@ -1612,7 +1676,7 @@ export function enrollmentCycles(
     // n'a pas été pointé sur chacune.
     const complete =
       size - lead > 0 &&
-      (slice.length >= size - lead || (!!sub && groupMonthDone(db, sub.sessionId, i, size)));
+      (done >= size - lead || (!!sub && groupMonthDone(db, sub.sessionId, i, size)));
     const left = money(carriedIn + credited - consumed);
     // Le mois clos (ou déjà suivi d'un autre) passe son reste au suivant.
     const passes = left > 0 && (complete || i < count - 1);
@@ -1624,7 +1688,7 @@ export function enrollmentCycles(
       size,
       lead,
       records: slice,
-      done: slice.length,
+      done,
       complete,
       consumed,
       credited,
@@ -1777,7 +1841,9 @@ export function soldFor(db: Database, studentId: string, subscriptionId: string)
   if (!sub) return money(enrollmentBalance(studentEnrollmentFor(db, studentId, subscriptionId)));
   const student = db.students.find((s) => s.id === studentId);
   let consumed = 0;
-  for (const rec of attendanceOf(db, studentId, sub.sessionId)) {
+  // Une séance par jour : une ligne en double ne se paie pas deux fois (voir
+  // `seanceRows`), exactement comme le mois ne la compte qu'une fois.
+  for (const rec of seanceRows(db, studentId, sub.sessionId)) {
     consumed += seanceChargeOf(db, rec, student, sub);
   }
   let credited = 0;
@@ -2956,6 +3022,74 @@ export function sessionMonthCodeOn(db: Database, sessionId: string, date: string
   const at = days.indexOf(date);
   const index = at >= 0 ? at : days.filter((d) => d < date).length;
   return `M${Math.floor(index / size) + 1}`;
+}
+
+/** Ce qu'un créneau du jour affiche sur le tableau de bord : « pointés / élèves ». */
+export interface DayPointage {
+  /** les élèves que la feuille de cette date liste */
+  roster: number;
+  /** combien d'entre eux ont déjà une ligne ce jour-là — chacun une fois */
+  marked: number;
+  /** l'emploi du temps a un tarif (sinon, pas de feuille à pointer) */
+  priced: boolean;
+}
+
+const WEEK_DAYS: Day[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+/**
+ * « POINTÉS / ÉLÈVES », CRÉNEAU PAR CRÉNEAU — lu comme la feuille qu'il ouvre.
+ *
+ * Le tableau de bord comptait les LIGNES du jour face à TOUS les inscrits de
+ * l'emploi : un élève pointé puis retiré du groupe, une ligne écrite en double
+ * par deux postes, et un groupe de 4 élèves affichait « 5/4 ». On compte
+ * désormais les élèves que la feuille de cette date liste (inscrits sur le
+ * mois de la séance du jour, avec le tarif que la feuille lit), chacun une
+ * seule fois : le même compte que ses tuiles « Élèves du groupe » et « À
+ * pointer ». Le pointé ne dépasse donc jamais le nombre d'élèves.
+ *
+ * Une seule passe sur les présences et sur les élèves, quel que soit le
+ * nombre de créneaux : l'écran le recalcule à chaque pointage.
+ */
+export function dayPointageBySession(db: Database, date: string): Map<string, DayPointage> {
+  const dow = WEEK_DAYS[new Date(`${date}T12:00:00`).getDay()];
+  const pointed = new Set<string>();
+  for (const a of db.attendance) {
+    if (dayKeyOf(a.timestamp) === date) pointed.add(`${a.studentId}|${a.sessionId}`);
+  }
+  // Le tarif que la feuille lit : le vivant d'abord, l'archivé à défaut.
+  const subOf = new Map<string, Subscription>();
+  for (const sub of db.subscriptions) {
+    const kept = subOf.get(sub.sessionId);
+    if (!kept || (kept.archivedAt && !sub.archivedAt)) subOf.set(sub.sessionId, sub);
+  }
+  const studentsOf = new Map<string, string[]>();
+  for (const st of db.students) {
+    for (const id of st.subscriptionIds) {
+      const list = studentsOf.get(id);
+      if (list) list.push(st.id);
+      else studentsOf.set(id, [st.id]);
+    }
+  }
+
+  const out = new Map<string, DayPointage>();
+  for (const s of db.sessions) {
+    const sub = subOf.get(s.id);
+    // Seuls les créneaux de la journée affichée ont une feuille à compter.
+    if (!sub || !s.days.includes(dow)) {
+      out.set(s.id, { roster: 0, marked: 0, priced: !!sub });
+      continue;
+    }
+    const monthCode = sessionMonthCodeOn(db, s.id, date);
+    let roster = 0;
+    let marked = 0;
+    for (const studentId of studentsOf.get(sub.id) ?? []) {
+      if (!enrolledInMonth(db, studentId, sub.id, monthCode)) continue;
+      roster += 1;
+      if (pointed.has(`${studentId}|${s.id}`)) marked += 1;
+    }
+    out.set(s.id, { roster, marked, priced: true });
+  }
+  return out;
 }
 
 /** The row written for ONE student on ONE emploi on ONE day, if any. */

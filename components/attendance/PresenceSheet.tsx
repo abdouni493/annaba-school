@@ -3385,13 +3385,13 @@ function TeacherChildPayModal({
   /** Le prix d'UN mois pour lui — son mois d'entrée sans les séances tenues
    *  avant son inscription, dont il est exempté. */
   // Le reste reporté du mois précédent en paie déjà une partie.
-  const monthPriceOf = (code: string) =>
-    sub
-      ? positiveMoney(
-          studentMonthPriceFrom(student, sub, cycleLead(db, student.id, subscriptionId, code)) -
-            cycleOf(db, student.id, subscriptionId, code).carriedIn,
-        )
-      : 0;
+  // Les séances « d'avant lui » où il a quand même été pointé sont les siennes
+  // et se paient : le prix suit le `lead` du mois, comme son compteur.
+  const monthPriceOf = (code: string) => {
+    if (!sub) return 0;
+    const cycle = cycleOf(db, student.id, subscriptionId, code);
+    return positiveMoney(studentMonthPriceFrom(student, sub, cycle.lead) - cycle.carriedIn);
+  };
 
   const [monthCode, setMonthCode] = useState(owing[0]?.code ?? current);
   const [amount, setAmount] = useState(owing[0] ? -owing[0].balance : monthPriceOf(current));

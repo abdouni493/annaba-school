@@ -63,7 +63,7 @@ import {
   cycleLead,
   cycleOf,
   cycleSizeOf,
-  cycleSlots,
+  cycleSlotGrid,
   formatDateFr,
   formatDays,
   groupName,
@@ -116,8 +116,19 @@ interface SituationRow {
   index: number;
   currentIndex: number;
   size: number;
+  /** séances du mois qui ne sont pas les siennes — celles où il a quand même
+   *  été pointé exceptées (le compteur « suivies / à suivre » se lit dessus) */
   lead: number;
-  slots: AttendanceRecord[];
+  /** son point d'entrée sur ce mois : les cases d'avant restent en pointillés
+   *  tant qu'elles sont vides */
+  entryLead: number;
+  /**
+   * UNE CASE PAR SÉANCE DU GROUPE, exactement `size` — la même grille que la
+   * feuille de présence. Ses lignes étaient tassées puis posées APRÈS son
+   * point d'entrée : une séance pointée avant lui poussait les autres d'un
+   * cran, et un mois de 4 séances s'affichait sur 5 colonnes.
+   */
+  grid: (AttendanceRecord | undefined)[];
   unitPrice: number;
   /** cet emploi du temps lui est OFFERT (la gratuité se coche module par
    *  module : les autres restent payants) */
@@ -260,7 +271,8 @@ export function StudentSituationModal({
         month.kind === "fixed" ? month.index : Math.max(0, currentIndex - month.offset);
       const code = `M${index + 1}`;
       const cycle = cycleOf(db, student.id, subId, code);
-      const slots = cycleSlots(db, student.id, subId, code);
+      const grid = cycleSlotGrid(db, student.id, subId, code);
+      const slots = grid.filter((a): a is AttendanceRecord => !!a);
       const previousDue = Array.from({ length: index }, (_, i) =>
         Math.max(0, -cycleOf(db, student.id, subId, `M${i + 1}`).balance),
       ).reduce((s, v) => s + v, 0);
@@ -280,8 +292,9 @@ export function StudentSituationModal({
         index,
         currentIndex,
         size: cycleSizeOf(sub),
-        lead: cycleLead(db, student.id, subId, code),
-        slots,
+        lead: cycle.lead,
+        entryLead: cycleLead(db, student.id, subId, code),
+        grid,
         unitPrice: studentListPrice(student, sub),
         offered: isFreeSub(student, subId),
         reductionLabel: caseReductionLabel(reductionForSub(student, subId)),
@@ -343,10 +356,9 @@ export function StudentSituationModal({
    */
   const visibleRows = emploi === "all" ? rows : rows.filter((r) => r.subId === emploi);
 
-  const slotCount = visibleRows.reduce(
-    (mx, r) => Math.max(mx, r.size, r.lead + r.slots.length),
-    0,
-  );
+  // Le mois le plus long des emplois affichés : jamais plus de colonnes que
+  // de séances prévues par un mois.
+  const slotCount = visibleRows.reduce((mx, r) => Math.max(mx, r.size), 0);
   const totalDue = visibleRows.reduce((s, r) => s + r.due, 0);
   const totalPrevious = visibleRows.reduce((s, r) => s + r.previousDue, 0);
   const totalCredited = visibleRows.reduce((s, r) => s + r.credited, 0);
@@ -855,9 +867,11 @@ export function StudentSituationModal({
                             // Au-delà du pack de CET emploi, la colonne n'existe
                             // pas pour lui : elle reste vide plutôt que d'inventer
                             // une séance jamais programmée.
-                            const beyond = i >= Math.max(r.size, r.lead + r.slots.length);
-                            const before = !beyond && i < r.lead;
-                            const rec = beyond || before ? undefined : r.slots[i - r.lead];
+                            const beyond = i >= r.size;
+                            const rec = beyond ? undefined : r.grid[i];
+                            // Avant son arrivée, la case n'est pas la sienne —
+                            // sauf s'il y a quand même été pointé.
+                            const before = !beyond && !rec && i < r.entryLead;
                             return (
                               <td key={i} className="px-1 py-2 text-center">
                                 {beyond ? (
@@ -866,7 +880,7 @@ export function StudentSituationModal({
                                   <span
                                     title={
                                       before
-                                        ? `Séance tenue avant son inscription (inscrit à la séance ${r.lead + 1})`
+                                        ? `Séance tenue avant son inscription (inscrit à la séance ${r.entryLead + 1})`
                                         : rec
                                           ? `${STATUS_LABEL[rec.status].label} — ${formatDateFr(rec.timestamp.slice(0, 10))}`
                                           : "Pas encore pointé"
