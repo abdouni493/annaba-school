@@ -93,6 +93,7 @@ import {
   nextRegistrationNumber,
   todayIso,
   formatDateFr,
+  normalizeCaseReduction,
 } from "@/lib/helpers";
 import { positiveMoney } from "@/lib/utils";
 import type {
@@ -456,7 +457,7 @@ function StudentFiche({
     ];
     for (const id of ids) {
       const red = subReductions[id];
-      if (red && (red.schoolValue > 0 || red.teacherValue > 0)) out[id] = red;
+      if (red && (red.schoolValue > 0 || red.teacherValue > 0)) out[id] = normalizeCaseReduction(red);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -657,7 +658,8 @@ function StudentFiche({
         schoolValue: 0,
         teacherValue: 0,
       };
-      return { ...prev, [subId]: { ...base, ...patch } };
+      // Plus de 100 % : c'est un montant en DA — on bascule en « Montant fixe ».
+      return { ...prev, [subId]: normalizeCaseReduction({ ...base, ...patch }) };
     });
 
   /**

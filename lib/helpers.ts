@@ -708,6 +708,20 @@ export function paidSubIdsOf(student: Student | undefined): string[] {
  * ce qui est très exactement le sens qu'elle avait. Une table PRÉSENTE fait
  * foi, même vide : vide veut dire « aucun emploi réduit ».
  */
+/**
+ * Une remise « en % » au-delà de 100 % n'a pas de sens : c'est un montant en DA
+ * saisi sous le mauvais type (ex. « école 200 / enseignant 500 »), qui rendait
+ * la séance gratuite et ne débitait plus rien du solde. On la lit comme un
+ * montant fixe du mois — ce que la réception voulait dire.
+ */
+export function normalizeCaseReduction<T extends CaseReduction | undefined>(red: T): T {
+  if (!red || red.type !== "percent") return red;
+  if ((red.schoolValue || 0) > 100 || (red.teacherValue || 0) > 100) {
+    return { ...red, type: "amount" } as T;
+  }
+  return red;
+}
+
 export function reductionForSub(
   student: Student | undefined,
   subscriptionId?: string,
@@ -719,11 +733,13 @@ export function reductionForSub(
     // la réduction n'existe plus que RATTACHÉE à un emploi.
     if (!subscriptionId) return undefined;
     const red = perSub[subscriptionId];
-    return red && (red.schoolValue > 0 || red.teacherValue > 0) ? red : undefined;
+    return red && (red.schoolValue > 0 || red.teacherValue > 0) ? normalizeCaseReduction(red) : undefined;
   }
   // Fiche d'avant : la remise générale valait partout.
   const general = student.caseReduction;
-  return general && (general.schoolValue > 0 || general.teacherValue > 0) ? general : undefined;
+  return general && (general.schoolValue > 0 || general.teacherValue > 0)
+    ? normalizeCaseReduction(general)
+    : undefined;
 }
 
 /** CET emploi du temps porte-t-il une réduction pour CET élève ? */
