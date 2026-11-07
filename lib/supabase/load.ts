@@ -36,26 +36,51 @@ function isMissingTable(error: { code?: string; message?: string }): boolean {
 }
 
 async function readAll(spec: (typeof TABLES)[CollectionKey]): Promise<Record<string, unknown>[]> {
-  const out: Record<string, unknown>[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase()
-      .from(spec.table)
-      .select("*")
-      .range(from, from + PAGE - 1);
-    if (error) {
-      if (isMissingTable(error)) {
-        console.warn(
-          `[supabase] ${spec.table} est absente de la base — le script SQL de mise à jour ` +
-            `n'a pas encore été exécuté. Cet écran restera vide en attendant.`,
-        );
-        return out;
-      }
-      throw new Error(`${spec.table}: ${error.message}`);
+  // LIRE UNE GROSSE TABLE EN UN SEUL ALLER-RETOUR, PAS QUINZE.
+  //
+  // PostgREST plafonne une réponse à 1000 lignes. Avant, les pages suivantes
+  // étaient lues l'une APRÈS l'autre : 15 000 présences = 16 allers-retours en
+  // file, et l'écran attendait la somme de toutes les latences. La première
+  // page demande désormais le total exact (`count: "exact"`), ce qui permet de
+  // réclamer TOUTES les pages restantes d'un coup, en parallèle — le temps de
+  // chargement retombe à celui d'un seul aller-retour, pas de leur addition.
+  const first = await supabase()
+    .from(spec.table)
+    .select("*", { count: "exact" })
+    .range(0, PAGE - 1);
+  if (first.error) {
+    if (isMissingTable(first.error)) {
+      console.warn(
+        `[supabase] ${spec.table} est absente de la base — le script SQL de mise à jour ` +
+          `n'a pas encore été exécuté. Cet écran restera vide en attendant.`,
+      );
+      return [];
     }
-    const rows = (data ?? []) as Record<string, unknown>[];
-    out.push(...rows.map((r) => fromRow(spec, r)));
-    if (rows.length < PAGE) return out;
+    throw new Error(`${spec.table}: ${first.error.message}`);
   }
+
+  const firstRows = (first.data ?? []) as Record<string, unknown>[];
+  const out = firstRows.map((r) => fromRow(spec, r));
+  const total = first.count ?? firstRows.length;
+  // Table qui tient sur une page : rien de plus à aller chercher.
+  if (firstRows.length < PAGE || total <= PAGE) return out;
+
+  const starts: number[] = [];
+  for (let from = PAGE; from < total; from += PAGE) starts.push(from);
+  const pages = await Promise.all(
+    starts.map((from) =>
+      supabase()
+        .from(spec.table)
+        .select("*")
+        .range(from, from + PAGE - 1),
+    ),
+  );
+  for (const page of pages) {
+    if (page.error) throw new Error(`${spec.table}: ${page.error.message}`);
+    const rows = (page.data ?? []) as Record<string, unknown>[];
+    for (const r of rows) out.push(fromRow(spec, r));
+  }
+  return out;
 }
 
 /** The establishment row. Falls back to a blank one so the login screen renders
