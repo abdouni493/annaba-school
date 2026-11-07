@@ -19,6 +19,24 @@ export const SUPABASE_ANON_KEY =
 let cached: SupabaseClient | null = null;
 
 /**
+ * LA CLÉ DE SESSION PORTE LE NOM DU PROJET.
+ *
+ * La session connectée est gardée dans le navigateur. Tant que la clé de
+ * rangement était fixe, CHANGER DE PROJET Supabase était un piège : le jeton
+ * émis par l'ANCIEN projet restait là, l'application l'affichait (« on ne voit
+ * que les comptes »), mais chaque lecture de données partait vers le NOUVEAU
+ * projet avec ce jeton étranger — refusé — et tous les écrans restaient vides.
+ *
+ * En suffixant la clé par la référence du projet, un jeton de l'ancien projet
+ * n'est tout simplement plus trouvé : l'application se présente déconnectée, une
+ * seule reconnexion suffit, et les données reviennent. Aucune manipulation du
+ * navigateur n'est demandée à l'utilisateur.
+ */
+function projectRef(url: string): string {
+  return /https?:\/\/([a-z0-9]+)\.supabase\.co/i.exec(url)?.[1] ?? "default";
+}
+
+/**
  * Lazily created singleton. Next.js renders modules on the server too, where
  * `localStorage` does not exist, so the client is only built on demand and the
  * session is persisted exclusively in the browser.
@@ -30,7 +48,7 @@ export function supabase(): SupabaseClient {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: false,
-      storageKey: "altech-school-auth",
+      storageKey: `altech-school-auth-${projectRef(SUPABASE_URL)}`,
     },
   });
   return cached;
