@@ -45,6 +45,28 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryAttempts = 0;
 /** Backoff between background retries (ms). The last delay repeats. */
 const RETRY_DELAYS = [3000, 6000, 12000, 20000, 30000];
+/** Envois encore en vol — pour prévenir avant de fermer un onglet qui écrit. */
+let pendingFlushes = 0;
+
+/**
+ * NE PAS FERMER PENDANT QU'UNE ÉCRITURE PART.
+ *
+ * Une présence, un versement, une paie vivent d'abord dans le magasin puis
+ * partent vers Postgres en arrière-plan. Fermer l'onglet AVANT que l'envoi ait
+ * abouti, c'est perdre la ligne — elle n'était jamais arrivée dans la base. Le
+ * navigateur demande donc confirmation tant qu'il reste quelque chose à écrire
+ * (un envoi en vol, ou une table en attente de nouvelle tentative).
+ */
+function hasPendingWrites(): boolean {
+  return pendingFlushes > 0 || retryTimer !== null;
+}
+
+function beforeUnloadGuard(event: BeforeUnloadEvent) {
+  if (paused || !started || !hasPendingWrites()) return;
+  event.preventDefault();
+  // Compat anciens navigateurs : une chaîne non vide déclenche la demande.
+  event.returnValue = "";
+}
 
 function snapshot(db: Database): Database {
   const copy = { school: db.school } as Database;
@@ -206,6 +228,7 @@ async function flush(before: Database, after: Database): Promise<Set<string>> {
  * puis de disparaître au rechargement.
  */
 function runFlush(before: Database, next: Database) {
+  pendingFlushes += 1;
   queue = queue
     .then(() => flush(before, next))
     .then((failed) => {
@@ -232,6 +255,9 @@ function runFlush(before: Database, next: Database) {
     .catch((err) => {
       report("synchronisation", "synchronisation", err instanceof Error ? err.message : String(err));
       scheduleRetry();
+    })
+    .finally(() => {
+      pendingFlushes = Math.max(0, pendingFlushes - 1);
     });
 }
 
@@ -260,6 +286,10 @@ export function startSync() {
   started = true;
   previous = snapshot(useData.getState());
 
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", beforeUnloadGuard);
+  }
+
   unsubscribe = useData.subscribe((state) => {
     const next = snapshot(state);
     const before = previous;
@@ -272,6 +302,9 @@ export function startSync() {
 export function stopSync() {
   unsubscribe?.();
   unsubscribe = null;
+  if (typeof window !== "undefined") {
+    window.removeEventListener("beforeunload", beforeUnloadGuard);
+  }
   started = false;
   paused = true;
   previous = null;
