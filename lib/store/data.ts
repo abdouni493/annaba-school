@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { emptyDatabase, loadDatabase, loadSchool } from "@/lib/supabase/load";
+import { useToast } from "@/lib/store/toast";
 import {
   cycleSizeOf,
   currentCycleCode,
@@ -397,8 +398,15 @@ export interface WorkerScanResult {
   messageKey: string;
 }
 
+/** État explicite du chargement initial de la base, pour ne JAMAIS faire passer
+ *  un échec pour « base vide chargée avec succès ». */
+export type LoadStatus = "idle" | "loading" | "success" | "error";
+
 interface DataActions {
+  /** Vrai UNIQUEMENT quand la base a été lue avec succès (compat. historique). */
   loaded: boolean;
+  /** Étape détaillée du chargement initial : idle → loading → success | error. */
+  loadStatus: LoadStatus;
   fetchSchool: () => Promise<void>;
   fetchAll: () => Promise<void>;
   clear: () => void;
@@ -1491,6 +1499,7 @@ const SCAN_DOUBLE_SWIPE_SEC = 60; // reader sometimes sends two frames
 export const useData = create<DataStore>((set, get) => ({
   ...emptyDatabase(),
   loaded: false,
+  loadStatus: "idle",
 
   /** The establishment alone — the login screen needs its name and logo before
    *  anyone is signed in, and that row is readable without an account. */
@@ -1505,16 +1514,31 @@ export const useData = create<DataStore>((set, get) => ({
   /** Reads the whole database in one pass. Every screen then works off this
    *  snapshot, and `lib/supabase/sync.ts` mirrors back whatever they change. */
   fetchAll: async () => {
+    set({ loadStatus: "loading" });
     try {
       const db = await loadDatabase();
-      set({ ...db, loaded: true });
+      set({ ...db, loaded: true, loadStatus: "success" });
     } catch (err) {
+      // NE JAMAIS déclarer la base « chargée » quand la lecture a échoué : un
+      // écran vide affiché comme un succès masque la panne, et l'utilisateur
+      // croit que ses élèves ont disparu. On remonte l'erreur en clair et on
+      // laisse `loaded` à false pour qu'une nouvelle tentative soit possible.
+      const message = err instanceof Error ? err.message : String(err);
       console.error("[supabase] fetchAll", err);
-      set({ loaded: true });
+      set({ loaded: false, loadStatus: "error" });
+      try {
+        useToast.getState().addToast({
+          type: "danger",
+          title: "Chargement des données impossible",
+          message: `${message}. Vérifiez votre connexion, puis réessayez.`,
+        });
+      } catch {
+        // Le store de toast n'est pas indispensable au signalement d'erreur.
+      }
     }
   },
 
-  clear: () => set({ ...emptyDatabase(), loaded: false }),
+  clear: () => set({ ...emptyDatabase(), loaded: false, loadStatus: "idle" }),
 
   // ---------------------------------------------------------------------------
   // Check-in — schedule matching, cross-group rattrapage, free periods,
@@ -5045,6 +5069,6 @@ export const useData = create<DataStore>((set, get) => ({
    *  `fetchAll()` simply reads it again. */
   reset: () => {
     lastAbsenceRun = null;
-    set({ ...emptyDatabase(), loaded: false });
+    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle" });
   },
 }));

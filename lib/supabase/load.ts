@@ -16,6 +16,36 @@ import type { School } from "@/lib/types";
 const PAGE = 1000;
 
 /**
+ * Nombre maximum de pages réclamées EN MÊME TEMPS sur une grosse table.
+ *
+ * `Promise.all` sans borne ouvrait autant de connexions que de pages restantes
+ * (50 000 présences = 50 requêtes d'un coup) : le navigateur plafonne les
+ * connexions par domaine, le pool PostgREST sature, et les requêtes excédentaires
+ * attendent en file de toute façon. Une fenêtre bornée garde le parallélisme utile
+ * sans saturer ni le navigateur ni la base.
+ */
+const PAGE_CONCURRENCY = 6;
+
+/** Exécute les tâches par vagues de `limit`, en préservant l'ordre des résultats. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await task(items[i]);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+/**
  * LA TABLE N'EXISTE PAS ENCORE.
  *
  * Chaque mise à jour de l'application est livrée avec un script SQL que
@@ -44,9 +74,18 @@ async function readAll(spec: (typeof TABLES)[CollectionKey]): Promise<Record<str
   // page demande désormais le total exact (`count: "exact"`), ce qui permet de
   // réclamer TOUTES les pages restantes d'un coup, en parallèle — le temps de
   // chargement retombe à celui d'un seul aller-retour, pas de leur addition.
+  // ORDRE STABLE OBLIGATOIRE POUR LA PAGINATION PAR OFFSET.
+  //
+  // Sans `order`, PostgREST ne garantit AUCUN ordre entre deux requêtes. Pendant
+  // qu'on lit la base page par page, une insertion concurrente (un autre poste
+  // qui enregistre une présence, un versement…) peut décaler les lignes : une
+  // même ligne apparaît alors sur deux pages, ou disparaît entre deux `range`.
+  // Trier sur la clé primaire — déjà indexée, car PRIMARY KEY — rend les
+  // fenêtres déterministes : chaque ligne tombe dans exactement une page.
   const first = await supabase()
     .from(spec.table)
     .select("*", { count: "exact" })
+    .order(spec.pk, { ascending: true })
     .range(0, PAGE - 1);
   if (first.error) {
     if (isMissingTable(first.error)) {
@@ -67,13 +106,12 @@ async function readAll(spec: (typeof TABLES)[CollectionKey]): Promise<Record<str
 
   const starts: number[] = [];
   for (let from = PAGE; from < total; from += PAGE) starts.push(from);
-  const pages = await Promise.all(
-    starts.map((from) =>
-      supabase()
-        .from(spec.table)
-        .select("*")
-        .range(from, from + PAGE - 1),
-    ),
+  const pages = await mapWithConcurrency(starts, PAGE_CONCURRENCY, async (from) =>
+    supabase()
+      .from(spec.table)
+      .select("*")
+      .order(spec.pk, { ascending: true })
+      .range(from, from + PAGE - 1),
   );
   for (const page of pages) {
     if (page.error) throw new Error(`${spec.table}: ${page.error.message}`);
