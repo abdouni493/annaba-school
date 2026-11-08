@@ -43,15 +43,20 @@ describe("fetchAll — état de chargement", () => {
     expect(useData.getState().loaded).toBe(false);
   });
 
-  it("passe à 'success' et loaded=true après une lecture réussie", async () => {
-    await useData.getState().fetchAll();
+  it("passe à 'success', loaded=true et renvoie true après une lecture réussie", async () => {
+    const ok = await useData.getState().fetchAll();
+    expect(ok).toBe(true);
     expect(useData.getState().loadStatus).toBe("success");
     expect(useData.getState().loaded).toBe(true);
   });
 
-  it("passe à 'error' et NE marque PAS loaded après un échec", async () => {
+  it("passe à 'error', NE marque PAS loaded et renvoie false après un échec", async () => {
     shouldFail = true;
-    await useData.getState().fetchAll();
+    const ok = await useData.getState().fetchAll();
+    // Contrat sur lequel SessionProvider s'appuie pour NE PAS reprendre la
+    // synchronisation après un chargement raté (sinon le miroir écrirait un
+    // état vide par-dessus la base).
+    expect(ok).toBe(false);
     expect(useData.getState().loadStatus).toBe("error");
     // Le point crucial : un échec ne doit jamais ressembler à une base vide chargée.
     expect(useData.getState().loaded).toBe(false);

@@ -408,7 +408,9 @@ interface DataActions {
   /** Étape détaillée du chargement initial : idle → loading → success | error. */
   loadStatus: LoadStatus;
   fetchSchool: () => Promise<void>;
-  fetchAll: () => Promise<void>;
+  /** Lit toute la base. Renvoie `true` si la lecture a réussi, `false` sinon —
+   *  l'appelant NE DOIT reprendre la synchronisation qu'en cas de succès. */
+  fetchAll: () => Promise<boolean>;
   clear: () => void;
 
   scanCard: (rfidOrStudentId: string, when?: Date) => Promise<ScanResult>;
@@ -1518,6 +1520,7 @@ export const useData = create<DataStore>((set, get) => ({
     try {
       const db = await loadDatabase();
       set({ ...db, loaded: true, loadStatus: "success" });
+      return true;
     } catch (err) {
       // NE JAMAIS déclarer la base « chargée » quand la lecture a échoué : un
       // écran vide affiché comme un succès masque la panne, et l'utilisateur
@@ -1535,6 +1538,7 @@ export const useData = create<DataStore>((set, get) => ({
       } catch {
         // Le store de toast n'est pas indispensable au signalement d'erreur.
       }
+      return false;
     }
   },
 

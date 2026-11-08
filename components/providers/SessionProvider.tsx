@@ -62,8 +62,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     startSync();
     pauseSync();
 
-    void fetchAll().then(() => {
+    void fetchAll().then((ok) => {
       if (cancelled) return;
+      // NE JAMAIS reprendre la synchronisation après un chargement RATÉ.
+      //
+      // `fetchAll()` attrape sa propre erreur et se résout quand même ; reprendre
+      // le miroir sur un magasin vide (ou à moitié lu) prendrait cet état partiel
+      // pour la vérité et pourrait RÉÉCRIRE des suppressions dans Supabase. Tant
+      // que la lecture n'a pas réussi, le miroir reste en pause : les écrans
+      // affichent l'erreur (loadStatus = "error"), et une reconnexion relance
+      // proprement une lecture complète.
+      if (!ok) return;
       resumeSync();
       // Staff load is the safety-net trigger for the automatic weekly-absence
       // billing (idempotent, throttled to once/day).
