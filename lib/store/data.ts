@@ -11,6 +11,7 @@ import {
   type LoadDiagnostics,
 } from "@/lib/supabase/load";
 import { useToast } from "@/lib/store/toast";
+import { readSnapshot, writeSnapshot } from "@/lib/supabase/snapshotCache";
 import {
   cycleSizeOf,
   currentCycleCode,
@@ -411,11 +412,35 @@ export interface WorkerScanResult {
  *  `error` pour proposer une relance immédiate quand le réseau n'a pas répondu. */
 export type LoadStatus = "idle" | "loading" | "timeout" | "error" | "success";
 
+/**
+ * Le verdict du démarrage « cache d'abord », que `SessionProvider` traduit en
+ * reprise du miroir d'écriture (lui seul connaît `sync.ts`) :
+ *  - `fresh`      : donnée fraîche adoptée → reprise normale (référence = frais).
+ *  - `keep-local` : l'utilisateur a modifié le magasin pendant la revalidation →
+ *                   on garde ses modifications, à écrire depuis la référence `baseline`.
+ *  - `cache-only` : la revalidation a échoué mais le cache est affiché → PAS de
+ *                   reprise (aucune lecture complète fiable), lecture seule.
+ *  - `failed`     : aucun cache et lecture échouée → écran d'erreur.
+ *  - `cancelled`  : lecture supplantée (déconnexion / changement de compte).
+ */
+export type BootResult =
+  | { kind: "fresh" }
+  | { kind: "keep-local"; baseline: Database }
+  | { kind: "cache-only" }
+  | { kind: "failed" }
+  | { kind: "cancelled" };
+
 interface DataActions {
   /** Vrai UNIQUEMENT quand la base a été lue avec succès (compat. historique). */
   loaded: boolean;
   /** Étape détaillée du chargement initial : idle → loading → timeout | error | success. */
   loadStatus: LoadStatus;
+  /** Vrai pendant qu'une lecture réseau rafraîchit EN ARRIÈRE-PLAN une donnée déjà
+   *  affichée depuis le cache local — pour un indicateur discret, jamais bloquant. */
+  revalidating: boolean;
+  /** Vrai quand la revalidation a échoué alors que le cache est affiché : les
+   *  écrans restent lisibles mais aucune écriture n'est mirroir-ée (lecture seule). */
+  offline: boolean;
   /** Mesures du dernier chargement (durée, lignes, octets, table la plus lente),
    *  pour diagnostiquer un démarrage lent sans deviner. */
   loadDiagnostics: LoadDiagnostics | null;
@@ -423,6 +448,15 @@ interface DataActions {
   /** Lit toute la base. Renvoie `true` si la lecture a réussi, `false` sinon —
    *  l'appelant NE DOIT reprendre la synchronisation qu'en cas de succès. */
   fetchAll: () => Promise<boolean>;
+  /** Peint instantanément un instantané local (cache) : l'écran s'affiche sans
+   *  attendre le réseau. La revalidation confirme ou remplace ensuite. */
+  hydrateFromCache: (db: Database) => void;
+  /** Démarrage « cache d'abord » : peint le cache du compte s'il existe, puis
+   *  revalide par une lecture réseau complète. Renvoie le verdict à appliquer. */
+  boot: (userId: string) => Promise<BootResult>;
+  /** Relance une revalidation réseau sur la donnée déjà affichée (nouvelle
+   *  tentative après un passage hors-ligne, ou rafraîchissement manuel). */
+  revalidate: () => Promise<BootResult>;
   clear: () => void;
 
   scanCard: (rfidOrStudentId: string, when?: Date) => Promise<ScanResult>;
@@ -1524,10 +1558,152 @@ function cancelInFlightLoad() {
   currentLoadAbort = null;
 }
 
-export const useData = create<DataStore>((set, get) => ({
+/** Les clés des 42 collections (tout `Database` sauf `school`), déduites une
+ *  fois pour toutes de la base vide — sert à comparer et à copier sans énumérer
+ *  les noms à la main. */
+const COLLECTION_KEYS = Object.keys(emptyDatabase()).filter(
+  (k) => k !== "school",
+) as (keyof Database)[];
+
+/** N'extrait que les DONNÉES du magasin (jamais ses actions), pour les ranger
+ *  dans le cache local ou les comparer. */
+function pickDatabase(s: Database): Database {
+  const out = { school: s.school } as Database;
+  for (const k of COLLECTION_KEYS) {
+    (out as unknown as Record<string, unknown>)[k] = (s as unknown as Record<string, unknown>)[k];
+  }
+  return out;
+}
+
+/** Vrai si une seule collection (ou l'établissement) a changé de référence entre
+ *  deux états — les mutations reconstruisant toujours le tableau, une référence
+ *  identique signifie « intacte ». Sert à détecter une modification faite par
+ *  l'utilisateur PENDANT la revalidation, pour ne jamais l'écraser. */
+function collectionsDiffer(a: Database, b: Database): boolean {
+  if (a.school !== b.school) return true;
+  for (const k of COLLECTION_KEYS) {
+    if ((a as unknown as Record<string, unknown>)[k] !== (b as unknown as Record<string, unknown>)[k]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Range l'instantané courant sous le compte connecté (si connu). Non bloquant,
+ *  silencieux en cas d'échec — le cache est une optimisation, jamais une source
+ *  de vérité. */
+function persistSnapshot(db: Database): void {
+  const actor = currentActor;
+  if (!actor) return;
+  writeSnapshot(actor.id, pickDatabase(db));
+}
+
+type ReadOutcome =
+  | { status: "success"; db: Database }
+  | { status: "timeout" | "error" | "cancelled" };
+
+/**
+ * Lit TOUTE la base, avec annulation et invalidation des lectures périmées,
+ * SANS toucher au magasin. L'appelant décide quoi faire du résultat (l'adopter,
+ * le fusionner, l'ignorer) — c'est ce qui rend possible le « cache d'abord ».
+ */
+async function readWholeDatabase(): Promise<ReadOutcome> {
+  // Une nouvelle lecture supplante toute lecture en vol : on annule l'ancienne
+  // et on incrémente la version pour que son résultat tardif soit ignoré.
+  currentLoadAbort?.abort();
+  const abort = new AbortController();
+  currentLoadAbort = abort;
+  const version = ++loadRequestVersion;
+  try {
+    const db = await loadDatabase({ signal: abort.signal });
+    if (version !== loadRequestVersion) return { status: "cancelled" };
+    if (currentLoadAbort === abort) currentLoadAbort = null;
+    return { status: "success", db };
+  } catch (err) {
+    if (err instanceof LoadCancelledError) return { status: "cancelled" };
+    if (version !== loadRequestVersion) return { status: "cancelled" };
+    if (currentLoadAbort === abort) currentLoadAbort = null;
+    console.error("[supabase] readWholeDatabase", err);
+    return { status: err instanceof LoadTimeoutError ? "timeout" : "error" };
+  }
+}
+
+export const useData = create<DataStore>((set, get) => {
+  /**
+   * Le cœur partagé du démarrage et des nouvelles tentatives : lit la base, puis
+   * décide — adopter le frais, garder les modifications locales, ou rester sur le
+   * cache en lecture seule. `painted` est l'état peint depuis le cache (ou `null`
+   * s'il n'y avait pas de cache), pour détecter une modification faite entretemps.
+   */
+  const finishRevalidation = async (painted: Database | null): Promise<BootResult> => {
+    const res = await readWholeDatabase();
+    if (res.status === "cancelled") return { kind: "cancelled" };
+
+    if (res.status !== "success") {
+      if (painted) {
+        // Cache déjà affiché : on le garde LISIBLE, on signale « hors-ligne ».
+        // Le miroir d'écriture reste en pause (aucune lecture complète fiable),
+        // exactement comme après un échec de chargement aujourd'hui.
+        set({ revalidating: false, offline: true });
+        return { kind: "cache-only" };
+      }
+      // Aucun cache : écran d'échec (comportement historique, inchangé).
+      set({ loaded: false, loadStatus: res.status, revalidating: false, offline: false });
+      try {
+        useToast.getState().addToast({
+          type: "danger",
+          title:
+            res.status === "timeout"
+              ? "Base trop lente à répondre"
+              : "Chargement des données impossible",
+          message:
+            res.status === "timeout"
+              ? "La base n'a pas répondu à temps. Vérifiez votre connexion, puis réessayez."
+              : "Les données n'ont pas pu être lues. Vérifiez votre connexion, puis réessayez.",
+        });
+      } catch {
+        // Un échec de toast ne doit pas masquer l'échec de la base.
+      }
+      return { kind: "failed" };
+    }
+
+    const fresh = res.db;
+    const dirty = painted ? collectionsDiffer(painted, get()) : false;
+    if (dirty && painted) {
+      // L'utilisateur a modifié le magasin pendant la revalidation. NE JAMAIS
+      // écraser son travail : on garde ses modifications affichées et on renvoie
+      // la base-cache comme référence pour que le miroir ÉCRIVE ces modifications
+      // (au lieu de les perdre au remplacement).
+      set({
+        loaded: true,
+        loadStatus: "success",
+        revalidating: false,
+        offline: false,
+        loadDiagnostics: getLastLoadDiagnostics(),
+      });
+      persistSnapshot(pickDatabase(get()));
+      return { kind: "keep-local", baseline: painted };
+    }
+
+    // Cas courant : adopter la donnée fraîche et la mettre en cache.
+    set({
+      ...fresh,
+      loaded: true,
+      loadStatus: "success",
+      revalidating: false,
+      offline: false,
+      loadDiagnostics: getLastLoadDiagnostics(),
+    });
+    persistSnapshot(fresh);
+    return { kind: "fresh" };
+  };
+
+  return {
   ...emptyDatabase(),
   loaded: false,
   loadStatus: "idle",
+  revalidating: false,
+  offline: false,
   loadDiagnostics: null,
 
   /** The establishment alone — the login screen needs its name and logo before
@@ -1541,53 +1717,103 @@ export const useData = create<DataStore>((set, get) => ({
   },
 
   /** Reads the whole database in one pass. Every screen then works off this
-   *  snapshot, and `lib/supabase/sync.ts` mirrors back whatever they change. */
+   *  snapshot, and `lib/supabase/sync.ts` mirrors back whatever they change.
+   *  Conservé pour compatibilité ; le démarrage passe désormais par `boot()`. */
   fetchAll: async () => {
-    // A new load supersedes any in-flight one: abort the old request and bump
-    // the version so its late result (success OR failure) is ignored.
-    currentLoadAbort?.abort();
-    const abort = new AbortController();
-    currentLoadAbort = abort;
-    const version = ++loadRequestVersion;
     // Hide any previously authenticated user's snapshot until this read ends.
-    set({ loaded: false, loadStatus: "loading" });
-    try {
-      const db = await loadDatabase({ signal: abort.signal });
-      if (version !== loadRequestVersion) return false;
-      if (currentLoadAbort === abort) currentLoadAbort = null;
-      set({ ...db, loaded: true, loadStatus: "success", loadDiagnostics: getLastLoadDiagnostics() });
-      return true;
-    } catch (err) {
-      // A deliberate cancellation (logout / account switch) is not a failure:
-      // leave the state the canceller chose, write nothing.
-      if (err instanceof LoadCancelledError) return false;
-      // A previous account's failed request must not change the NEW account's UI.
-      if (version !== loadRequestVersion) return false;
-      if (currentLoadAbort === abort) currentLoadAbort = null;
-      const timedOut = err instanceof LoadTimeoutError;
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[supabase] fetchAll", err);
-      // Distinguish a timeout (nothing answered — retry is likely to work) from
-      // a hard error (permission, bad data). Neither marks the base as loaded.
-      set({ loaded: false, loadStatus: timedOut ? "timeout" : "error" });
+    set({ loaded: false, loadStatus: "loading", revalidating: false, offline: false });
+    const res = await readWholeDatabase();
+    if (res.status === "cancelled") return false;
+    if (res.status !== "success") {
+      set({ loaded: false, loadStatus: res.status === "timeout" ? "timeout" : "error" });
       try {
         useToast.getState().addToast({
           type: "danger",
-          title: timedOut ? "Base trop lente à répondre" : "Chargement des données impossible",
-          message: timedOut
-            ? "La base n'a pas répondu à temps. Vérifiez votre connexion, puis réessayez."
-            : `${message}. Vérifiez votre connexion, puis réessayez.`,
+          title:
+            res.status === "timeout"
+              ? "Base trop lente à répondre"
+              : "Chargement des données impossible",
+          message:
+            res.status === "timeout"
+              ? "La base n'a pas répondu à temps. Vérifiez votre connexion, puis réessayez."
+              : "Les données n'ont pas pu être lues. Vérifiez votre connexion, puis réessayez.",
         });
       } catch {
         // Toast failures must not hide the original database failure.
       }
       return false;
     }
+    set({
+      ...res.db,
+      loaded: true,
+      loadStatus: "success",
+      revalidating: false,
+      offline: false,
+      loadDiagnostics: getLastLoadDiagnostics(),
+    });
+    persistSnapshot(res.db);
+    return true;
+  },
+
+  /** Peint un instantané local SANS attendre le réseau : l'écran s'affiche
+   *  aussitôt. La forme est garantie (toute collection absente d'un ancien
+   *  instantané retombe sur un tableau vide), puis la revalidation la complète. */
+  hydrateFromCache: (db) => {
+    set({
+      ...emptyDatabase(),
+      ...db,
+      loaded: true,
+      loadStatus: "success",
+      revalidating: true,
+      offline: false,
+    });
+  },
+
+  /** Démarrage « cache d'abord ». Peint le cache du compte s'il existe (affichage
+   *  instantané, miroir d'écriture laissé en pause par l'appelant), puis revalide
+   *  par une lecture réseau complète. Renvoie le verdict de reprise du miroir. */
+  boot: async (userId) => {
+    let painted: Database | null = null;
+    try {
+      const cached = userId ? await readSnapshot(userId) : null;
+      if (cached) {
+        set({
+          ...emptyDatabase(),
+          ...cached.db,
+          loaded: true,
+          loadStatus: "success",
+          revalidating: true,
+          offline: false,
+        });
+        // La référence de l'état peint : si une collection change de référence
+        // pendant la revalidation, c'est que l'utilisateur a modifié quelque chose.
+        painted = pickDatabase(get());
+      } else {
+        set({ loaded: false, loadStatus: "loading", revalidating: false, offline: false });
+      }
+    } catch {
+      set({ loaded: false, loadStatus: "loading", revalidating: false, offline: false });
+    }
+    return finishRevalidation(painted);
+  },
+
+  /** Nouvelle tentative / rafraîchissement manuel sur la donnée déjà affichée. */
+  revalidate: async () => {
+    const painted = get().loaded ? pickDatabase(get()) : null;
+    set({ revalidating: true, offline: false });
+    return finishRevalidation(painted);
   },
 
   clear: () => {
     cancelInFlightLoad();
-    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle", loadDiagnostics: null });
+    set({
+      ...emptyDatabase(),
+      loaded: false,
+      loadStatus: "idle",
+      loadDiagnostics: null,
+      revalidating: false,
+      offline: false,
+    });
   },
 
   // ---------------------------------------------------------------------------
@@ -5120,6 +5346,14 @@ export const useData = create<DataStore>((set, get) => ({
   reset: () => {
     cancelInFlightLoad();
     lastAbsenceRun = null;
-    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle", loadDiagnostics: null });
+    set({
+      ...emptyDatabase(),
+      loaded: false,
+      loadStatus: "idle",
+      loadDiagnostics: null,
+      revalidating: false,
+      offline: false,
+    });
   },
-}));
+  };
+});

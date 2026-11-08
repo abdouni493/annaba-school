@@ -2,8 +2,14 @@
 
 import { useEffect } from "react";
 import { useSession } from "@/lib/store/session";
-import { setCurrentActor, useData } from "@/lib/store/data";
-import { pauseSync, resumeSync, startSync, stopSync } from "@/lib/supabase/sync";
+import { setCurrentActor, useData, type BootResult } from "@/lib/store/data";
+import {
+  pauseSync,
+  resumeSync,
+  resumeSyncFrom,
+  startSync,
+  stopSync,
+} from "@/lib/supabase/sync";
 
 /**
  * Boots the app: restores the Supabase session, loads the establishment (the
@@ -16,7 +22,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const user = useSession((s) => s.user);
   const hydrated = useSession((s) => s.hydrated);
   const fetchSchool = useData((s) => s.fetchSchool);
-  const fetchAll = useData((s) => s.fetchAll);
+  const boot = useData((s) => s.boot);
+  const revalidate = useData((s) => s.revalidate);
   const clear = useData((s) => s.clear);
   const processWeeklyAbsences = useData((s) => s.processWeeklyAbsences);
   const dropVoidTeacherDues = useData((s) => s.dropVoidTeacherDues);
@@ -57,26 +64,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
 
     let cancelled = false;
-    // Subscribe first but hold the writes: the rows we are about to READ must
-    // not be written straight back to the database.
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retries = 0;
+    // La copie locale est rangée sous l'identifiant de la FICHE (`entityId`),
+    // comme la signature des opérations — ainsi la clé est identique d'une
+    // session à l'autre pour un même compte.
+    const cacheKey = user.entityId ?? user.id;
+
+    // Subscribe first but hold the writes: the rows we are about to READ (and the
+    // cache we are about to PAINT) must not be written straight back.
     pauseSync();
     // Never show a prior account's records while the next account is loading.
-    // clear() also invalidates any in-flight fetchAll() from the previous user.
+    // clear() also invalidates any in-flight read from the previous user.
     clear();
     startSync();
 
-    void fetchAll().then((ok) => {
-      if (cancelled) return;
-      // NE JAMAIS reprendre la synchronisation après un chargement RATÉ.
-      //
-      // `fetchAll()` attrape sa propre erreur et se résout quand même ; reprendre
-      // le miroir sur un magasin vide (ou à moitié lu) prendrait cet état partiel
-      // pour la vérité et pourrait RÉÉCRIRE des suppressions dans Supabase. Tant
-      // que la lecture n'a pas réussi, le miroir reste en pause : les écrans
-      // affichent l'erreur (loadStatus = "error"), et une reconnexion relance
-      // proprement une lecture complète.
-      if (!ok) return;
-      resumeSync();
+    const runPostLoadJobs = () => {
       // Staff load is the safety-net trigger for the automatic weekly-absence
       // billing (idempotent, throttled to once/day).
       if (user.role === "admin" || user.role === "reception") {
@@ -86,10 +89,54 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         // rapports non plus désormais.
         dropVoidTeacherDues();
       }
-    });
+    };
+
+    /**
+     * Traduit le verdict du démarrage « cache d'abord » en reprise du miroir.
+     * La règle d'or reste : NE JAMAIS reprendre la synchronisation sans une
+     * lecture complète fiable — sans quoi un magasin partiel pourrait réécrire
+     * des suppressions dans Supabase.
+     */
+    const apply = (result: BootResult) => {
+      if (cancelled) return;
+      switch (result.kind) {
+        case "fresh":
+          // Donnée fraîche adoptée : reprise normale (référence = le frais lu).
+          resumeSync();
+          runPostLoadJobs();
+          break;
+        case "keep-local":
+          // L'utilisateur a modifié le magasin pendant la revalidation : on
+          // reprend EN ÉCRIVANT ses modifications (référence = le cache peint),
+          // pour ne rien perdre de ce qu'il a fait.
+          resumeSyncFrom(result.baseline);
+          runPostLoadJobs();
+          break;
+        case "cache-only":
+          // Cache affiché mais base injoignable : lecture seule (miroir en pause),
+          // et on retente discrètement en arrière-plan avec un délai croissant.
+          if (retries < 5) {
+            const delay = Math.min(3000 * 2 ** retries, 30000);
+            retries += 1;
+            retryTimer = setTimeout(() => {
+              if (cancelled) return;
+              void revalidate().then(apply);
+            }, delay);
+          }
+          break;
+        case "failed":
+        case "cancelled":
+          // Aucun cache + échec, ou lecture supplantée : rien à reprendre. L'écran
+          // d'erreur (failed) ou le nouveau démarrage (cancelled) prend le relais.
+          break;
+      }
+    };
+
+    void boot(cacheKey).then(apply);
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, user?.id]);

@@ -349,3 +349,41 @@ input:focus, select:focus, textarea:focus {
 .animate-page-fade {
   animation: page-fade-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* Fin trait de progression de la revalidation en arrière-plan (cache d'abord) —
+   glisse sans fin sous la barre supérieure, discret et non bloquant. */
+@keyframes revalidate-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.revalidate-bar {
+  animation: revalidate-slide 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  border-radius: 9999px;
+}
+
+/* Esquisse (skeleton) de la toute première visite, avant toute copie locale. */
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.skeleton-pulse {
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .revalidate-bar,
+  .skeleton-pulse {
+    animation: none;
+  }
+}

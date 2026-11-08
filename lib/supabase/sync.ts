@@ -372,6 +372,36 @@ export function resumeSync() {
   paused = false;
 }
 
+/**
+ * REPRISE APRÈS UN AFFICHAGE « CACHE D'ABORD ».
+ *
+ * `baseline` est l'état peint depuis le cache local — identique à ce que la base
+ * contenait au dernier chargement réussi. On reprend le miroir en prenant ce
+ * cache pour référence, PUIS on écrit tout de suite ce qui diffère entre lui et
+ * le magasin vivant : si l'utilisateur a modifié quelque chose pendant la
+ * revalidation réseau, sa modification PART vers Postgres au lieu d'être perdue.
+ * Si rien n'a changé (cas courant), la différence est vide et rien n'est écrit.
+ *
+ * Les lignes lues depuis le cache (== `baseline`) ne sont jamais réécrites, et
+ * une suppression n'arrive que si l'utilisateur a RÉELLEMENT retiré une ligne —
+ * jamais par simple absence.
+ */
+export function resumeSyncFrom(baseline: Database) {
+  if (!started) {
+    // Sans abonnement actif, on ne peut pas mirroir-er : on se contente d'aligner
+    // la référence pour ne rien réécrire par surprise à la prochaine reprise.
+    previous = snapshot(useData.getState());
+    paused = false;
+    return;
+  }
+  const base = snapshot(baseline);
+  const live = snapshot(useData.getState());
+  previous = base;
+  paused = false;
+  runFlush(base, live);
+  previous = live;
+}
+
 /** Resolves once every queued write has reached the database. */
 export function syncSettled(): Promise<void> {
   return queue;
