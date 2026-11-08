@@ -486,6 +486,59 @@ export async function loadDatabase(opts: LoadOptions = {}): Promise<Database> {
   return db;
 }
 
+/**
+ * Lit un SOUS-ENSEMBLE des collections (et, au choix, l'établissement), pour le
+ * chargement en deux temps : d'abord tout SAUF l'historique lourd — l'écran se
+ * peint vite — puis l'historique (présences) en arrière-plan. `label` n'apparaît
+ * que dans le journal de diagnostic, pour distinguer les deux passes.
+ */
+export async function loadSome(
+  keys: CollectionKey[],
+  opts: LoadOptions & { withSchool?: boolean; label?: string } = {},
+): Promise<{ school?: School; collections: Partial<Record<CollectionKey, Record<string, unknown>[]>> }> {
+  throwIfAborted(opts.signal);
+  const t0 = now();
+  const startedAt = Date.now();
+  const tables: TableDiagnostic[] = [];
+  const collect: LoadOptions = {
+    ...opts,
+    onTableDiagnostic: (d) => {
+      tables.push(d);
+      opts.onTableDiagnostic?.(d);
+    },
+  };
+
+  const [school, lists] = await Promise.all([
+    opts.withSchool ? loadSchool(collect) : Promise.resolve(undefined),
+    mapWithConcurrency(keys, TABLE_CONCURRENCY, (key) => readAll(TABLES[key], collect)),
+  ]);
+
+  const collections: Partial<Record<CollectionKey, Record<string, unknown>[]>> = {};
+  keys.forEach((key, i) => {
+    collections[key] = lists[i];
+  });
+
+  const totalRows = tables.reduce((s, d) => s + d.rows, 0);
+  const totalApproxBytes = tables.reduce((s, d) => s + d.approxBytes, 0);
+  const slowest = tables.reduce<TableDiagnostic | null>((m, d) => (!m || d.ms > m.ms ? d : m), null);
+  lastDiagnostics = {
+    tables,
+    totalMs: Math.round(now() - t0),
+    totalRows,
+    totalApproxBytes,
+    slowestTable: slowest ? `${slowest.table} (${slowest.ms} ms)` : null,
+    startedAt,
+  };
+  if (typeof console !== "undefined" && opts.label) {
+    console.info(
+      `[supabase] ${opts.label}: ${lastDiagnostics.totalMs} ms · ${totalRows} lignes · ` +
+        `~${(totalApproxBytes / 1024).toFixed(1)} Ko` +
+        (lastDiagnostics.slowestTable ? ` · plus lente : ${lastDiagnostics.slowestTable}` : ""),
+    );
+  }
+  return { school, collections };
+}
+
 /** A database with an establishment and no rows at all. */
 export function emptyDatabase(): Database {
   const db = { school: emptySchool() } as Database;

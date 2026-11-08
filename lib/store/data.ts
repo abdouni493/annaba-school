@@ -4,6 +4,7 @@ import { create } from "zustand";
 import {
   emptyDatabase,
   loadDatabase,
+  loadSome,
   loadSchool,
   getLastLoadDiagnostics,
   LoadTimeoutError,
@@ -11,6 +12,7 @@ import {
   type LoadDiagnostics,
 } from "@/lib/supabase/load";
 import { useToast } from "@/lib/store/toast";
+import type { CollectionKey } from "@/lib/supabase/tables";
 import { readSnapshot, writeSnapshot } from "@/lib/supabase/snapshotCache";
 import {
   cycleSizeOf,
@@ -1563,7 +1565,18 @@ function cancelInFlightLoad() {
  *  les noms à la main. */
 const COLLECTION_KEYS = Object.keys(emptyDatabase()).filter(
   (k) => k !== "school",
-) as (keyof Database)[];
+) as CollectionKey[];
+
+/**
+ * LES COLLECTIONS D'HISTORIQUE DIFFÉRÉES AU PREMIER CHARGEMENT.
+ *
+ * `attendance` (les présences) grossit sans fin — une ligne par élève, par
+ * séance, par jour — et pèse à elle seule l'essentiel du temps de chargement
+ * (mesuré : ~2,5 s sur 3,1 s). Aucun écran n'a besoin de TOUT l'historique pour
+ * s'afficher : on la charge donc APRÈS le premier rendu, en arrière-plan. Les
+ * autres tables, bornées, restent dans la première passe.
+ */
+const DEFERRED_FIRST_PAINT = new Set<CollectionKey>(["attendance"]);
 
 /** N'extrait que les DONNÉES du magasin (jamais ses actions), pour les ranger
  *  dans le cache local ou les comparer. */
@@ -1698,6 +1711,99 @@ export const useData = create<DataStore>((set, get) => {
     return { kind: "fresh" };
   };
 
+  /**
+   * PREMIER CHARGEMENT EN DEUX TEMPS (aucune copie locale encore).
+   *
+   * La mesure est sans appel : sur une vraie base, la table d'historique
+   * `attendance_records` pèse à elle seule ~80 % du temps de chargement (des
+   * dizaines de milliers de lignes). On peint donc l'application avec TOUT LE
+   * RESTE d'abord — configuration, élèves, emplois, abonnements, caisse… prêts
+   * en une fraction de seconde — puis on complète les présences EN ARRIÈRE-PLAN.
+   *
+   * Le miroir d'écriture reste en PAUSE pendant les DEUX passes (c'est
+   * `SessionProvider` qui le reprend, une seule fois, à la fin) : aucune des
+   * écritures intermédiaires du magasin ne peut repartir vers Postgres, donc
+   * aucune présence n'est jamais réécrite ni supprimée par ce chargement
+   * progressif. Les travaux de fond (facturation d'absences) tournent, eux aussi,
+   * APRÈS la reprise — donc une fois les présences entièrement là.
+   */
+  const finishProgressiveFirstLoad = async (): Promise<BootResult> => {
+    currentLoadAbort?.abort();
+    const abort = new AbortController();
+    currentLoadAbort = abort;
+    const version = ++loadRequestVersion;
+    set({ loaded: false, loadStatus: "loading", revalidating: false, offline: false });
+
+    const firstKeys = COLLECTION_KEYS.filter((k) => !DEFERRED_FIRST_PAINT.has(k));
+    const deferredKeys = COLLECTION_KEYS.filter((k) => DEFERRED_FIRST_PAINT.has(k));
+
+    try {
+      // PASSE 1 — l'établissement + tout sauf l'historique lourd.
+      const phase1 = await loadSome(firstKeys, {
+        signal: abort.signal,
+        withSchool: true,
+        label: "chargement (écran)",
+      });
+      if (version !== loadRequestVersion) return { kind: "cancelled" };
+
+      const partial = { ...emptyDatabase() } as Database;
+      if (phase1.school) partial.school = phase1.school;
+      for (const k of firstKeys) {
+        (partial as unknown as Record<string, unknown>)[k] = phase1.collections[k] ?? [];
+      }
+      // L'écran se peint ICI — les présences arrivent juste après.
+      set({
+        ...partial,
+        loaded: true,
+        loadStatus: "success",
+        revalidating: true,
+        offline: false,
+        loadDiagnostics: getLastLoadDiagnostics(),
+      });
+
+      // PASSE 2 — l'historique lourd (présences), en arrière-plan.
+      const phase2 = await loadSome(deferredKeys, {
+        signal: abort.signal,
+        label: "chargement (historique)",
+      });
+      if (version !== loadRequestVersion) return { kind: "cancelled" };
+      if (currentLoadAbort === abort) currentLoadAbort = null;
+
+      const patch: Record<string, unknown> = { revalidating: false };
+      for (const k of deferredKeys) patch[k] = phase2.collections[k] ?? [];
+      set(patch);
+      persistSnapshot(pickDatabase(get()));
+      return { kind: "fresh" };
+    } catch (err) {
+      if (err instanceof LoadCancelledError) return { kind: "cancelled" };
+      if (version !== loadRequestVersion) return { kind: "cancelled" };
+      if (currentLoadAbort === abort) currentLoadAbort = null;
+
+      // La passe 1 a réussi (écran peint) mais la passe 2 a échoué : on garde
+      // l'écran LISIBLE, on signale « hors-ligne » (présences incomplètes), et le
+      // miroir reste en pause — une nouvelle tentative rechargera tout.
+      if (get().loaded) {
+        set({ revalidating: false, offline: true });
+        return { kind: "cache-only" };
+      }
+      // La passe 1 elle-même a échoué : écran d'erreur (comme un échec complet).
+      const timedOut = err instanceof LoadTimeoutError;
+      set({ loaded: false, loadStatus: timedOut ? "timeout" : "error", revalidating: false });
+      try {
+        useToast.getState().addToast({
+          type: "danger",
+          title: timedOut ? "Base trop lente à répondre" : "Chargement des données impossible",
+          message: timedOut
+            ? "La base n'a pas répondu à temps. Vérifiez votre connexion, puis réessayez."
+            : "Les données n'ont pas pu être lues. Vérifiez votre connexion, puis réessayez.",
+        });
+      } catch {
+        // Un échec de toast ne doit pas masquer l'échec de la base.
+      }
+      return { kind: "failed" };
+    }
+  };
+
   return {
   ...emptyDatabase(),
   loaded: false,
@@ -1773,28 +1879,30 @@ export const useData = create<DataStore>((set, get) => {
    *  instantané, miroir d'écriture laissé en pause par l'appelant), puis revalide
    *  par une lecture réseau complète. Renvoie le verdict de reprise du miroir. */
   boot: async (userId) => {
-    let painted: Database | null = null;
+    let cached: Awaited<ReturnType<typeof readSnapshot>> = null;
     try {
-      const cached = userId ? await readSnapshot(userId) : null;
-      if (cached) {
-        set({
-          ...emptyDatabase(),
-          ...cached.db,
-          loaded: true,
-          loadStatus: "success",
-          revalidating: true,
-          offline: false,
-        });
-        // La référence de l'état peint : si une collection change de référence
-        // pendant la revalidation, c'est que l'utilisateur a modifié quelque chose.
-        painted = pickDatabase(get());
-      } else {
-        set({ loaded: false, loadStatus: "loading", revalidating: false, offline: false });
-      }
+      cached = userId ? await readSnapshot(userId) : null;
     } catch {
-      set({ loaded: false, loadStatus: "loading", revalidating: false, offline: false });
+      cached = null;
     }
-    return finishRevalidation(painted);
+    if (cached) {
+      // Copie locale présente : on peint TOUT (présences incluses) d'emblée, puis
+      // on revalide en arrière-plan par une lecture complète.
+      set({
+        ...emptyDatabase(),
+        ...cached.db,
+        loaded: true,
+        loadStatus: "success",
+        revalidating: true,
+        offline: false,
+      });
+      // La référence de l'état peint : si une collection change de référence
+      // pendant la revalidation, c'est que l'utilisateur a modifié quelque chose.
+      return finishRevalidation(pickDatabase(get()));
+    }
+    // Aucune copie locale (toute première visite d'un poste) : chargement en deux
+    // temps, pour peindre l'écran sans attendre l'historique des présences.
+    return finishProgressiveFirstLoad();
   },
 
   /** Nouvelle tentative / rafraîchissement manuel sur la donnée déjà affichée. */

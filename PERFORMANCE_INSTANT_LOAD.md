@@ -93,6 +93,27 @@ ligne n'est jamais manquée, quel que soit le compte estimé (deux tests le fige
 compte trop bas ET trop haut). La concurrence entre tables passe de 6 à 10
 (HTTP/2 multiplexé) pour recouvrir les allers-retours sur réseau mobile.
 
+## Round 3 — mesuré en prod : les présences écrasaient le chargement
+
+Le diagnostic console l'a tranché : `chargement: 3100 ms · 38 569 lignes · ~18,8 Mo
+· plus lente : attendance_records (2553 ms)`. **Une seule table d'historique,
+`attendance_records`, pesait ~80 % du temps** — elle grossit sans fin (une ligne
+par élève, par séance, par jour).
+
+### 6. Premier chargement en deux temps
+
+Sans copie locale, `boot()` peint maintenant l'écran avec TOUT SAUF les présences
+(passe 1, ~0,3–0,6 s), puis complète les présences EN ARRIÈRE-PLAN (passe 2). Le
+miroir d'écriture reste en pause pendant les deux passes — `SessionProvider` ne
+le reprend qu'à la fin, avec la base complète — donc aucune présence ne peut être
+réécrite ni supprimée par ce chargement progressif, et la facturation d'absences
+(qui lit les présences) ne tourne qu'après. Un échec de la passe 2 garde l'écran
+lisible et bascule en « Hors-ligne » (lecture seule) avec nouvelle tentative.
+
+Mesuré au navigateur réel : présences simulées à 3000 ms, l'écran s'affiche en
+**310 ms** — l'application n'attend plus l'historique. Avec la copie locale, les
+visites suivantes restent instantanées (présences incluses).
+
 ## Ce qui n'a PAS changé
 
 - **Aucune** modification du schéma de base (`supabase/schema.sql`).

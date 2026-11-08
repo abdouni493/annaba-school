@@ -34,6 +34,15 @@ vi.mock("@/lib/supabase/load", async () => {
       if (failNetwork) throw new Error("réseau indisponible");
       return networkDb ?? actual.emptyDatabase();
     },
+    // Chemin progressif (démarrage sans cache) : passe 1 (tout sauf présences)
+    // puis passe 2 (présences). On sert chaque sous-ensemble depuis networkDb.
+    loadSome: async (keys: string[], opts?: { withSchool?: boolean }) => {
+      if (failNetwork) throw new Error("réseau indisponible");
+      const base = (networkDb ?? actual.emptyDatabase()) as unknown as Record<string, unknown[]>;
+      const collections: Record<string, unknown[]> = {};
+      for (const k of keys) collections[k] = base[k] ?? [];
+      return { school: opts?.withSchool ? actual.emptySchool() : undefined, collections };
+    },
     loadSchool: async () => actual.emptySchool(),
   };
 });
