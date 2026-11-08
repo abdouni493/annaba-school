@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  */
 
 let shouldFail = false;
+let deferredLoad: Promise<unknown> | null = null;
 const emptyDb = {
   school: { id: "school", name: "École", description: "", phone: "", email: "", address: "" },
 };
@@ -22,6 +23,7 @@ vi.mock("@/lib/supabase/load", async () => {
   return {
     ...actual,
     loadDatabase: async () => {
+      if (deferredLoad) return deferredLoad;
       if (shouldFail) throw new Error("permission denied");
       return { ...actual.emptyDatabase() };
     },
@@ -34,6 +36,7 @@ import { useData } from "@/lib/store/data";
 
 beforeEach(() => {
   shouldFail = false;
+  deferredLoad = null;
   useData.getState().reset();
 });
 
@@ -48,6 +51,32 @@ describe("fetchAll — état de chargement", () => {
     expect(ok).toBe(true);
     expect(useData.getState().loadStatus).toBe("success");
     expect(useData.getState().loaded).toBe(true);
+  });
+
+  it("ignore la réponse d'un ancien compte après déconnexion", async () => {
+    let finish!: (value: unknown) => void;
+    deferredLoad = new Promise((resolve) => { finish = resolve; });
+    const pending = useData.getState().fetchAll();
+    expect(useData.getState().loadStatus).toBe("loading");
+    useData.getState().clear(); // simulated logout while request is in flight
+    finish({ school: { id: "school", name: "Other account" }, students: [{ id: "other" }] });
+    expect(await pending).toBe(false);
+    expect(useData.getState().loaded).toBe(false);
+    expect(useData.getState().loadStatus).toBe("idle");
+    expect(useData.getState().students).toEqual([]);
+  });
+
+  it("ignore une ancienne réponse après le démarrage d'une nouvelle lecture", async () => {
+    let finish!: (value: unknown) => void;
+    deferredLoad = new Promise((resolve) => { finish = resolve; });
+    const first = useData.getState().fetchAll();
+    deferredLoad = null;
+    const second = useData.getState().fetchAll();
+    expect(await second).toBe(true);
+    finish({ school: { id: "school", name: "Old account" }, students: [{ id: "old" }] });
+    expect(await first).toBe(false);
+    expect(useData.getState().loadStatus).toBe("success");
+    expect(useData.getState().students).toEqual([]);
   });
 
   it("passe à 'error', NE marque PAS loaded et renvoie false après un échec", async () => {

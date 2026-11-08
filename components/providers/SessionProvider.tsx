@@ -59,8 +59,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     // Subscribe first but hold the writes: the rows we are about to READ must
     // not be written straight back to the database.
-    startSync();
     pauseSync();
+    // Never show a prior account's records while the next account is loading.
+    // clear() also invalidates any in-flight fetchAll() from the previous user.
+    clear();
+    startSync();
 
     void fetchAll().then((ok) => {
       if (cancelled) return;

@@ -23,6 +23,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarHidden = useSidebar((s) => s.hidden);
   const pathname = usePathname();
   const loaded = useData((s) => s.loaded);
+  const loadStatus = useData((s) => s.loadStatus);
   const rights = useAccessRights();
 
   useEffect(() => {
@@ -54,6 +55,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // momentarily-null user made pages that read the user/school once at
   // mount (e.g. Settings) latch onto empty defaults on every refresh.
   if (!hydrated || !user) return null;
+
+  // Never render pages against an unloaded (or failed) database snapshot.
+  // This includes slow logins and failure after a session/account switch.
+  if (!loaded || loadStatus !== "success") {
+    const failed = loadStatus === "error";
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-canvas p-6">
+        <div role={failed ? "alert" : "status"} className="w-full max-w-md rounded-xl border border-line bg-card p-6 text-center">
+          <h2 className="mb-2 text-base font-semibold text-ink">
+            {failed ? "Impossible de charger les données" : "Chargement des données…"}
+          </h2>
+          <p className="text-sm text-muted">
+            {failed
+              ? "Les données de l'école n'ont pas pu être lues. Aucun enregistrement n'a été supprimé. Vérifiez votre connexion."
+              : "Connexion à la base de l'école en cours."}
+          </p>
+          {failed && (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white"
+            >
+              Réessayer le chargement
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-dvh overflow-hidden bg-canvas">

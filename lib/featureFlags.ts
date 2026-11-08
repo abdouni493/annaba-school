@@ -20,20 +20,23 @@
  * drapeau ET appliqué le SQL correspondant.
  */
 
-function envFlag(name: string): boolean {
-  // Les variables NEXT_PUBLIC_* sont inlined au build par Next.
-  const raw =
-    typeof process !== "undefined" ? process.env[name] : undefined;
+/**
+ * Next.js only inlines NEXT_PUBLIC_* references that are statically written.
+ * Dynamic process.env[name] lookups evaluate to undefined in browser bundles.
+ * Flags stay OFF by default; never enable a migration without its UI, tests,
+ * RLS and write-path integration being deployed together.
+ */
+function enabled(raw: string | undefined): boolean {
   return raw === "1" || raw === "true";
 }
 
 export const featureFlags = {
-  /** Lecture paginée/filtrée des élèves par le repository au lieu du miroir. */
-  scopedStudentReads: envFlag("NEXT_PUBLIC_FF_SCOPED_STUDENT_READS"),
-  /** Encaissement de scolarité via le RPC transactionnel `record_tuition_payment`. */
-  atomicTuitionPayment: envFlag("NEXT_PUBLIC_FF_ATOMIC_TUITION_PAYMENT"),
-  /** Annulation de versement via le RPC transactionnel `reverse_payment`. */
-  atomicPaymentReversal: envFlag("NEXT_PUBLIC_FF_ATOMIC_PAYMENT_REVERSAL"),
+  /** Reading code exists, but the Students UI has NOT yet been migrated. */
+  scopedStudentReads: enabled(process.env.NEXT_PUBLIC_FF_SCOPED_STUDENT_READS),
+  /** Do not activate until an end-to-end transactional write path is wired. */
+  atomicTuitionPayment: enabled(process.env.NEXT_PUBLIC_FF_ATOMIC_TUITION_PAYMENT),
+  /** Do not activate until an end-to-end transactional write path is wired. */
+  atomicPaymentReversal: enabled(process.env.NEXT_PUBLIC_FF_ATOMIC_PAYMENT_REVERSAL),
 } as const;
 
 export type FeatureFlag = keyof typeof featureFlags;

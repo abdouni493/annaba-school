@@ -1498,6 +1498,9 @@ const SCAN_LATE_AFTER = 30; // min after the start a presence counts as "late"
 const SCAN_COOLDOWN_MIN = 30; // min before the SAME timing accepts a new swipe
 const SCAN_DOUBLE_SWIPE_SEC = 60; // reader sometimes sends two frames
 
+/** Monotonically invalidates stale async reads after logout/account switches. */
+let loadRequestVersion = 0;
+
 export const useData = create<DataStore>((set, get) => ({
   ...emptyDatabase(),
   loaded: false,
@@ -1516,16 +1519,17 @@ export const useData = create<DataStore>((set, get) => ({
   /** Reads the whole database in one pass. Every screen then works off this
    *  snapshot, and `lib/supabase/sync.ts` mirrors back whatever they change. */
   fetchAll: async () => {
-    set({ loadStatus: "loading" });
+    const version = ++loadRequestVersion;
+    // Hide any previously authenticated user's snapshot until this read ends.
+    set({ loaded: false, loadStatus: "loading" });
     try {
       const db = await loadDatabase();
+      if (version !== loadRequestVersion) return false;
       set({ ...db, loaded: true, loadStatus: "success" });
       return true;
     } catch (err) {
-      // NE JAMAIS déclarer la base « chargée » quand la lecture a échoué : un
-      // écran vide affiché comme un succès masque la panne, et l'utilisateur
-      // croit que ses élèves ont disparu. On remonte l'erreur en clair et on
-      // laisse `loaded` à false pour qu'une nouvelle tentative soit possible.
+      // A previous account's failed request must not change the NEW account's UI.
+      if (version !== loadRequestVersion) return false;
       const message = err instanceof Error ? err.message : String(err);
       console.error("[supabase] fetchAll", err);
       set({ loaded: false, loadStatus: "error" });
@@ -1536,13 +1540,16 @@ export const useData = create<DataStore>((set, get) => ({
           message: `${message}. Vérifiez votre connexion, puis réessayez.`,
         });
       } catch {
-        // Le store de toast n'est pas indispensable au signalement d'erreur.
+        // Toast failures must not hide the original database failure.
       }
       return false;
     }
   },
 
-  clear: () => set({ ...emptyDatabase(), loaded: false, loadStatus: "idle" }),
+  clear: () => {
+    ++loadRequestVersion;
+    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle" });
+  },
 
   // ---------------------------------------------------------------------------
   // Check-in — schedule matching, cross-group rattrapage, free periods,
@@ -5072,6 +5079,7 @@ export const useData = create<DataStore>((set, get) => ({
   /** Empties the local snapshot. The database is untouched — the next
    *  `fetchAll()` simply reads it again. */
   reset: () => {
+    ++loadRequestVersion;
     lastAbsenceRun = null;
     set({ ...emptyDatabase(), loaded: false, loadStatus: "idle" });
   },

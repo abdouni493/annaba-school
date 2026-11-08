@@ -25,6 +25,8 @@ const PAGE = 1000;
  * sans saturer ni le navigateur ni la base.
  */
 const PAGE_CONCURRENCY = 6;
+/** Limit simultaneous table hydrations too: each table can request 6 pages. */
+const TABLE_CONCURRENCY = 6;
 
 /** Exécute les tâches par vagues de `limit`, en préservant l'ordre des résultats. */
 async function mapWithConcurrency<T, R>(
@@ -151,9 +153,9 @@ export function emptySchool(): School {
  * landed, so no screen ever renders half a database.
  */
 export async function loadDatabase(): Promise<Database> {
-  const [school, ...lists] = await Promise.all([
+  const [school, lists] = await Promise.all([
     loadSchool(),
-    ...COLLECTION_ORDER.map((key) => readAll(TABLES[key])),
+    mapWithConcurrency(COLLECTION_ORDER, TABLE_CONCURRENCY, (key) => readAll(TABLES[key])),
   ]);
 
   const db = { school } as Database;

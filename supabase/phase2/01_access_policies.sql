@@ -92,10 +92,15 @@ $$;
 -- temps, jamais de son salaire. On expose donc une vue réduite, lisible par
 -- tout compte connecté, et on restreint la TABLE `teachers` au personnel + à
 -- l'enseignant lui-même.
+-- The caller must only see the three projected fields, even when RLS on
+-- public.teachers denies the full teacher record. A security_invoker=true
+-- view would inherit those denials and leave student/parent timetables blank.
+-- This view is owned by the privileged migration role; its projection is public.
 create or replace view public.teacher_directory
-with (security_invoker = true) as
+with (security_invoker = false) as
   select id, first_name, last_name from public.teachers;
 
+revoke all on public.teacher_directory from public, anon;
 grant select on public.teacher_directory to authenticated;
 
 
@@ -209,7 +214,33 @@ begin
   end loop;
 end $$;
 
--- 2.i — DONNÉES DE RÉFÉRENCE non sensibles : lecture ouverte CONSERVÉE.
+-- 2.i — Write policies on teacher-editable tables were previously FOR ALL.
+-- PostgreSQL combines permissive SELECT policies with OR, so the old *_write
+-- policies would grant every teacher broad READ access even after *_read is
+-- restricted. Split write rights into INSERT/UPDATE/DELETE-only policies.
+-- Preserve the existing is_staff_or_teacher() write predicate for compatibility;
+-- separately review per-teacher write scoping with authenticated JWT tests.
+do $$
+declare
+  t text;
+  p text := '(select public.is_staff_or_teacher())';
+  teacher_write text[] := array[
+    'attendance_records','enrollments','unpaid_teacher_sessions',
+    'subjects','independent_sessions'
+  ];
+begin
+  foreach t in array teacher_write loop
+    execute format('drop policy if exists %I on public.%I', t || '_write', t);
+    execute format('drop policy if exists %I on public.%I', t || '_insert', t);
+    execute format('drop policy if exists %I on public.%I', t || '_update', t);
+    execute format('drop policy if exists %I on public.%I', t || '_delete', t);
+    execute format('create policy %I on public.%I for insert to authenticated with check (%s)', t || '_insert', t, p);
+    execute format('create policy %I on public.%I for update to authenticated using (%s) with check (%s)', t || '_update', t, p, p);
+    execute format('create policy %I on public.%I for delete to authenticated using (%s)', t || '_delete', t, p);
+  end loop;
+end $$;
+
+-- 2.j — DONNÉES DE RÉFÉRENCE non sensibles : lecture ouverte CONSERVÉE.
 --        (catalogue nécessaire au rendu des écrans ; aucune donnée privée.)
 --        modules, classes, class_groups, salles, class_categories,
 --        schedule_sessions, subscriptions, free_periods, module_absence_rules,
