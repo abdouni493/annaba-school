@@ -1,7 +1,15 @@
 "use client";
 
 import { create } from "zustand";
-import { emptyDatabase, loadDatabase, loadSchool } from "@/lib/supabase/load";
+import {
+  emptyDatabase,
+  loadDatabase,
+  loadSchool,
+  getLastLoadDiagnostics,
+  LoadTimeoutError,
+  LoadCancelledError,
+  type LoadDiagnostics,
+} from "@/lib/supabase/load";
 import { useToast } from "@/lib/store/toast";
 import {
   cycleSizeOf,
@@ -399,14 +407,18 @@ export interface WorkerScanResult {
 }
 
 /** État explicite du chargement initial de la base, pour ne JAMAIS faire passer
- *  un échec pour « base vide chargée avec succès ». */
-export type LoadStatus = "idle" | "loading" | "success" | "error";
+ *  un échec pour « base vide chargée avec succès ». `timeout` est distingué de
+ *  `error` pour proposer une relance immédiate quand le réseau n'a pas répondu. */
+export type LoadStatus = "idle" | "loading" | "timeout" | "error" | "success";
 
 interface DataActions {
   /** Vrai UNIQUEMENT quand la base a été lue avec succès (compat. historique). */
   loaded: boolean;
-  /** Étape détaillée du chargement initial : idle → loading → success | error. */
+  /** Étape détaillée du chargement initial : idle → loading → timeout | error | success. */
   loadStatus: LoadStatus;
+  /** Mesures du dernier chargement (durée, lignes, octets, table la plus lente),
+   *  pour diagnostiquer un démarrage lent sans deviner. */
+  loadDiagnostics: LoadDiagnostics | null;
   fetchSchool: () => Promise<void>;
   /** Lit toute la base. Renvoie `true` si la lecture a réussi, `false` sinon —
    *  l'appelant NE DOIT reprendre la synchronisation qu'en cas de succès. */
@@ -1500,11 +1512,23 @@ const SCAN_DOUBLE_SWIPE_SEC = 60; // reader sometimes sends two frames
 
 /** Monotonically invalidates stale async reads after logout/account switches. */
 let loadRequestVersion = 0;
+/** The in-flight load's cancellation handle. Aborting it stops every pending
+ *  Supabase request (on logout / account switch / reset) instead of leaving
+ *  them to finish and be discarded. */
+let currentLoadAbort: AbortController | null = null;
+
+/** Cancels any in-flight load and invalidates its (now stale) result. */
+function cancelInFlightLoad() {
+  loadRequestVersion += 1;
+  currentLoadAbort?.abort();
+  currentLoadAbort = null;
+}
 
 export const useData = create<DataStore>((set, get) => ({
   ...emptyDatabase(),
   loaded: false,
   loadStatus: "idle",
+  loadDiagnostics: null,
 
   /** The establishment alone — the login screen needs its name and logo before
    *  anyone is signed in, and that row is readable without an account. */
@@ -1519,25 +1543,40 @@ export const useData = create<DataStore>((set, get) => ({
   /** Reads the whole database in one pass. Every screen then works off this
    *  snapshot, and `lib/supabase/sync.ts` mirrors back whatever they change. */
   fetchAll: async () => {
+    // A new load supersedes any in-flight one: abort the old request and bump
+    // the version so its late result (success OR failure) is ignored.
+    currentLoadAbort?.abort();
+    const abort = new AbortController();
+    currentLoadAbort = abort;
     const version = ++loadRequestVersion;
     // Hide any previously authenticated user's snapshot until this read ends.
     set({ loaded: false, loadStatus: "loading" });
     try {
-      const db = await loadDatabase();
+      const db = await loadDatabase({ signal: abort.signal });
       if (version !== loadRequestVersion) return false;
-      set({ ...db, loaded: true, loadStatus: "success" });
+      if (currentLoadAbort === abort) currentLoadAbort = null;
+      set({ ...db, loaded: true, loadStatus: "success", loadDiagnostics: getLastLoadDiagnostics() });
       return true;
     } catch (err) {
+      // A deliberate cancellation (logout / account switch) is not a failure:
+      // leave the state the canceller chose, write nothing.
+      if (err instanceof LoadCancelledError) return false;
       // A previous account's failed request must not change the NEW account's UI.
       if (version !== loadRequestVersion) return false;
+      if (currentLoadAbort === abort) currentLoadAbort = null;
+      const timedOut = err instanceof LoadTimeoutError;
       const message = err instanceof Error ? err.message : String(err);
       console.error("[supabase] fetchAll", err);
-      set({ loaded: false, loadStatus: "error" });
+      // Distinguish a timeout (nothing answered — retry is likely to work) from
+      // a hard error (permission, bad data). Neither marks the base as loaded.
+      set({ loaded: false, loadStatus: timedOut ? "timeout" : "error" });
       try {
         useToast.getState().addToast({
           type: "danger",
-          title: "Chargement des données impossible",
-          message: `${message}. Vérifiez votre connexion, puis réessayez.`,
+          title: timedOut ? "Base trop lente à répondre" : "Chargement des données impossible",
+          message: timedOut
+            ? "La base n'a pas répondu à temps. Vérifiez votre connexion, puis réessayez."
+            : `${message}. Vérifiez votre connexion, puis réessayez.`,
         });
       } catch {
         // Toast failures must not hide the original database failure.
@@ -1547,8 +1586,8 @@ export const useData = create<DataStore>((set, get) => ({
   },
 
   clear: () => {
-    ++loadRequestVersion;
-    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle" });
+    cancelInFlightLoad();
+    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle", loadDiagnostics: null });
   },
 
   // ---------------------------------------------------------------------------
@@ -5079,8 +5118,8 @@ export const useData = create<DataStore>((set, get) => ({
   /** Empties the local snapshot. The database is untouched — the next
    *  `fetchAll()` simply reads it again. */
   reset: () => {
-    ++loadRequestVersion;
+    cancelInFlightLoad();
     lastAbsenceRun = null;
-    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle" });
+    set({ ...emptyDatabase(), loaded: false, loadStatus: "idle", loadDiagnostics: null });
   },
 }));

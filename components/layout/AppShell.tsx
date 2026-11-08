@@ -63,7 +63,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // stays paused in SessionProvider until the load succeeds, so nothing shown
   // here — loading placeholder included — can be mirrored back as deletions.
   const dbReady = loaded && loadStatus === "success";
-  const dbFailed = loadStatus === "error";
+  const dbTimedOut = loadStatus === "timeout";
+  const dbFailed = loadStatus === "error" || dbTimedOut;
 
   return (
     <div className="flex h-dvh overflow-hidden bg-canvas">
@@ -107,12 +108,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 className="w-full max-w-md rounded-xl border border-line bg-card p-6 text-center"
               >
                 <h2 className="mb-2 text-base font-semibold text-ink">
-                  {dbFailed ? "Impossible de charger les données" : "Chargement des données…"}
+                  {dbTimedOut
+                    ? "Base trop lente à répondre"
+                    : dbFailed
+                      ? "Impossible de charger les données"
+                      : "Chargement des données…"}
                 </h2>
                 <p className="text-sm text-muted">
-                  {dbFailed
-                    ? "Les données de l'école n'ont pas pu être lues. Aucun enregistrement n'a été supprimé. Vérifiez votre connexion."
-                    : "Connexion à la base de l'école en cours."}
+                  {dbTimedOut
+                    ? "La base n'a pas répondu à temps. Aucun enregistrement n'a été supprimé. Vérifiez votre connexion, puis réessayez."
+                    : dbFailed
+                      ? "Les données de l'école n'ont pas pu être lues. Aucun enregistrement n'a été supprimé. Vérifiez votre connexion."
+                      : "Connexion à la base de l'école en cours."}
                 </p>
                 {dbFailed && (
                   <button

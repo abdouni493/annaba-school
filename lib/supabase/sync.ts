@@ -115,6 +115,45 @@ function diffCollection(key: string, spec: TableSpec, before: Row[], after: Row[
 const SCHOOL_KEY = "__school__";
 
 /**
+ * COLLECTIONS DONT LE MAGASIN NE DÉTIENT QU'UNE PARTIE.
+ *
+ * Tout l'édifice de synchronisation suppose que le magasin contient la table
+ * ENTIÈRE : `diffCollection` en déduit qu'une ligne absente du magasin a été
+ * SUPPRIMÉE, et l'efface de Postgres. Cette hypothèse est vraie aujourd'hui —
+ * `loadDatabase()` lit tout — mais elle interdit le chargement partiel : lire
+ * les élèves d'une seule classe ferait passer tous les autres pour supprimés.
+ *
+ * Ce garde-fou est le PRÉALABLE au chargement par interface : une collection
+ * déclarée « incomplète » ne subit JAMAIS de suppression par absence. Ses
+ * modifications et ses créations continuent de partir ; seules les suppressions
+ * réelles devront, le moment venu, être déclarées explicitement.
+ *
+ * Par défaut l'ensemble est VIDE : aucune collection n'est partielle, le
+ * comportement actuel est strictement identique. Rien n'y est ajouté tant que
+ * le chargement partiel n'est pas activé.
+ */
+const incompleteCollections = new Set<string>();
+
+/** Déclare si une collection est chargée en entier (défaut) ou partiellement.
+ *  Une collection partielle n'autorise plus la suppression d'une ligne au seul
+ *  motif qu'elle est absente du magasin. */
+export function setCollectionComplete(key: string, complete: boolean) {
+  if (complete) incompleteCollections.delete(key);
+  else incompleteCollections.add(key);
+}
+
+/** Toutes les collections redeviennent « complètes » (ex. après un chargement
+ *  intégral). */
+export function markAllCollectionsComplete() {
+  incompleteCollections.clear();
+}
+
+/** Vrai si la collection peut être diffée en incluant les suppressions. */
+export function isCollectionComplete(key: string): boolean {
+  return !incompleteCollections.has(key);
+}
+
+/**
  * NE PRÉVENIR QU'UNE FOIS PAR TABLE.
  *
  * Une écriture qui échoue est réessayée en boucle (voir le miroir plus bas).
@@ -179,6 +218,10 @@ async function flush(before: Database, after: Database): Promise<Set<string>> {
   // it pointed at.
   for (const change of [...changes].reverse()) {
     if (!change.deletes.length) continue;
+    // A partially-loaded collection must NEVER delete by absence: the missing
+    // rows are simply out of view, not removed. (Inert today — nothing is
+    // partial — but the gate that makes per-interface loading non-destructive.)
+    if (incompleteCollections.has(change.key)) continue;
     const { error } = await supabase()
       .from(change.spec.table)
       .delete()
@@ -314,6 +357,7 @@ export function stopSync() {
   }
   retryAttempts = 0;
   notified.clear();
+  incompleteCollections.clear();
 }
 
 /** Suspends write-back while the store is being loaded or reset. */

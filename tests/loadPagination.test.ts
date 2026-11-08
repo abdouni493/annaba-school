@@ -41,6 +41,9 @@ function makeBuilder(table: string) {
   Object.assign(builder, {
     select: () => builder,
     eq: () => builder,
+    // The loader now passes a cancellation signal; the mock just records nothing
+    // and keeps the chain fluent.
+    abortSignal: () => builder,
     maybeSingle: async () => ({ data: null, error: null }),
     order: (col: string) => {
       orderCol = col;
