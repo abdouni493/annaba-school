@@ -81,13 +81,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     const runPostLoadJobs = () => {
       // Staff load is the safety-net trigger for the automatic weekly-absence
-      // billing (idempotent, throttled to once/day).
-      if (user.role === "admin" || user.role === "reception") {
+      // billing (idempotent, throttled to once/day) and the void-dues cleanup.
+      if (user.role !== "admin" && user.role !== "reception") return;
+      // NE PAS FAIRE ATTENDRE L'UTILISATEUR DERRIÈRE CES TÂCHES.
+      //
+      // Ce sont des travaux de fond (facturation d'absences, nettoyage) qui
+      // parcourent toute la base. Les lancer en ligne gelait l'interface juste
+      // après l'affichage. On les diffère au premier temps mort : l'écran est
+      // déjà peint et manipulable, le travail se fait ensuite, sans bloquer.
+      const run = () => {
+        if (cancelled) return;
         processWeeklyAbsences();
         // Les parts d'enseignant restées sur un emploi coché offert après coup
         // quittent la base (idempotent) : la paie ne les lit déjà plus, les
         // rapports non plus désormais.
         dropVoidTeacherDues();
+      };
+      const w = window as unknown as {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      };
+      if (typeof w.requestIdleCallback === "function") {
+        w.requestIdleCallback(run, { timeout: 3000 });
+      } else {
+        setTimeout(run, 400);
       }
     };
 

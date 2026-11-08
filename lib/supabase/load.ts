@@ -25,8 +25,11 @@ const PAGE = 1000;
  * sans saturer ni le navigateur ni la base.
  */
 const PAGE_CONCURRENCY = 6;
-/** Limit simultaneous table hydrations too: each table can request 6 pages. */
-const TABLE_CONCURRENCY = 6;
+/** Limit simultaneous table hydrations too. Supabase sert en HTTP/2 (flux
+ *  multiplexés sur une seule connexion), donc ouvrir plus de lectures en même
+ *  temps recouvre les allers-retours au lieu de les mettre en file — net gain
+ *  sur un réseau mobile à latence élevée, sans saturer le navigateur. */
+const TABLE_CONCURRENCY = 10;
 
 /**
  * A single PostgREST request is given this long before it is aborted.
@@ -306,7 +309,13 @@ async function readAll(
       (signal) =>
         supabase()
           .from(spec.table)
-          .select("*", { count: "exact" })
+          // `count: "estimated"` est INSTANTANÉ (tiré des statistiques Postgres,
+          // AUCUN scan de table), là où `count: "exact"` forçait un scan complet
+          // de CHAQUE table à chaque chargement — très coûteux sur une petite
+          // instance. L'estimation ne sert qu'à paralléliser ; l'exactitude du
+          // nombre de lignes est garantie par la boucle « jusqu'à une page
+          // incomplète » plus bas, jamais par ce compte.
+          .select("*", { count: "estimated" })
           .abortSignal(signal)
           .order(spec.pk, { ascending: true })
           .range(0, PAGE - 1),
@@ -339,49 +348,65 @@ async function readAll(
   const firstRows = (first.data ?? []) as Record<string, unknown>[];
   approxBytes += estimateBytes(firstRows);
   const out = firstRows.map((r) => fromRow(spec, r));
-  const total = first.count ?? firstRows.length;
-  // Table qui tient sur une page : rien de plus à aller chercher.
-  if (firstRows.length < PAGE || total <= PAGE) {
+  // Une première page INCOMPLÈTE est la table entière : rien de plus à lire.
+  if (firstRows.length < PAGE) {
     emit("success", out.length);
     return out;
   }
 
-  const starts: number[] = [];
-  for (let from = PAGE; from < total; from += PAGE) starts.push(from);
-  let pageResults: QueryResult[];
-  try {
-    pageResults = await mapWithConcurrency(starts, PAGE_CONCURRENCY, async (from) =>
-      runRequest(
-        spec.table,
-        (signal) =>
-          supabase()
-            .from(spec.table)
-            .select("*")
-            .abortSignal(signal)
-            .order(spec.pk, { ascending: true })
-            .range(from, from + PAGE - 1),
-        opts,
-      ),
-    );
-  } catch (err) {
-    if (err instanceof LoadCancelledError) {
-      emit("cancelled", out.length);
-      throw err;
+  // PLUS D'UNE PAGE. On lit par vagues PARALLÈLES jusqu'à ce qu'une page revienne
+  // incomplète — c'est elle, et elle seule, qui dit « fin de table ». Le compte
+  // estimé ne sert qu'à dimensionner la première vague : trop bas, on fait
+  // quelques rondes de plus ; trop haut, on tire quelques pages vides. Jamais une
+  // ligne n'est oubliée, et aucune n'exige de scan de comptage.
+  const estimate = first.count ?? 0;
+  let nextFrom = PAGE;
+  let done = false;
+  while (!done) {
+    const remainingByEstimate = Math.ceil(Math.max(0, estimate - nextFrom) / PAGE);
+    const waveSize = Math.min(remainingByEstimate || PAGE_CONCURRENCY, PAGE_CONCURRENCY);
+    const starts: number[] = [];
+    for (let k = 0; k < waveSize; k += 1) {
+      starts.push(nextFrom);
+      nextFrom += PAGE;
     }
-    emit(err instanceof LoadTimeoutError ? "timeout" : "error", out.length);
-    throw err instanceof LoadTimeoutError
-      ? err
-      : new Error(`${spec.table}: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  for (const page of pageResults) {
-    pages += 1;
-    if (page.error) {
-      emit("error", out.length);
-      throw new Error(`${spec.table}: ${page.error.message}`);
+    let waveResults: QueryResult[];
+    try {
+      waveResults = await mapWithConcurrency(starts, PAGE_CONCURRENCY, (from) =>
+        runRequest(
+          spec.table,
+          (signal) =>
+            supabase()
+              .from(spec.table)
+              .select("*")
+              .abortSignal(signal)
+              .order(spec.pk, { ascending: true })
+              .range(from, from + PAGE - 1),
+          opts,
+        ),
+      );
+    } catch (err) {
+      if (err instanceof LoadCancelledError) {
+        emit("cancelled", out.length);
+        throw err;
+      }
+      emit(err instanceof LoadTimeoutError ? "timeout" : "error", out.length);
+      throw err instanceof LoadTimeoutError
+        ? err
+        : new Error(`${spec.table}: ${err instanceof Error ? err.message : String(err)}`);
     }
-    const rows = (page.data ?? []) as Record<string, unknown>[];
-    approxBytes += estimateBytes(rows);
-    for (const r of rows) out.push(fromRow(spec, r));
+    for (const page of waveResults) {
+      pages += 1;
+      if (page.error) {
+        emit("error", out.length);
+        throw new Error(`${spec.table}: ${page.error.message}`);
+      }
+      const rows = (page.data ?? []) as Record<string, unknown>[];
+      approxBytes += estimateBytes(rows);
+      for (const r of rows) out.push(fromRow(spec, r));
+      // Une page non pleine est la dernière : la table est entièrement lue.
+      if (rows.length < PAGE) done = true;
+    }
   }
   emit("success", out.length);
   return out;

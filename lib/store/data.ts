@@ -3635,6 +3635,37 @@ export const useData = create<DataStore>((set, get) => {
     const burnt = new Map<string, number>();
     const touched = new Set<string>();
 
+    // INDEX PRÉCALCULÉS — sinon cette facturation gèle le téléphone.
+    //
+    // Telle quelle, la boucle faisait `db.attendance.filter()` avec un
+    // `db.sessions.find()` IMBRIQUÉ, le tout DANS la double boucle élève ×
+    // inscription : soit O(élèves × inscriptions × présences × séances), des
+    // centaines de millions d'opérations synchrones sur une vraie base — l'écran
+    // se figeait à chaque chargement admin. On calcule donc UNE fois : la séance
+    // par id, les présences (module/classe/jour) groupées par élève, et la
+    // dernière fin de pénalité par élève+abonnement. Les prédicats et les
+    // résultats sont STRICTEMENT identiques — seule la structure change.
+    const sessionById = new Map(db.sessions.map((s) => [s.id, s] as const));
+    const pointedByStudent = new Map<
+      string,
+      { moduleId: string | undefined; classId: string | undefined; day: string }[]
+    >();
+    for (const a of db.attendance) {
+      const se = sessionById.get(a.sessionId);
+      let list = pointedByStudent.get(a.studentId);
+      if (!list) {
+        list = [];
+        pointedByStudent.set(a.studentId, list);
+      }
+      list.push({ moduleId: se?.moduleId, classId: se?.classId, day: dateKey(a.timestamp) });
+    }
+    const maxPenEndByKey = new Map<string, string>();
+    for (const p of db.absencePenalties) {
+      const key = `${p.studentId}␟${p.subscriptionId}`;
+      const cur = maxPenEndByKey.get(key);
+      if (cur === undefined || p.periodEnd > cur) maxPenEndByKey.set(key, p.periodEnd);
+    }
+
     for (const student of db.students) {
       for (const enr of enrollmentsOf(db, student)) {
         const sub = db.subscriptions.find((s) => s.id === enr.subscriptionId);
@@ -3664,22 +3695,14 @@ export const useData = create<DataStore>((set, get) => {
         //     prix de la séance sur son solde : la reprendre une seconde fois
         //     lui compterait deux séances pour une seule manquée ;
         //   · annulée — la séance n'a pas eu lieu : rien n'est dû.
-        const pointed = db.attendance.filter((a) => {
-          const se = db.sessions.find((s) => s.id === a.sessionId);
-          return (
-            a.studentId === student.id &&
-            se?.moduleId === enr.session.moduleId &&
-            se?.classId === enr.session.classId
-          );
-        });
-        const lastAtt = pointed.map((a) => dateKey(a.timestamp)).sort().slice(-1)[0];
-        const lastPen = db.absencePenalties
-          .filter(
-            (p) => p.studentId === student.id && p.subscriptionId === enr.subscriptionId,
-          )
-          .map((p) => p.periodEnd)
-          .sort()
-          .slice(-1)[0];
+        // Mêmes lignes que l'ancien `db.attendance.filter(...)`, mais lues dans
+        // l'index : seulement les présences de CET élève, dont la séance a le
+        // module ET la classe de l'inscription.
+        const pointedDays = (pointedByStudent.get(student.id) ?? [])
+          .filter((p) => p.moduleId === enr.session.moduleId && p.classId === enr.session.classId)
+          .map((p) => p.day);
+        const lastAtt = pointedDays.slice().sort().slice(-1)[0];
+        const lastPen = maxPenEndByKey.get(`${student.id}␟${enr.subscriptionId}`);
 
         let anchor: string;
         if (aligned) {
@@ -3734,10 +3757,7 @@ export const useData = create<DataStore>((set, get) => {
             continue;
           }
 
-          const settled = pointed.some((a) => {
-            const k = dateKey(a.timestamp);
-            return k >= periodStart && k < periodEnd;
-          });
+          const settled = pointedDays.some((k) => k >= periodStart && k < periodEnd);
           if (settled) {
             anchor = addDays(anchor, windowDays);
             continue;

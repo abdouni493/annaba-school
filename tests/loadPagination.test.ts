@@ -15,6 +15,9 @@ interface Scenario {
   rows: Record<string, Record<string, unknown>[]>;
   /** code d'erreur à renvoyer pour une table donnée, le cas échéant */
   errorFor?: Record<string, { code?: string; message: string }>;
+  /** compte VOLONTAIREMENT faux renvoyé pour une table (count: "estimated"),
+   *  pour prouver que la lecture ne s'y fie jamais pour s'arrêter. */
+  countOverride?: Record<string, number>;
 }
 
 let scenario: Scenario;
@@ -35,7 +38,8 @@ function makeBuilder(table: string) {
           String(a[orderCol as string]).localeCompare(String(b[orderCol as string])),
         )
       : all;
-    return { data: sorted.slice(from, to + 1), count: all.length, error: null };
+    const count = scenario.countOverride?.[table] ?? all.length;
+    return { data: sorted.slice(from, to + 1), count, error: null };
   };
 
   Object.assign(builder, {
@@ -95,6 +99,34 @@ describe("chargement initial — pagination", () => {
     const loadedIds = loaded.map((s) => s.id);
     expect(loadedIds).toEqual(ids); // ordre stable, aucune perte, aucun doublon
     expect(new Set(loadedIds).size).toBe(n);
+  });
+
+  it("charge TOUTES les lignes même si le compte estimé est TROP BAS", async () => {
+    const spec = TABLES.students;
+    const n = 2500;
+    const ids = Array.from({ length: n }, (_, i) => String(i).padStart(5, "0"));
+    scenario.rows[spec.table] = ids.map((id) => ({ id, name: `E${id}` }));
+    // L'estimation ment : 5 lignes annoncées pour 2500 réelles.
+    scenario.countOverride = { [spec.table]: 5 };
+
+    const db = await loadDatabase();
+    const loaded = db.students as Array<{ id: string }>;
+    expect(loaded).toHaveLength(n); // aucune ligne manquée malgré le faux compte
+    expect(loaded.map((s) => s.id)).toEqual(ids);
+  });
+
+  it("ne duplique ni n'échoue si le compte estimé est TROP HAUT", async () => {
+    const spec = TABLES.students;
+    const n = 1500;
+    const ids = Array.from({ length: n }, (_, i) => String(i).padStart(5, "0"));
+    scenario.rows[spec.table] = ids.map((id) => ({ id, name: `E${id}` }));
+    // L'estimation ment dans l'autre sens : un million de lignes annoncées.
+    scenario.countOverride = { [spec.table]: 1_000_000 };
+
+    const db = await loadDatabase();
+    const loaded = db.students as Array<{ id: string }>;
+    expect(loaded).toHaveLength(n); // pages vides au-delà ignorées, aucun doublon
+    expect(new Set(loaded.map((s) => s.id)).size).toBe(n);
   });
 
   it("une table absente rend une liste vide sans faire échouer le reste", async () => {

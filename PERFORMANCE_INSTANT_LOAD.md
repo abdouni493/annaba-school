@@ -66,6 +66,33 @@ remplace tout panneau d'attente.
 - Tests : `tests/cacheBoot.test.ts` et `tests/cacheSyncResume.test.ts` figent la
   peinture instantanée, la préservation des saisies et la sûreté du miroir.
 
+## Round 2 — la lenteur côté CPU et côté requêtes
+
+Après le cache, deux coûts restaient et gelaient l'application sur un vrai jeu de
+données (surtout sur téléphone + petite instance Supabase) :
+
+### 4. Les travaux de fond gelaient l'interface après le chargement
+
+`processWeeklyAbsences()` tournait à CHAQUE ouverture admin avec, au cœur, un
+`db.attendance.filter()` contenant un `db.sessions.find()` IMBRIQUÉ, le tout dans
+la double boucle élève × inscription — soit `O(élèves × inscriptions × présences
+× séances)`, des centaines de millions d'opérations synchrones. On précalcule
+désormais les index une fois (séance par id, présences groupées par élève, fin de
+pénalité par élève+abonnement) : **mêmes résultats exacts**, mais le coût
+s'effondre. Et `SessionProvider` **diffère** ces travaux (avec
+`dropVoidTeacherDues`) au premier temps mort : l'écran est peint et manipulable
+AVANT qu'ils ne tournent.
+
+### 5. Chaque table forçait un scan de comptage
+
+Le chargement demandait `count: "exact"` sur chaque table — un **scan complet**
+par table, à chaque lecture. Passé en `count: "estimated"` (instantané, tiré des
+statistiques, aucun scan). L'exactitude n'en souffre pas : la pagination lit
+désormais par vagues parallèles **jusqu'à une page incomplète**, donc aucune
+ligne n'est jamais manquée, quel que soit le compte estimé (deux tests le figent,
+compte trop bas ET trop haut). La concurrence entre tables passe de 6 à 10
+(HTTP/2 multiplexé) pour recouvrir les allers-retours sur réseau mobile.
+
 ## Ce qui n'a PAS changé
 
 - **Aucune** modification du schéma de base (`supabase/schema.sql`).
