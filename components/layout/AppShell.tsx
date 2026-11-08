@@ -56,38 +56,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // mount (e.g. Settings) latch onto empty defaults on every refresh.
   if (!hydrated || !user) return null;
 
-  // Never render pages against an unloaded (or failed) database snapshot.
-  // This includes slow logins and failure after a session/account switch.
-  if (!loaded || loadStatus !== "success") {
-    const failed = loadStatus === "error";
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-canvas p-6">
-        <div role={failed ? "alert" : "status"} className="w-full max-w-md rounded-xl border border-line bg-card p-6 text-center">
-          <h2 className="mb-2 text-base font-semibold text-ink">
-            {failed ? "Impossible de charger les données" : "Chargement des données…"}
-          </h2>
-          <p className="text-sm text-muted">
-            {failed
-              ? "Les données de l'école n'ont pas pu être lues. Aucun enregistrement n'a été supprimé. Vérifiez votre connexion."
-              : "Connexion à la base de l'école en cours."}
-          </p>
-          {failed && (
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white"
-            >
-              Réessayer le chargement
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
+  // The app chrome (sidebar + topbar) renders immediately so login feels
+  // responsive even while the full database is still hydrating. Only the main
+  // CONTENT area is gated: pages never render against an unloaded or failed
+  // snapshot (which would flash wrong balances or empty lists). Write-sync
+  // stays paused in SessionProvider until the load succeeds, so nothing shown
+  // here — loading placeholder included — can be mirrored back as deletions.
+  const dbReady = loaded && loadStatus === "success";
+  const dbFailed = loadStatus === "error";
 
   return (
     <div className="flex h-dvh overflow-hidden bg-canvas">
-      <GlobalRFIDListener />
+      {dbReady && <GlobalRFIDListener />}
       {/* Desktop sidebar — hidden on demand from the navbar */}
       <div className={sidebarHidden ? "hidden" : "hidden lg:block"}>
         <Sidebar />
@@ -116,9 +96,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar onMenu={() => setMobileOpen(true)} />
         <main className="flex-1 overflow-y-auto">
-          <PageTransition>
-            <div className="mx-auto w-full max-w-7xl p-4 md:p-6">{children}</div>
-          </PageTransition>
+          {dbReady ? (
+            <PageTransition>
+              <div className="mx-auto w-full max-w-7xl p-4 md:p-6">{children}</div>
+            </PageTransition>
+          ) : (
+            <div className="flex min-h-full items-center justify-center p-6">
+              <div
+                role={dbFailed ? "alert" : "status"}
+                className="w-full max-w-md rounded-xl border border-line bg-card p-6 text-center"
+              >
+                <h2 className="mb-2 text-base font-semibold text-ink">
+                  {dbFailed ? "Impossible de charger les données" : "Chargement des données…"}
+                </h2>
+                <p className="text-sm text-muted">
+                  {dbFailed
+                    ? "Les données de l'école n'ont pas pu être lues. Aucun enregistrement n'a été supprimé. Vérifiez votre connexion."
+                    : "Connexion à la base de l'école en cours."}
+                </p>
+                {dbFailed && (
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white"
+                  >
+                    Réessayer le chargement
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </main>
       </div>
     </div>
