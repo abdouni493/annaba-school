@@ -66,6 +66,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retries = 0;
+    /** Vrai tant que l'écran est resté sur la copie locale (base injoignable) :
+     *  on retente alors immédiatement dès que le navigateur se dit « en ligne ». */
+    let awaitingReconnect = false;
     // La copie locale est rangée sous l'identifiant de la FICHE (`entityId`),
     // comme la signature des opérations — ainsi la clé est identique d'une
     // session à l'autre pour un même compte.
@@ -118,22 +121,31 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       switch (result.kind) {
         case "fresh":
           // Donnée fraîche adoptée : reprise normale (référence = le frais lu).
+          awaitingReconnect = false;
+          retries = 0;
           resumeSync();
           runPostLoadJobs();
           break;
         case "keep-local":
-          // L'utilisateur a modifié le magasin pendant la revalidation : on
-          // reprend EN ÉCRIVANT ses modifications (référence = le cache peint),
-          // pour ne rien perdre de ce qu'il a fait.
+          // Des écritures locales (dont des saisies faites hors-ligne) ne sont pas
+          // encore en base : on reprend EN LES ÉCRIVANT (référence = la donnée
+          // fraîche du serveur), pour ne rien perdre et ne rien écraser.
+          awaitingReconnect = false;
+          retries = 0;
           resumeSyncFrom(result.baseline);
           runPostLoadJobs();
           break;
         case "cache-only":
-          // Cache affiché mais base injoignable : lecture seule (miroir en pause),
-          // et on retente discrètement en arrière-plan avec un délai croissant.
-          if (retries < 5) {
-            const delay = Math.min(3000 * 2 ** retries, 30000);
+          // Cache affiché mais base injoignable : lecture seule (miroir en pause).
+          // On retente SANS JAMAIS ABANDONNER (délai croissant, plafonné à 30 s) —
+          // sinon un versement ou une présence saisis hors-ligne n'atteindraient
+          // jamais la base après une coupure un peu longue. Une reconnexion
+          // détectée par le navigateur relance aussi immédiatement (voir plus bas).
+          awaitingReconnect = true;
+          {
+            const delay = Math.min(3000 * 2 ** Math.min(retries, 4), 30000);
             retries += 1;
+            if (retryTimer) clearTimeout(retryTimer);
             retryTimer = setTimeout(() => {
               if (cancelled) return;
               void revalidate().then(apply);
@@ -150,9 +162,30 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     void boot(cacheKey).then(apply);
 
+    // RECONNEXION IMMÉDIATE. Dès que le navigateur retrouve le réseau (ou que
+    // l'onglet redevient visible), on relance tout de suite une revalidation si
+    // l'on était resté sur la copie locale — les écritures hors-ligne en attente
+    // partent alors sans attendre la fin du délai de la prochaine tentative.
+    const kick = () => {
+      if (cancelled || !awaitingReconnect) return;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      retries = 0;
+      void revalidate().then(apply);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") kick();
+    };
+    window.addEventListener("online", kick);
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
+      window.removeEventListener("online", kick);
+      document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, user?.id]);

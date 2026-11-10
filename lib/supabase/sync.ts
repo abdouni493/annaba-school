@@ -49,6 +49,23 @@ const RETRY_DELAYS = [3000, 6000, 12000, 20000, 30000];
 let pendingFlushes = 0;
 
 /**
+ * QUI A DÉJÀ ATTEINT POSTGRES.
+ *
+ * Après chaque envoi, on prévient l'auditeur (le magasin) du résultat : quand un
+ * lot passe entièrement (`clean`), l'état `synced` qu'il portait est désormais
+ * garanti en base, et le magasin peut avancer sa référence « déjà écrit » et
+ * effacer le drapeau hors-ligne. Quand il échoue, le magasin garde l'état comme
+ * « à renvoyer » et persiste la copie locale, pour qu'un rechargement ne perde
+ * jamais une écriture en attente.
+ */
+type SettledListener = (info: { clean: boolean; synced: Database }) => void;
+let settledListener: SettledListener | null = null;
+
+export function setSyncSettledListener(cb: SettledListener | null) {
+  settledListener = cb;
+}
+
+/**
  * NE PAS FERMER PENDANT QU'UNE ÉCRITURE PART.
  *
  * Une présence, un versement, une paie vivent d'abord dans le magasin puis
@@ -275,6 +292,13 @@ function runFlush(before: Database, next: Database) {
   queue = queue
     .then(() => flush(before, next))
     .then((failed) => {
+      // Prévenir le magasin du verdict : tout passé → la référence « déjà en
+      // base » peut avancer jusqu'à `next` ; sinon → écritures encore en attente.
+      try {
+        settledListener?.({ clean: failed.size === 0, synced: next });
+      } catch {
+        // Un auditeur défaillant ne doit jamais casser la synchronisation.
+      }
       if (!failed.size) {
         retryAttempts = 0;
         return;
@@ -296,6 +320,11 @@ function runFlush(before: Database, next: Database) {
       scheduleRetry();
     })
     .catch((err) => {
+      try {
+        settledListener?.({ clean: false, synced: next });
+      } catch {
+        // idem : on ignore un auditeur défaillant.
+      }
       report("synchronisation", "synchronisation", err instanceof Error ? err.message : String(err));
       scheduleRetry();
     })

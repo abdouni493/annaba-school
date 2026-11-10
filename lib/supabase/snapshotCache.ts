@@ -41,7 +41,7 @@ const DB_VERSION = 1;
  * manquants. (La relecture tolère déjà les collections absentes, mais ce numéro
  * reste le filet de sécurité explicite.)
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * Au-delà de cet âge, l'instantané n'est plus peint — non pour la fraîcheur (la
@@ -54,11 +54,29 @@ interface StoredSnapshot {
   userId: string;
   savedAt: number;
   schemaVersion: number;
+  /** L'état VIVANT affiché (peut contenir des écritures faites hors-ligne qui ne
+   *  sont pas encore arrivées dans Postgres). */
   db: Database;
+  /**
+   * LA RÉFÉRENCE « DÉJÀ DANS POSTGRES ».
+   *
+   * Dernier état dont on a la CERTITUDE qu'il a été écrit en base. Comparé à `db`,
+   * il révèle exactement les lignes créées/modifiées hors-ligne qui restent à
+   * envoyer. Sans lui, un rechargement laissait le serveur (qui ignore ces
+   * écritures) écraser la copie locale — et le versement ou la présence saisis
+   * hors-ligne disparaissaient.
+   */
+  synced?: Database;
+  /** Vrai s'il reste des écritures locales non confirmées en base. */
+  dirty?: boolean;
 }
 
 export interface CachedSnapshot {
   db: Database;
+  /** La référence confirmée en base, si connue (voir `StoredSnapshot.synced`). */
+  synced?: Database;
+  /** Vrai s'il reste des écritures locales non envoyées à la base. */
+  dirty: boolean;
   savedAt: number;
 }
 
@@ -129,7 +147,12 @@ export async function readSnapshot(userId: string): Promise<CachedSnapshot | nul
     if (snapshot.schemaVersion !== SCHEMA_VERSION) return null;
     if (!snapshot.db || typeof snapshot.db !== "object") return null;
     if (Date.now() - snapshot.savedAt > MAX_AGE_MS) return null;
-    return { db: snapshot.db, savedAt: snapshot.savedAt };
+    return {
+      db: snapshot.db,
+      synced: snapshot.synced && typeof snapshot.synced === "object" ? snapshot.synced : undefined,
+      dirty: snapshot.dirty === true,
+      savedAt: snapshot.savedAt,
+    };
   } catch {
     return null;
   }
@@ -140,9 +163,15 @@ export async function readSnapshot(userId: string): Promise<CachedSnapshot | nul
  * pour ne jamais retarder un rendu : sérialiser plusieurs Mo n'a pas à peser sur
  * le clic qui vient de réussir. Ne lève jamais.
  */
-export function writeSnapshot(userId: string, db: Database): void {
+export function writeSnapshot(
+  userId: string,
+  db: Database,
+  opts: { synced?: Database; dirty?: boolean } = {},
+): void {
   if (!userId || !hasIndexedDB()) return;
   const clean = sanitizeForStore(db);
+  const syncedClean = opts.synced ? sanitizeForStore(opts.synced) : undefined;
+  const dirty = opts.dirty === true;
   const run = () => {
     void (async () => {
       try {
@@ -153,6 +182,8 @@ export function writeSnapshot(userId: string, db: Database): void {
           savedAt: Date.now(),
           schemaVersion: SCHEMA_VERSION,
           db: clean,
+          synced: syncedClean,
+          dirty,
         };
         await new Promise<void>((resolve) => {
           let tx: IDBTransaction;

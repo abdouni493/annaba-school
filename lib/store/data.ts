@@ -12,7 +12,7 @@ import {
   type LoadDiagnostics,
 } from "@/lib/supabase/load";
 import { useToast } from "@/lib/store/toast";
-import type { CollectionKey } from "@/lib/supabase/tables";
+import { TABLES, pkOf, toRow, type CollectionKey } from "@/lib/supabase/tables";
 import { readSnapshot, writeSnapshot } from "@/lib/supabase/snapshotCache";
 import {
   cycleSizeOf,
@@ -1602,13 +1602,131 @@ function collectionsDiffer(a: Database, b: Database): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// DURABILITÉ DES ÉCRITURES HORS-LIGNE.
+//
+// Un versement, une présence saisis hors-ligne vivaient UNIQUEMENT en mémoire :
+// le miroir d'écriture était en pause (base injoignable) et rien n'était rangé
+// dans la copie locale. Un simple rechargement — ou la reprise qui adopte la
+// donnée du serveur — les effaçait, alors même que l'écran les avait affichés
+// et que la facture avait été imprimée.
+//
+// On garde donc, en plus de l'état VIVANT, la dernière référence CONFIRMÉE en
+// base (`syncedBaseline`). À chaque écriture hors-ligne, on persiste l'état
+// vivant AVEC le drapeau « reste à envoyer » ; au retour du réseau, on compare
+// les deux pour renvoyer exactement ce qui manque — rien n'est perdu, rien
+// d'autre n'est écrasé.
+// ---------------------------------------------------------------------------
+
+type Row = Record<string, unknown>;
+
+/** Dernière référence dont on sait qu'elle a atteint Postgres. */
+let syncedBaseline: Database | null = null;
+/** Vrai s'il reste des écritures locales non confirmées en base. */
+let cacheDirty = false;
+/** Vrai pendant qu'un chargement/revalidation peint le magasin : les `set` de
+ *  cette période ne sont PAS des écritures de l'utilisateur et ne doivent pas
+ *  marquer la copie locale « à envoyer ». */
+let loadingInProgress = false;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Range (en temps différé) l'état vivant + la référence confirmée + le drapeau,
+ *  sous le compte connecté. Non bloquant, silencieux en cas d'échec. */
+function schedulePersist(): void {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const actor = currentActor;
+    if (!actor) return;
+    writeSnapshot(actor.id, pickDatabase(useData.getState()), {
+      synced: syncedBaseline ? pickDatabase(syncedBaseline) : undefined,
+      dirty: cacheDirty,
+    });
+  }, 350);
+}
+
 /** Range l'instantané courant sous le compte connecté (si connu). Non bloquant,
  *  silencieux en cas d'échec — le cache est une optimisation, jamais une source
  *  de vérité. */
 function persistSnapshot(db: Database): void {
   const actor = currentActor;
   if (!actor) return;
-  writeSnapshot(actor.id, pickDatabase(db));
+  writeSnapshot(actor.id, pickDatabase(db), {
+    synced: syncedBaseline ? pickDatabase(syncedBaseline) : undefined,
+    dirty: cacheDirty,
+  });
+}
+
+/** Avance la référence « déjà en base » : tout ce qui est affiché est désormais
+ *  confirmé écrit. Efface le drapeau et met à jour la copie locale. */
+function markSynced(db: Database): void {
+  syncedBaseline = pickDatabase(db);
+  cacheDirty = false;
+  schedulePersist();
+}
+
+/**
+ * Les lignes créées/modifiées localement qui ne sont PAS (ou plus) identiques à
+ * la référence confirmée en base : exactement ce qui reste à envoyer. On ne
+ * renvoie jamais de suppression — une ligne absente du magasin peut tout aussi
+ * bien avoir été ajoutée par un autre poste pendant qu'on était hors-ligne, et
+ * la supprimer détruirait son travail. Une présence/un versement effacés
+ * hors-ligne réapparaîtront donc, ce qui est bien préférable à une perte.
+ */
+function diffUnpushed(base: Database, live: Database): Partial<Record<CollectionKey, Row[]>> {
+  const out: Partial<Record<CollectionKey, Row[]>> = {};
+  for (const key of COLLECTION_KEYS) {
+    const spec = TABLES[key];
+    const baseList = (base as unknown as Record<string, Row[]>)[key] ?? [];
+    const liveList = (live as unknown as Record<string, Row[]>)[key] ?? [];
+    if (baseList === liveList) continue;
+    const prevById = new Map<string, Row>();
+    for (const row of baseList) prevById.set(pkOf(spec, row), row);
+    const changed: Row[] = [];
+    for (const row of liveList) {
+      const prev = prevById.get(pkOf(spec, row));
+      if (prev === row) continue;
+      if (prev && JSON.stringify(toRow(spec, prev)) === JSON.stringify(toRow(spec, row))) continue;
+      changed.push(row);
+    }
+    if (changed.length) out[key] = changed;
+  }
+  return out;
+}
+
+/** Vrai si au moins une collection porte des lignes à envoyer. */
+function hasUnpushed(diff: Partial<Record<CollectionKey, Row[]>>): boolean {
+  for (const key of COLLECTION_KEYS) if (diff[key]?.length) return true;
+  return false;
+}
+
+/**
+ * Fusionne la donnée FRAÎCHE du serveur avec les écritures locales non envoyées :
+ * on repart du serveur (qui porte les éventuels ajouts d'un autre poste), puis
+ * on superpose, clé primaire par clé primaire, les lignes locales en attente.
+ * Le résultat contient TOUT le serveur — donc le renvoi ne supprimera jamais une
+ * ligne — plus les saisies hors-ligne.
+ */
+function mergeUnpushed(
+  fresh: Database,
+  live: Database,
+  diff: Partial<Record<CollectionKey, Row[]>>,
+): Database {
+  const merged = { school: live.school !== fresh.school ? live.school : fresh.school } as Database;
+  for (const key of COLLECTION_KEYS) {
+    const spec = TABLES[key];
+    const freshList = (fresh as unknown as Record<string, Row[]>)[key] ?? [];
+    const pending = diff[key];
+    if (!pending || !pending.length) {
+      (merged as unknown as Record<string, Row[]>)[key] = freshList;
+      continue;
+    }
+    const byId = new Map<string, Row>();
+    for (const row of freshList) byId.set(pkOf(spec, row), row);
+    for (const row of pending) byId.set(pkOf(spec, row), row);
+    (merged as unknown as Record<string, Row[]>)[key] = Array.from(byId.values());
+  }
+  return merged;
 }
 
 type ReadOutcome =
@@ -1681,21 +1799,40 @@ export const useData = create<DataStore>((set, get) => {
     }
 
     const fresh = res.db;
-    const dirty = painted ? collectionsDiffer(painted, get()) : false;
-    if (dirty && painted) {
-      // L'utilisateur a modifié le magasin pendant la revalidation. NE JAMAIS
-      // écraser son travail : on garde ses modifications affichées et on renvoie
-      // la base-cache comme référence pour que le miroir ÉCRIVE ces modifications
-      // (au lieu de les perdre au remplacement).
+
+    // CE QUI RESTE À ENVOYER. On compare l'état affiché à la dernière référence
+    // CONFIRMÉE en base (écritures hors-ligne comprises, retrouvées dans la copie
+    // locale au démarrage), et non à l'état peint du jour : une présence ou un
+    // versement saisis hors-ligne lors d'une session PRÉCÉDENTE sont ainsi
+    // détectés même si l'utilisateur n'a rien touché pendant cette revalidation.
+    const live = pickDatabase(get());
+    const base = syncedBaseline ?? painted;
+    const unpushed = base ? diffUnpushed(base, live) : {};
+    // Le repère historique (modif. PENDANT la revalidation) reste un filet
+    // supplémentaire : il déclenche le renvoi même sans référence confirmée.
+    const editedDuringReval = painted ? collectionsDiffer(painted, live) : false;
+
+    if (hasUnpushed(unpushed) || (editedDuringReval && painted)) {
+      // NE JAMAIS perdre une écriture locale. On fusionne la donnée fraîche du
+      // serveur avec les saisies locales en attente, on affiche le résultat, et
+      // on renvoie la donnée FRAÎCHE comme référence pour que le miroir écrive
+      // précisément ce qui manque (jamais une suppression).
+      const diff = base ? unpushed : diffUnpushed(painted as Database, live);
+      const merged = mergeUnpushed(fresh, live, diff);
       set({
+        ...merged,
         loaded: true,
         loadStatus: "success",
         revalidating: false,
         offline: false,
         loadDiagnostics: getLastLoadDiagnostics(),
       });
-      persistSnapshot(pickDatabase(get()));
-      return { kind: "keep-local", baseline: painted };
+      // La référence confirmée reste la donnée du serveur : le miroir va y
+      // ajouter les lignes en attente, et `markSynced` avancera à la confirmation.
+      syncedBaseline = pickDatabase(fresh);
+      cacheDirty = true;
+      persistSnapshot(get());
+      return { kind: "keep-local", baseline: fresh };
     }
 
     // Cas courant : adopter la donnée fraîche et la mettre en cache.
@@ -1707,6 +1844,7 @@ export const useData = create<DataStore>((set, get) => {
       offline: false,
       loadDiagnostics: getLastLoadDiagnostics(),
     });
+    markSynced(fresh);
     persistSnapshot(fresh);
     return { kind: "fresh" };
   };
@@ -1772,6 +1910,8 @@ export const useData = create<DataStore>((set, get) => {
       const patch: Record<string, unknown> = { revalidating: false };
       for (const k of deferredKeys) patch[k] = phase2.collections[k] ?? [];
       set(patch);
+      // Tout vient d'être lu depuis la base : c'est la référence confirmée.
+      markSynced(get());
       persistSnapshot(pickDatabase(get()));
       return { kind: "fresh" };
     } catch (err) {
@@ -1857,6 +1997,7 @@ export const useData = create<DataStore>((set, get) => {
       offline: false,
       loadDiagnostics: getLastLoadDiagnostics(),
     });
+    markSynced(res.db);
     persistSnapshot(res.db);
     return true;
   },
@@ -1888,6 +2029,7 @@ export const useData = create<DataStore>((set, get) => {
     if (cached) {
       // Copie locale présente : on peint TOUT (présences incluses) d'emblée, puis
       // on revalide en arrière-plan par une lecture complète.
+      loadingInProgress = true;
       set({
         ...emptyDatabase(),
         ...cached.db,
@@ -1896,6 +2038,13 @@ export const useData = create<DataStore>((set, get) => {
         revalidating: true,
         offline: false,
       });
+      // On RESTAURE l'état hors-ligne rangé avec la copie : la référence confirmée
+      // en base et le drapeau « reste à envoyer ». Ainsi une saisie faite
+      // hors-ligne lors d'une session précédente est reconnue comme non envoyée,
+      // et renvoyée dès que la base redevient joignable — jamais écrasée.
+      syncedBaseline = cached.synced ? (cached.synced as Database) : pickDatabase(get());
+      cacheDirty = cached.dirty;
+      loadingInProgress = false;
       // La référence de l'état peint : si une collection change de référence
       // pendant la revalidation, c'est que l'utilisateur a modifié quelque chose.
       return finishRevalidation(pickDatabase(get()));
@@ -5485,3 +5634,58 @@ export const useData = create<DataStore>((set, get) => {
   },
   };
 });
+
+// ---------------------------------------------------------------------------
+// FILET DE DURABILITÉ — rien de ce qui est saisi ne doit mourir en mémoire.
+//
+// Deux branchements, posés une seule fois :
+//
+//  1. Un abonnement au magasin : à CHAQUE vraie modification de données (pas un
+//     simple changement de drapeau), on range la copie locale AVEC le marqueur
+//     « reste à envoyer ». Un versement ou une présence saisis hors-ligne
+//     survivent donc à un rechargement, et seront renvoyés au retour du réseau.
+//
+//  2. Un auditeur de la synchronisation : quand un lot atteint vraiment Postgres,
+//     la référence « déjà en base » avance et le marqueur s'efface — ainsi on ne
+//     renvoie jamais deux fois ce qui est déjà écrit, et le drapeau hors-ligne
+//     reflète l'état réel.
+// ---------------------------------------------------------------------------
+{
+  let lastSeen: Database | null = null;
+  useData.subscribe((state) => {
+    const live = pickDatabase(state);
+    const prev = lastSeen;
+    lastSeen = live;
+    // Pendant un chargement/une revalidation, les `set` ne sont pas des écritures
+    // de l'utilisateur : on se contente de suivre l'état sans marquer quoi que ce soit.
+    if (loadingInProgress) return;
+    if (!prev) return;
+    // Seule une vraie modification de données compte (un changement de drapeau
+    // d'interface ne doit jamais salir la copie locale).
+    if (!collectionsDiffer(prev, live)) return;
+    // Une écriture non encore confirmée en base : à conserver et à renvoyer.
+    cacheDirty = true;
+    schedulePersist();
+  });
+
+  // Branche l'auditeur de synchronisation via import différé, pour éviter un
+  // cycle d'import statique entre ce module et `sync.ts`.
+  void import("@/lib/supabase/sync")
+    .then(({ setSyncSettledListener }) => {
+      setSyncSettledListener(({ clean, synced }) => {
+        if (clean) {
+          // Tout ce qui était affiché a atteint la base : on avance la référence.
+          markSynced(synced);
+        } else {
+          // Un envoi a échoué : les lignes restent « à renvoyer », on persiste la
+          // copie locale pour qu'un rechargement ne les perde pas.
+          cacheDirty = true;
+          schedulePersist();
+        }
+      });
+    })
+    .catch(() => {
+      // Sans auditeur, la durabilité reste assurée par l'abonnement ci-dessus ;
+      // on évite simplement les renvois redondants. Jamais bloquant.
+    });
+}
