@@ -43,7 +43,7 @@ const TABLE_CONCURRENCY = 10;
 const REQUEST_TIMEOUT_MS = 20_000;
 /** Transient failures (timeout, network blip) are retried a few times with a
  *  short growing delay before the table — and thus the whole load — is failed. */
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 4;
 const RETRY_BASE_MS = 500;
 
 /** Exécute les tâches par vagues de `limit`, en préservant l'ordre des résultats. */
@@ -165,6 +165,52 @@ interface QueryResult {
 }
 
 /**
+ * LES ERREURS RENVOYÉES (ET NON LEVÉES) PAR SUPABASE.
+ *
+ * `supabase-js` ne LÈVE PAS d'exception sur une réponse HTTP en erreur : il rend
+ * `{ error, status }`. Avant, seules les exceptions étaient réessayées — un 502
+ * passager, un « statement timeout » ou un jeton de session expiré (onglet resté
+ * ouvert, ordinateur sorti de veille) faisaient donc échouer AUSSITÔT la table,
+ * puis toute la relecture, et l'application restait bloquée sur « Hors-ligne »
+ * alors que le réseau allait très bien.
+ */
+function isTransientResult(status: number | undefined, error: { code?: string; message?: string }): boolean {
+  if (status === 0) return true; // réponse coupée en route
+  if (status === 408 || status === 425 || status === 429) return true;
+  if (status !== undefined && status >= 500) return true;
+  if (error.code === "57014") return true; // statement timeout
+  return isAuthExpired(status, error);
+}
+
+/** Jeton d'accès expiré / invalide : un rafraîchissement de session suffit. */
+function isAuthExpired(status: number | undefined, error: { code?: string; message?: string }): boolean {
+  return (
+    status === 401 ||
+    error.code === "PGRST301" ||
+    error.code === "PGRST303" ||
+    /JWT|token.*expired/i.test(error.message ?? "")
+  );
+}
+
+/** Rafraîchit la session (une seule fois à la fois, partagée entre requêtes). */
+let refreshing: Promise<void> | null = null;
+function refreshAuthSession(): Promise<void> {
+  if (!refreshing) {
+    refreshing = (async () => {
+      try {
+        const auth = (supabase() as unknown as { auth?: { refreshSession?: () => Promise<unknown> } }).auth;
+        await auth?.refreshSession?.();
+      } catch {
+        // Pas de session à rafraîchir : la tentative suivante dira ce qu'il en est.
+      }
+    })().finally(() => {
+      refreshing = null;
+    });
+  }
+  return refreshing;
+}
+
+/**
  * Runs ONE PostgREST request with a timeout, real cancellation and bounded
  * retry of transient failures. `build` receives the request's AbortSignal and
  * must return the configured PostgREST builder (a thenable) with
@@ -190,12 +236,20 @@ async function runRequest(
     opts.signal?.addEventListener("abort", relayAbort, { once: true });
     try {
       const res = await build(ac.signal);
+      const error = (res.error as { code?: string; message?: string } | null) ?? null;
+      const status = (res as { status?: number }).status;
+      if (error && attempt < MAX_ATTEMPTS && isTransientResult(status, error) && !isMissingTableError(error)) {
+        if (isAuthExpired(status, error)) await refreshAuthSession();
+        await delay(RETRY_BASE_MS * attempt, opts.signal);
+        continue;
+      }
       return {
         data: res.data ?? null,
-        error: (res.error as { code?: string; message?: string } | null) ?? null,
+        error,
         count: (res.count ?? null) as number | null,
       };
     } catch (err) {
+      if (err instanceof LoadCancelledError) throw err;
       // A deliberate cancellation always wins over a coincident timeout.
       if (opts.signal?.aborted) throw new LoadCancelledError();
       const fault = timedOut ? new LoadTimeoutError(table, timeoutMs) : err;
@@ -261,6 +315,10 @@ function logDiagnostics(d: LoadDiagnostics) {
  * lecture refusée pour toute autre raison (droits, réseau) continue en revanche
  * de remonter : elle ne doit surtout pas passer pour « aucune donnée ».
  */
+function isMissingTableError(error: { code?: string; message?: string }): boolean {
+  return isMissingTable(error);
+}
+
 function isMissingTable(error: { code?: string; message?: string }): boolean {
   return (
     error.code === "42P01" ||           // Postgres : relation inexistante
@@ -537,6 +595,82 @@ export async function loadSome(
     );
   }
   return { school, collections };
+}
+
+/**
+ * RELIRE LA BASE SANS QU'UNE SEULE TABLE FASSE TOUT ÉCHOUER.
+ *
+ * `loadDatabase()` est « tout ou rien » : une seule page d'une seule des ~40
+ * tables qui échoue, et TOUTE la relecture est jetée — l'écran restait alors
+ * « Hors-ligne », miroir d'écriture en pause, pour une table sans importance.
+ *
+ * Ici chaque table est lue pour elle-même : celles qui aboutissent sont
+ * rendues, celles qui échouent sont LISTÉES (avec leur erreur) pour que
+ * l'appelant garde, pour elles seules, la copie déjà affichée. Une annulation
+ * volontaire, elle, interrompt toujours tout.
+ */
+export interface TolerantLoad {
+  school?: School;
+  collections: Partial<Record<CollectionKey, Record<string, unknown>[]>>;
+  failed: { key: CollectionKey | "school"; message: string; timeout: boolean }[];
+}
+
+export async function loadDatabaseTolerant(opts: LoadOptions = {}): Promise<TolerantLoad> {
+  throwIfAborted(opts.signal);
+  const t0 = now();
+  const startedAt = Date.now();
+  const tables: TableDiagnostic[] = [];
+  const collect: LoadOptions = {
+    ...opts,
+    onTableDiagnostic: (d) => {
+      tables.push(d);
+      opts.onTableDiagnostic?.(d);
+    },
+  };
+  const failed: TolerantLoad["failed"] = [];
+  const describe = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+  const [school, lists] = await Promise.all([
+    loadSchool(collect).catch((err) => {
+      if (err instanceof LoadCancelledError) throw err;
+      failed.push({ key: "school", message: describe(err), timeout: err instanceof LoadTimeoutError });
+      return undefined;
+    }),
+    mapWithConcurrency(COLLECTION_ORDER, TABLE_CONCURRENCY, (key) =>
+      readAll(TABLES[key], collect).catch((err) => {
+        if (err instanceof LoadCancelledError) throw err;
+        failed.push({ key, message: describe(err), timeout: err instanceof LoadTimeoutError });
+        return null;
+      }),
+    ),
+  ]);
+  throwIfAborted(opts.signal);
+
+  const collections: TolerantLoad["collections"] = {};
+  COLLECTION_ORDER.forEach((key, i) => {
+    const list = lists[i];
+    if (list) collections[key] = list;
+  });
+
+  const totalRows = tables.reduce((s, d) => s + d.rows, 0);
+  const totalApproxBytes = tables.reduce((s, d) => s + d.approxBytes, 0);
+  const slowest = tables.reduce<TableDiagnostic | null>((m, d) => (!m || d.ms > m.ms ? d : m), null);
+  lastDiagnostics = {
+    tables,
+    totalMs: Math.round(now() - t0),
+    totalRows,
+    totalApproxBytes,
+    slowestTable: slowest ? `${slowest.table} (${slowest.ms} ms)` : null,
+    startedAt,
+  };
+  logDiagnostics(lastDiagnostics);
+  if (failed.length && typeof console !== "undefined") {
+    console.warn(
+      `[supabase] relecture partielle — ${failed.length} table(s) en échec, copie locale conservée pour elles :`,
+      failed.map((f) => `${f.key}: ${f.message}`),
+    );
+  }
+  return { school, collections, failed };
 }
 
 /** A database with an establishment and no rows at all. */

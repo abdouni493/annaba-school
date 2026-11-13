@@ -116,24 +116,63 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
      * lecture complète fiable — sans quoi un magasin partiel pourrait réécrire
      * des suppressions dans Supabase.
      */
+    /**
+     * RELIRE PLUS TARD LES TABLES QUI N'ONT PAS RÉPONDU.
+     *
+     * Une relecture partielle n'est plus un passage « hors-ligne » : l'écran
+     * passe en ligne, le miroir d'écriture reprend, et seules les tables en
+     * échec gardent leur copie locale. On les relit discrètement en
+     * arrière-plan (délai croissant, plafonné à 5 min), miroir en pause le
+     * temps de la lecture — les saisies faites entretemps sont retrouvées par
+     * le diff « reste à envoyer » et écrites à la reprise.
+     */
+    let staleTimer: ReturnType<typeof setTimeout> | null = null;
+    let staleRetries = 0;
+    let postLoadDone = false;
+    const scheduleStaleRefresh = (stale: string[] | undefined) => {
+      if (staleTimer) {
+        clearTimeout(staleTimer);
+        staleTimer = null;
+      }
+      if (!stale || !stale.length) {
+        staleRetries = 0;
+        return;
+      }
+      const wait = Math.min(15000 * 2 ** Math.min(staleRetries, 4), 300000);
+      staleRetries += 1;
+      staleTimer = setTimeout(() => {
+        staleTimer = null;
+        if (cancelled) return;
+        pauseSync();
+        void revalidate().then(apply);
+      }, wait);
+    };
+
+    const goOnline = () => {
+      awaitingReconnect = false;
+      retries = 0;
+      if (!postLoadDone) {
+        postLoadDone = true;
+        runPostLoadJobs();
+      }
+    };
+
     const apply = (result: BootResult) => {
       if (cancelled) return;
       switch (result.kind) {
         case "fresh":
           // Donnée fraîche adoptée : reprise normale (référence = le frais lu).
-          awaitingReconnect = false;
-          retries = 0;
           resumeSync();
-          runPostLoadJobs();
+          goOnline();
+          scheduleStaleRefresh(result.stale);
           break;
         case "keep-local":
           // Des écritures locales (dont des saisies faites hors-ligne) ne sont pas
           // encore en base : on reprend EN LES ÉCRIVANT (référence = la donnée
           // fraîche du serveur), pour ne rien perdre et ne rien écraser.
-          awaitingReconnect = false;
-          retries = 0;
           resumeSyncFrom(result.baseline);
-          runPostLoadJobs();
+          goOnline();
+          scheduleStaleRefresh(result.stale);
           break;
         case "cache-only":
           // Cache affiché mais base injoignable : lecture seule (miroir en pause).
@@ -147,7 +186,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             retries += 1;
             if (retryTimer) clearTimeout(retryTimer);
             retryTimer = setTimeout(() => {
+              retryTimer = null;
               if (cancelled) return;
+              // Navigateur sans réseau : inutile de lancer 40 lectures vouées à
+              // l'échec — l'événement « online » relancera aussitôt.
+              if (typeof navigator !== "undefined" && navigator.onLine === false) return;
               void revalidate().then(apply);
             }, delay);
           }
@@ -167,7 +210,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // l'on était resté sur la copie locale — les écritures hors-ligne en attente
     // partent alors sans attendre la fin du délai de la prochaine tentative.
     const kick = () => {
-      if (cancelled || !awaitingReconnect) return;
+      if (cancelled) return;
+      if (!awaitingReconnect) {
+        // En ligne mais avec des tables à relire : on avance la relecture.
+        if (staleTimer) {
+          clearTimeout(staleTimer);
+          staleTimer = null;
+          staleRetries = 0;
+          pauseSync();
+          void revalidate().then(apply);
+        }
+        return;
+      }
       if (retryTimer) {
         clearTimeout(retryTimer);
         retryTimer = null;
@@ -184,6 +238,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
+      if (staleTimer) clearTimeout(staleTimer);
       window.removeEventListener("online", kick);
       document.removeEventListener("visibilitychange", onVisible);
     };

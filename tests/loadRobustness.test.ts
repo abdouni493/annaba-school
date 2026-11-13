@@ -69,6 +69,7 @@ vi.mock("@/lib/supabase/client", () => ({
 
 import {
   loadDatabase,
+  loadDatabaseTolerant,
   getLastLoadDiagnostics,
   LoadTimeoutError,
   LoadCancelledError,
@@ -129,6 +130,51 @@ describe("chargement initial — robustesse", () => {
     const students = diag?.tables.find((t) => t.table === TABLES.students.table);
     expect(students?.status).toBe("success");
     expect(students?.rows).toBe(1);
+  });
+
+  it("réessaie une erreur RENVOYÉE (503, jeton expiré) au lieu d'échouer aussitôt", async () => {
+    behaviors = {
+      [TABLES.students.table]: ({ attempt }) =>
+        Promise.resolve(
+          attempt === 1
+            ? ({ data: null, error: { message: "Service Unavailable" }, status: 503 } as never)
+            : attempt === 2
+              ? ({ data: null, error: { code: "PGRST301", message: "JWT expired" }, status: 401 } as never)
+              : { data: [{ id: "s1" }], error: null, count: 1 },
+        ),
+    };
+    const db = await loadDatabase({ timeoutMs: 1000 });
+    expect(db.students).toEqual([{ id: "s1" }]);
+    expect(callCounts[TABLES.students.table]).toBe(3);
+  });
+
+  it("n'insiste pas sur une erreur définitive (droits refusés)", async () => {
+    behaviors = {
+      [TABLES.students.table]: () =>
+        Promise.resolve({ data: null, error: { code: "42501", message: "permission denied" }, status: 403 } as never),
+    };
+    await expect(loadDatabase({ timeoutMs: 1000 })).rejects.toThrow(/permission denied/);
+    expect(callCounts[TABLES.students.table]).toBe(1);
+  });
+
+  it("lecture TOLÉRANTE : une table en échec n'annule pas les autres", async () => {
+    behaviors = {
+      [TABLES.students.table]: () => Promise.resolve({ data: [{ id: "s1" }], error: null, count: 1 }),
+      [TABLES.attendance.table]: () =>
+        Promise.resolve({ data: null, error: { code: "42501", message: "permission denied" }, status: 403 } as never),
+    };
+    const res = await loadDatabaseTolerant({ timeoutMs: 1000 });
+    expect(res.collections.students).toEqual([{ id: "s1" }]);
+    expect(res.collections.attendance).toBeUndefined();
+    expect(res.failed.map((f) => f.key)).toEqual(["attendance"]);
+  });
+
+  it("lecture TOLÉRANTE : une annulation interrompt toujours tout", async () => {
+    behaviors = { [TABLES.attendance.table]: ({ signal }) => hangUntilAbort(signal) };
+    const ac = new AbortController();
+    const pending = loadDatabaseTolerant({ signal: ac.signal, timeoutMs: 5000 });
+    setTimeout(() => ac.abort(), 20);
+    await expect(pending).rejects.toBeInstanceOf(LoadCancelledError);
   });
 
   it("mesure chaque table lue : lignes, statut et total", async () => {

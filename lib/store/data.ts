@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import {
   emptyDatabase,
-  loadDatabase,
+  loadDatabaseTolerant,
   loadSome,
   loadSchool,
   getLastLoadDiagnostics,
@@ -426,8 +426,10 @@ export type LoadStatus = "idle" | "loading" | "timeout" | "error" | "success";
  *  - `cancelled`  : lecture supplantée (déconnexion / changement de compte).
  */
 export type BootResult =
-  | { kind: "fresh" }
-  | { kind: "keep-local"; baseline: Database }
+  /** `stale` : tables que la relecture n'a pas pu lire (copie locale gardée
+   *  pour elles) — l'appelant les relira plus tard, en arrière-plan. */
+  | { kind: "fresh"; stale?: string[] }
+  | { kind: "keep-local"; baseline: Database; stale?: string[] }
   | { kind: "cache-only" }
   | { kind: "failed" }
   | { kind: "cancelled" };
@@ -443,6 +445,9 @@ interface DataActions {
   /** Vrai quand la revalidation a échoué alors que le cache est affiché : les
    *  écrans restent lisibles mais aucune écriture n'est mirroir-ée (lecture seule). */
   offline: boolean;
+  /** Pourquoi la dernière relecture a échoué (affiché discrètement dans le
+   *  bandeau hors-ligne, pour diagnostiquer sans console). */
+  offlineReason: string | null;
   /** Mesures du dernier chargement (durée, lignes, octets, table la plus lente),
    *  pour diagnostiquer un démarrage lent sans deviner. */
   loadDiagnostics: LoadDiagnostics | null;
@@ -1638,8 +1643,10 @@ function schedulePersist(): void {
     persistTimer = null;
     const actor = currentActor;
     if (!actor) return;
+    // Rien en attente : la référence confirmée EST l'état affiché, inutile de
+    // la ranger une seconde fois (le démarrage la reconstitue depuis le vivant).
     writeSnapshot(actor.id, pickDatabase(useData.getState()), {
-      synced: syncedBaseline ? pickDatabase(syncedBaseline) : undefined,
+      synced: cacheDirty && syncedBaseline ? pickDatabase(syncedBaseline) : undefined,
       dirty: cacheDirty,
     });
   }, 350);
@@ -1652,7 +1659,7 @@ function persistSnapshot(db: Database): void {
   const actor = currentActor;
   if (!actor) return;
   writeSnapshot(actor.id, pickDatabase(db), {
-    synced: syncedBaseline ? pickDatabase(syncedBaseline) : undefined,
+    synced: cacheDirty && syncedBaseline ? pickDatabase(syncedBaseline) : undefined,
     dirty: cacheDirty,
   });
 }
@@ -1730,13 +1737,24 @@ function mergeUnpushed(
 }
 
 type ReadOutcome =
-  | { status: "success"; db: Database }
-  | { status: "timeout" | "error" | "cancelled" };
+  | {
+      status: "success";
+      /** Les collections lues. Celles listées dans `failed` y sont ABSENTES :
+       *  à l'appelant de garder, pour elles, la copie déjà affichée. */
+      db: Database;
+      failed: (CollectionKey | "school")[];
+      reason: string | null;
+    }
+  | { status: "timeout" | "error"; reason: string | null }
+  | { status: "cancelled" };
 
 /**
  * Lit TOUTE la base, avec annulation et invalidation des lectures périmées,
  * SANS toucher au magasin. L'appelant décide quoi faire du résultat (l'adopter,
  * le fusionner, l'ignorer) — c'est ce qui rend possible le « cache d'abord ».
+ *
+ * La lecture est TOLÉRANTE : une table qui échoue n'annule plus tout. Seul un
+ * échec de TOUTES les tables (réseau réellement coupé) est un échec.
  */
 async function readWholeDatabase(): Promise<ReadOutcome> {
   // Une nouvelle lecture supplante toute lecture en vol : on annule l'ancienne
@@ -1746,17 +1764,47 @@ async function readWholeDatabase(): Promise<ReadOutcome> {
   currentLoadAbort = abort;
   const version = ++loadRequestVersion;
   try {
-    const db = await loadDatabase({ signal: abort.signal });
+    const res = await loadDatabaseTolerant({ signal: abort.signal });
     if (version !== loadRequestVersion) return { status: "cancelled" };
     if (currentLoadAbort === abort) currentLoadAbort = null;
-    return { status: "success", db };
+    const reason = res.failed.length
+      ? res.failed
+          .slice(0, 3)
+          .map((f) => f.message)
+          .join(" · ")
+      : null;
+    const failedCollections = res.failed.filter((f) => f.key !== "school");
+    if (failedCollections.length >= COLLECTION_KEYS.length) {
+      const allTimeouts = res.failed.every((f) => f.timeout);
+      return { status: allTimeouts ? "timeout" : "error", reason };
+    }
+    const db = { school: res.school ?? emptyDatabase().school } as Database;
+    for (const k of COLLECTION_KEYS) {
+      const list = res.collections[k];
+      if (list) (db as unknown as Record<string, unknown>)[k] = list;
+    }
+    return { status: "success", db, failed: res.failed.map((f) => f.key), reason };
   } catch (err) {
     if (err instanceof LoadCancelledError) return { status: "cancelled" };
     if (version !== loadRequestVersion) return { status: "cancelled" };
     if (currentLoadAbort === abort) currentLoadAbort = null;
     console.error("[supabase] readWholeDatabase", err);
-    return { status: err instanceof LoadTimeoutError ? "timeout" : "error" };
+    return {
+      status: err instanceof LoadTimeoutError ? "timeout" : "error",
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
+}
+
+/** Complète une lecture partielle : chaque table non lue reprend sa valeur dans
+ *  `from` (la copie déjà affichée / confirmée). */
+function fillFailed(read: Database, failed: (CollectionKey | "school")[], from: Database): Database {
+  if (!failed.length) return read;
+  const out = { ...read } as Database;
+  for (const k of failed) {
+    (out as unknown as Record<string, unknown>)[k] = (from as unknown as Record<string, unknown>)[k];
+  }
+  return out;
 }
 
 export const useData = create<DataStore>((set, get) => {
@@ -1770,25 +1818,30 @@ export const useData = create<DataStore>((set, get) => {
     const res = await readWholeDatabase();
     if (res.status === "cancelled") return { kind: "cancelled" };
 
-    if (res.status !== "success") {
+    // Une lecture partielle n'est exploitable que s'il y a une copie affichée
+    // pour combler les tables manquantes.
+    const unusablePartial = res.status === "success" && res.failed.length > 0 && !painted;
+    if (res.status !== "success" || unusablePartial) {
+      const reason = res.reason;
       if (painted) {
         // Cache déjà affiché : on le garde LISIBLE, on signale « hors-ligne ».
-        // Le miroir d'écriture reste en pause (aucune lecture complète fiable),
+        // Le miroir d'écriture reste en pause (aucune lecture fiable),
         // exactement comme après un échec de chargement aujourd'hui.
-        set({ revalidating: false, offline: true });
+        set({ revalidating: false, offline: true, offlineReason: reason });
         return { kind: "cache-only" };
       }
+      const status = res.status === "success" ? "error" : res.status;
       // Aucun cache : écran d'échec (comportement historique, inchangé).
-      set({ loaded: false, loadStatus: res.status, revalidating: false, offline: false });
+      set({ loaded: false, loadStatus: status, revalidating: false, offline: false, offlineReason: reason });
       try {
         useToast.getState().addToast({
           type: "danger",
           title:
-            res.status === "timeout"
+            status === "timeout"
               ? "Base trop lente à répondre"
               : "Chargement des données impossible",
           message:
-            res.status === "timeout"
+            status === "timeout"
               ? "La base n'a pas répondu à temps. Vérifiez votre connexion, puis réessayez."
               : "Les données n'ont pas pu être lues. Vérifiez votre connexion, puis réessayez.",
         });
@@ -1798,7 +1851,13 @@ export const useData = create<DataStore>((set, get) => {
       return { kind: "failed" };
     }
 
-    const fresh = res.db;
+    // RELECTURE PARTIELLE : les tables non lues reprennent la référence
+    // confirmée (ou, à défaut, la copie peinte). Ainsi le diff « reste à
+    // envoyer » ci-dessous les traite exactement comme si le serveur avait
+    // renvoyé ce qu'on savait déjà y être — aucune suppression, aucune perte.
+    const stale = res.failed.filter((k): k is CollectionKey => k !== "school");
+    const fallback = (syncedBaseline ?? painted) as Database;
+    const fresh = fillFailed(res.db, res.failed, fallback);
 
     // CE QUI RESTE À ENVOYER. On compare l'état affiché à la dernière référence
     // CONFIRMÉE en base (écritures hors-ligne comprises, retrouvées dans la copie
@@ -1819,34 +1878,44 @@ export const useData = create<DataStore>((set, get) => {
       // précisément ce qui manque (jamais une suppression).
       const diff = base ? unpushed : diffUnpushed(painted as Database, live);
       const merged = mergeUnpushed(fresh, live, diff);
+      loadingInProgress = true;
       set({
         ...merged,
         loaded: true,
         loadStatus: "success",
         revalidating: false,
         offline: false,
+        offlineReason: null,
         loadDiagnostics: getLastLoadDiagnostics(),
       });
+      loadingInProgress = false;
       // La référence confirmée reste la donnée du serveur : le miroir va y
       // ajouter les lignes en attente, et `markSynced` avancera à la confirmation.
       syncedBaseline = pickDatabase(fresh);
       cacheDirty = true;
-      persistSnapshot(get());
-      return { kind: "keep-local", baseline: fresh };
+      schedulePersist();
+      return stale.length
+        ? { kind: "keep-local", baseline: fresh, stale }
+        : { kind: "keep-local", baseline: fresh };
     }
 
-    // Cas courant : adopter la donnée fraîche et la mettre en cache.
+    // Cas courant : adopter la donnée fraîche et la mettre en cache. Les tables
+    // non relues gardent EXACTEMENT les tableaux affichés (même contenu que la
+    // référence, puisque rien n'est en attente) — aucun recalcul d'écran inutile.
+    const adopted = fillFailed(res.db, res.failed, live);
+    loadingInProgress = true;
     set({
-      ...fresh,
+      ...adopted,
       loaded: true,
       loadStatus: "success",
       revalidating: false,
       offline: false,
+      offlineReason: null,
       loadDiagnostics: getLastLoadDiagnostics(),
     });
-    markSynced(fresh);
-    persistSnapshot(fresh);
-    return { kind: "fresh" };
+    loadingInProgress = false;
+    markSynced(adopted);
+    return stale.length ? { kind: "fresh", stale } : { kind: "fresh" };
   };
 
   /**
@@ -1950,6 +2019,7 @@ export const useData = create<DataStore>((set, get) => {
   loadStatus: "idle",
   revalidating: false,
   offline: false,
+  offlineReason: null,
   loadDiagnostics: null,
 
   /** The establishment alone — the login screen needs its name and logo before
@@ -1970,7 +2040,8 @@ export const useData = create<DataStore>((set, get) => {
     set({ loaded: false, loadStatus: "loading", revalidating: false, offline: false });
     const res = await readWholeDatabase();
     if (res.status === "cancelled") return false;
-    if (res.status !== "success") {
+    if (res.status !== "success" || res.failed.length) {
+      // Sans copie affichée, une lecture partielle ne peut pas être adoptée.
       set({ loaded: false, loadStatus: res.status === "timeout" ? "timeout" : "error" });
       try {
         useToast.getState().addToast({
@@ -2057,7 +2128,9 @@ export const useData = create<DataStore>((set, get) => {
   /** Nouvelle tentative / rafraîchissement manuel sur la donnée déjà affichée. */
   revalidate: async () => {
     const painted = get().loaded ? pickDatabase(get()) : null;
-    set({ revalidating: true, offline: false });
+    // On garde le bandeau hors-ligne tel quel pendant la tentative : il ne
+    // disparaît qu'au succès (sinon il clignote à chaque nouvel essai).
+    set({ revalidating: true });
     return finishRevalidation(painted);
   },
 
@@ -2070,6 +2143,7 @@ export const useData = create<DataStore>((set, get) => {
       loadDiagnostics: null,
       revalidating: false,
       offline: false,
+      offlineReason: null,
     });
   },
 
@@ -5630,6 +5704,7 @@ export const useData = create<DataStore>((set, get) => {
       loadDiagnostics: null,
       revalidating: false,
       offline: false,
+      offlineReason: null,
     });
   },
   };

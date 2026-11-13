@@ -53,12 +53,28 @@ vi.mock("@/lib/supabase/snapshotCache", () => ({
 
 vi.mock("@/lib/supabase/load", async () => {
   const actual = await vi.importActual<typeof import("@/lib/supabase/load")>("@/lib/supabase/load");
-  return {
-    ...actual,
-    loadDatabase: async () => {
+  const loadDb = async (): Promise<unknown> => {
       if (failNetwork) throw new Error("réseau indisponible");
       return networkDb ?? actual.emptyDatabase();
-    },
+  };
+  // La relecture passe par le chargeur TOLÉRANT : même donnée, et un échec
+  // complet se traduit par « toutes les tables en échec ».
+  const tolerant = (load: () => Promise<unknown>) => async () => {
+    try {
+      const { school, ...collections } = (await load()) as Record<string, unknown>;
+      return { school, collections, failed: [] };
+    } catch (err) {
+      const keys = Object.keys(actual.emptyDatabase()).filter((k) => k !== "school");
+      return {
+        collections: {},
+        failed: ["school", ...keys].map((key) => ({ key, message: String(err), timeout: false })),
+      };
+    }
+  };
+  return {
+    ...actual,
+    loadDatabase: loadDb,
+    loadDatabaseTolerant: tolerant(loadDb),
     loadSome: async (keys: string[], opts?: { withSchool?: boolean }) => {
       if (failNetwork) throw new Error("réseau indisponible");
       const base = (networkDb ?? actual.emptyDatabase()) as unknown as Record<string, unknown[]>;

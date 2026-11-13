@@ -26,6 +26,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const loadStatus = useData((s) => s.loadStatus);
   const revalidating = useData((s) => s.revalidating);
   const offline = useData((s) => s.offline);
+  const offlineReason = useData((s) => s.offlineReason);
   const revalidate = useData((s) => s.revalidate);
   const rights = useAccessRights();
 
@@ -123,9 +124,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             role="status"
             className="flex items-center justify-between gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
           >
-            <span className="flex items-center gap-2">
+            <span className="flex min-w-0 items-center gap-2">
               <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" />
-              Hors-ligne — données affichées depuis la copie locale. Reconnexion en cours…
+              <span className="min-w-0">
+                Hors-ligne — données affichées depuis la copie locale. Reconnexion en cours…
+                {offlineReason && (
+                  <span className="block truncate text-xs opacity-75" title={offlineReason}>
+                    Détail : {offlineReason}
+                  </span>
+                )}
+              </span>
             </span>
             <button
               type="button"
