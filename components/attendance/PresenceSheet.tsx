@@ -220,10 +220,14 @@ export function PresenceSheet({
   const staleAttendance = useData((s) => s.staleTables.includes("attendance"));
   useEffect(() => {
     let alive = true;
-    setSyncing(true);
-    void refreshSessionAttendance(session.id).finally(() => {
+    const run = async () => {
+      await Promise.resolve();
+      if (!alive) return;
+      setSyncing(true);
+      await refreshSessionAttendance(session.id);
       if (alive) setSyncing(false);
-    });
+    };
+    void run();
     return () => {
       alive = false;
     };
