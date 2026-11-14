@@ -1701,6 +1701,89 @@ function diffUnpushed(base: Database, live: Database): Partial<Record<Collection
   return out;
 }
 
+/**
+ * ADOPTER DES LIGNES LUES SUR LE SERVEUR, SANS JAMAIS ÉCRASER UNE SAISIE LOCALE.
+ *
+ * Le rafraîchissement « en direct » relit une PARTIE d'une collection (les
+ * présences d'un groupe, celles des derniers jours) pour voir ce que les AUTRES
+ * postes ont saisi depuis l'ouverture de l'application. On l'adopte ligne par
+ * ligne, avec trois règles :
+ *  - une ligne modifiée ici PENDANT la lecture (référence différente de
+ *    `before`) garde la version locale ;
+ *  - une ligne retirée ici pendant la lecture n'est pas réajoutée ;
+ *  - une ligne absente du serveur n'est retirée que si `allowDeletes` (aucune
+ *    écriture en attente) ET qu'elle est dans le périmètre relu.
+ * L'adoption n'est PAS une saisie : la copie locale n'est pas marquée « à
+ * envoyer », et la référence confirmée avance avec elle. Renvoie le nombre de
+ * lignes changées.
+ */
+export function absorbServerRows(
+  key: CollectionKey,
+  serverRows: Row[],
+  opts: { before: Row[]; inScope: (row: Row) => boolean; allowDeletes: boolean },
+): number {
+  const spec = TABLES[key];
+  const state = useData.getState() as unknown as Record<string, Row[]>;
+  const current = state[key] ?? [];
+  const beforeById = new Map<string, Row>();
+  for (const r of opts.before) beforeById.set(pkOf(spec, r), r);
+  const serverById = new Map<string, Row>();
+  for (const r of serverRows) serverById.set(pkOf(spec, r), r);
+
+  const same = (a: Row, b: Row) =>
+    JSON.stringify(toRow(spec, a)) === JSON.stringify(toRow(spec, b));
+
+  const replaced = new Map<string, Row>();
+  const removed = new Set<string>();
+  const next: Row[] = [];
+  const seen = new Set<string>();
+  for (const row of current) {
+    const id = pkOf(spec, row);
+    seen.add(id);
+    const untouched = beforeById.get(id) === row;
+    const server = serverById.get(id);
+    if (server) {
+      if (untouched && !same(row, server)) {
+        replaced.set(id, server);
+        next.push(server);
+      } else next.push(row);
+    } else if (opts.allowDeletes && untouched && opts.inScope(row)) {
+      removed.add(id);
+    } else next.push(row);
+  }
+  const added: Row[] = [];
+  for (const [id, row] of serverById) {
+    if (seen.has(id) || beforeById.has(id)) continue;
+    added.push(row);
+    next.push(row);
+  }
+  const changes = replaced.size + removed.size + added.length;
+  if (!changes) return 0;
+
+  loadingInProgress = true;
+  try {
+    useData.setState({ [key]: next } as never);
+  } finally {
+    loadingInProgress = false;
+  }
+  // La référence « déjà en base » reçoit exactement les mêmes lignes serveur.
+  if (syncedBaseline) {
+    const base = (syncedBaseline as unknown as Record<string, Row[]>)[key] ?? [];
+    const out: Row[] = [];
+    const baseIds = new Set<string>();
+    for (const row of base) {
+      const id = pkOf(spec, row);
+      baseIds.add(id);
+      if (removed.has(id)) continue;
+      out.push(replaced.get(id) ?? row);
+    }
+    for (const row of added) if (!baseIds.has(pkOf(spec, row))) out.push(row);
+    syncedBaseline = { ...syncedBaseline, [key]: out } as Database;
+  }
+  schedulePersist();
+  return changes;
+}
+
 /** Vrai si au moins une collection porte des lignes à envoyer. */
 function hasUnpushed(diff: Partial<Record<CollectionKey, Row[]>>): boolean {
   for (const key of COLLECTION_KEYS) if (diff[key]?.length) return true;

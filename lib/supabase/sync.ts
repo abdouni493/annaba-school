@@ -366,7 +366,7 @@ export function startSync() {
     const next = snapshot(state);
     const before = previous;
     previous = next;
-    if (paused || !before) return;
+    if (paused || absorbing || !before) return;
     runFlush(before, next);
   });
 }
@@ -429,6 +429,36 @@ export function resumeSyncFrom(baseline: Database) {
   paused = false;
   runFlush(base, live);
   previous = live;
+}
+
+/**
+ * LIGNES VENUES DU SERVEUR : À ADOPTER, PAS À RENVOYER.
+ *
+ * Un rafraîchissement « en direct » pose dans le magasin des lignes lues sur le
+ * serveur. Elles ne sont pas des saisies : le miroir les absorbe dans sa
+ * référence (le changement est synchrone et ne touche que ces lignes) au lieu
+ * de les réécrire — ce qui pourrait écraser une modification faite ailleurs
+ * entretemps.
+ */
+let absorbing = false;
+export function absorbExternal(fn: () => void) {
+  const was = absorbing;
+  absorbing = true;
+  try {
+    fn();
+  } finally {
+    absorbing = was;
+  }
+}
+
+/** Vrai quand le miroir tourne et que plus rien n'est en vol ni en attente. */
+export function syncIdle(): boolean {
+  return started && !paused && pendingFlushes === 0 && retryTimer === null;
+}
+
+/** Vrai quand le miroir d'écriture tourne (base lue, pas hors-ligne). */
+export function syncRunning(): boolean {
+  return started && !paused;
 }
 
 /** Resolves once every queued write has reached the database. */

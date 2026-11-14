@@ -327,9 +327,14 @@ function isMissingTable(error: { code?: string; message?: string }): boolean {
   );
 }
 
+/** Restreint une lecture (filtres PostgREST : `.eq`, `.gte`…). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type QueryFilter = (q: any) => any;
+
 async function readAll(
   spec: (typeof TABLES)[CollectionKey],
   opts: LoadOptions = {},
+  filter: QueryFilter = (q) => q,
 ): Promise<Record<string, unknown>[]> {
   const started = now();
   let pages = 0;
@@ -365,7 +370,7 @@ async function readAll(
     first = await runRequest(
       spec.table,
       (signal) =>
-        supabase()
+        filter(supabase()
           .from(spec.table)
           // `count: "estimated"` est INSTANTANÉ (tiré des statistiques Postgres,
           // AUCUN scan de table), là où `count: "exact"` forçait un scan complet
@@ -373,7 +378,7 @@ async function readAll(
           // instance. L'estimation ne sert qu'à paralléliser ; l'exactitude du
           // nombre de lignes est garantie par la boucle « jusqu'à une page
           // incomplète » plus bas, jamais par ce compte.
-          .select("*", { count: "estimated" })
+          .select("*", { count: "estimated" }))
           .abortSignal(signal)
           .order(spec.pk, { ascending: true })
           .range(0, PAGE - 1),
@@ -434,9 +439,9 @@ async function readAll(
         runRequest(
           spec.table,
           (signal) =>
-            supabase()
+            filter(supabase()
               .from(spec.table)
-              .select("*")
+              .select("*"))
               .abortSignal(signal)
               .order(spec.pk, { ascending: true })
               .range(from, from + PAGE - 1),
@@ -671,6 +676,24 @@ export async function loadDatabaseTolerant(opts: LoadOptions = {}): Promise<Tole
     );
   }
   return { school, collections, failed };
+}
+
+/**
+ * Lit les lignes d'UNE collection qui satisfont des filtres simples — la
+ * lecture ciblée des rafraîchissements « en direct » (les présences d'un
+ * groupe, celles des derniers jours), au lieu de relire toute la base.
+ */
+export async function loadRowsWhere(
+  key: CollectionKey,
+  where: { column: string; op: "eq" | "gte"; value: string }[],
+  opts: LoadOptions = {},
+): Promise<Record<string, unknown>[]> {
+  throwIfAborted(opts.signal);
+  return readAll(TABLES[key], opts, (q) => {
+    let out = q;
+    for (const w of where) out = w.op === "eq" ? out.eq(w.column, w.value) : out.gte(w.column, w.value);
+    return out;
+  });
 }
 
 /** A database with an establishment and no rows at all. */

@@ -23,7 +23,7 @@
  * séance 1 de l'emploi.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useData, uid } from "@/lib/store/data";
 import { useSession } from "@/lib/store/session";
 import { useToast } from "@/lib/store/toast";
@@ -133,7 +133,16 @@ function AdminDashboard() {
   const isAdmin = user?.role === "admin";
 
   const isoOf = (d: Date) => d.toLocaleDateString("fr-CA");
-  const todayIso = isoOf(new Date());
+  /**
+   * « AUJOURD'HUI » SUIT L'HORLOGE, MÊME SI LA PAGE RESTE OUVERTE.
+   *
+   * Le jour était calculé une seule fois, à l'ouverture de la page : un poste
+   * laissé ouvert passé minuit restait sur la veille — l'emploi du temps du
+   * jour, les feuilles de présence et la caisse travaillaient sur la mauvaise
+   * date. On relit l'horloge chaque minute (et au retour sur l'onglet), et
+   * l'écran resté sur l'ancien « aujourd'hui » avance avec lui.
+   */
+  const [todayIso, setTodayIso] = useState<string>(() => isoOf(new Date()));
 
   /** The day the whole screen works on — today until the desk moves it. */
   const [date, setDate] = useState<string>(todayIso);
@@ -160,6 +169,27 @@ function AdminDashboard() {
   const [cashAmount, setCashAmount] = useState<number>(0);
   const [cashLabel, setCashLabel] = useState("");
   const [cashDate, setCashDate] = useState(todayIso);
+
+  useEffect(() => {
+    const tick = () => {
+      const now = isoOf(new Date());
+      if (now === todayIso) return;
+      // Seuls les écrans restés sur l'ancien jour avancent : un jour choisi
+      // à la main (une date passée, par exemple) n'est pas déplacé.
+      setDate((d) => (d === todayIso ? now : d));
+      setCashDate((d) => (d === todayIso ? now : d));
+      setTodayIso(now);
+    };
+    const id = setInterval(tick, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [todayIso]);
 
   const dow = JS_DAYS[new Date(`${date}T12:00:00`).getDay()];
   const isToday = date === todayIso;

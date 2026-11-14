@@ -25,7 +25,8 @@
  * "Retour" undoes a mis-click, giving the solde back.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { refreshSessionAttendance } from "@/lib/supabase/liveRefresh";
 import { motion } from "framer-motion";
 import { useData } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
@@ -209,6 +210,14 @@ export function PresenceSheet({
   } = db;
   const { language } = useSettings();
   const { addToast } = useToast();
+
+  // LA FEUILLE MONTRE TOUJOURS L'APPEL DÉJÀ FAIT AILLEURS. À l'ouverture (et à
+  // chaque changement de jour), on relit sur le serveur les présences de ce
+  // groupe : celles pointées par l'enseignant ou un autre poste depuis le
+  // chargement de l'application apparaissent, sans recharger la page.
+  useEffect(() => {
+    void refreshSessionAttendance(session.id);
+  }, [session.id, date]);
 
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);

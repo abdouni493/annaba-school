@@ -10,6 +10,7 @@ import {
   startSync,
   stopSync,
 } from "@/lib/supabase/sync";
+import { refreshRecentAttendance } from "@/lib/supabase/liveRefresh";
 
 /**
  * Boots the app: restores the Supabase session, loads the establishment (the
@@ -229,14 +230,48 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       retries = 0;
       void revalidate().then(apply);
     };
+    /**
+     * RESTER À JOUR SANS RECHARGER LA PAGE.
+     *
+     * Un poste reste souvent ouvert toute la journée — et la nuit. Sans relecture,
+     * il ne voyait jamais ce que les autres postes saisissaient depuis.
+     *  - Toutes les 45 s (onglet visible) : les présences des 7 derniers jours,
+     *    lecture ciblée et légère.
+     *  - Au retour sur l'onglet après 3 min d'absence : relecture COMPLÈTE de la
+     *    base (élèves, versements, caisse…), miroir en pause le temps de la
+     *    lecture — les saisies faites entretemps sont retrouvées et envoyées.
+     */
+    let hiddenAt: number | null = null;
+    const liveTimer = setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void refreshRecentAttendance(7);
+    }, 45_000);
+    const fullRefresh = () => {
+      if (cancelled || awaitingReconnect || staleTimer || !useData.getState().loaded) return;
+      if (useData.getState().revalidating) return;
+      pauseSync();
+      void revalidate().then(apply);
+    };
     const onVisible = () => {
-      if (document.visibilityState === "visible") kick();
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const away = hiddenAt ? Date.now() - hiddenAt : 0;
+      hiddenAt = null;
+      if (awaitingReconnect || staleTimer) {
+        kick();
+        return;
+      }
+      if (away >= 3 * 60_000) fullRefresh();
+      else void refreshRecentAttendance(7);
     };
     window.addEventListener("online", kick);
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       cancelled = true;
+      clearInterval(liveTimer);
       if (retryTimer) clearTimeout(retryTimer);
       if (staleTimer) clearTimeout(staleTimer);
       window.removeEventListener("online", kick);
