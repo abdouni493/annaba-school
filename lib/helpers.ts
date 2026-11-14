@@ -2870,7 +2870,16 @@ export function cycleSlotGrid(
   if (idx < enrollmentStart(db, studentId, subscriptionId).monthIndex) return grid;
   const days = groupSeanceDays(db, sub.sessionId);
   for (const rec of sessionAttendance(db, studentId, sub.sessionId)) {
-    const at = days.indexOf(dayKeyOf(rec.timestamp));
+    // UNE LIGNE N'EST JAMAIS ESCAMOTÉE DE LA FEUILLE.
+    //
+    // Le jour d'une séance ANNULÉE (ou d'un rattrapage hors calendrier) n'est
+    // pas une séance du groupe : `indexOf` rendait -1 et la ligne disparaissait
+    // du mois — l'appel fait les semaines passées ne s'affichait plus. Elle
+    // prend désormais la place qui suit les séances tenues avant elle, tant
+    // qu'aucune vraie séance ne l'occupe.
+    const day = dayKeyOf(rec.timestamp);
+    const held = days.indexOf(day);
+    const at = held >= 0 ? held : days.filter((d) => d < day).length;
     if (at < idx * size || at >= (idx + 1) * size) continue;
     const slot = at - idx * size;
     // Deux lignes le même jour : celle qui compte l'emporte sur l'annulée.

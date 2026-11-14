@@ -27,6 +27,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const revalidating = useData((s) => s.revalidating);
   const offline = useData((s) => s.offline);
   const offlineReason = useData((s) => s.offlineReason);
+  const staleTables = useData((s) => s.staleTables);
   const revalidate = useData((s) => s.revalidate);
   const rights = useAccessRights();
 
@@ -142,6 +143,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               Réessayer
             </button>
+          </div>
+        )}
+        {/* Relecture PARTIELLE : l'application est en ligne et enregistre, mais
+            certaines tables viennent encore de la copie locale. On le dit — une
+            liste incomplète ne doit jamais passer pour « aucune donnée ». */}
+        {dbReady && !offline && staleTables.length > 0 && (
+          <div
+            role="status"
+            className="flex items-center gap-2 border-b border-amber-300/60 bg-amber-50 px-4 py-1.5 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+            <span className="min-w-0 truncate" title={offlineReason ?? undefined}>
+              Actualisation incomplète ({staleTables.includes("attendance") ? "présences" : staleTables.join(", ")})
+              — nouvelle tentative automatique en cours. Vos saisies sont bien enregistrées.
+            </span>
           </div>
         )}
         <main className="flex-1 overflow-y-auto">

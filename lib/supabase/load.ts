@@ -14,6 +14,8 @@ import type { School } from "@/lib/types";
 
 /** PostgREST caps a response at 1000 rows; big tables are read page by page. */
 const PAGE = 1000;
+/** Taille d'une page lue par curseur (reprise après une page profonde en échec). */
+const KEYSET_PAGE = 1000;
 
 /**
  * Nombre maximum de pages réclamées EN MÊME TEMPS sur une grosse table.
@@ -120,6 +122,8 @@ export interface LoadOptions {
   onTableDiagnostic?: (d: TableDiagnostic) => void;
   /** Per-request timeout override (ms); mainly for tests. */
   timeoutMs?: number;
+  /** Nombre de tentatives par requête (défaut : MAX_ATTEMPTS). */
+  maxAttempts?: number;
 }
 
 function now(): number {
@@ -238,7 +242,7 @@ async function runRequest(
       const res = await build(ac.signal);
       const error = (res.error as { code?: string; message?: string } | null) ?? null;
       const status = (res as { status?: number }).status;
-      if (error && attempt < MAX_ATTEMPTS && isTransientResult(status, error) && !isMissingTableError(error)) {
+      if (error && attempt < (opts.maxAttempts ?? MAX_ATTEMPTS) && isTransientResult(status, error) && !isMissingTableError(error)) {
         if (isAuthExpired(status, error)) await refreshAuthSession();
         await delay(RETRY_BASE_MS * attempt, opts.signal);
         continue;
@@ -253,7 +257,7 @@ async function runRequest(
       // A deliberate cancellation always wins over a coincident timeout.
       if (opts.signal?.aborted) throw new LoadCancelledError();
       const fault = timedOut ? new LoadTimeoutError(table, timeoutMs) : err;
-      if (isTransient(fault) && attempt < MAX_ATTEMPTS) {
+      if (isTransient(fault) && attempt < (opts.maxAttempts ?? MAX_ATTEMPTS)) {
         await delay(RETRY_BASE_MS * attempt, opts.signal);
         continue;
       }
@@ -445,8 +449,64 @@ async function readAll(
               .abortSignal(signal)
               .order(spec.pk, { ascending: true })
               .range(from, from + PAGE - 1),
-          opts,
+          // Une page profonde qui échoue n'est retentée qu'une fois : la reprise
+          // par curseur, plus sûre, prend le relais sans faire attendre.
+          { ...opts, maxAttempts: Math.min(opts.maxAttempts ?? MAX_ATTEMPTS, 2) },
         ),
+      );
+    } catch (err) {
+      if (err instanceof LoadCancelledError) {
+        emit("cancelled", out.length);
+        throw err;
+      }
+      // Une page profonde n'a pas abouti : on termine par curseur (ci-dessous).
+      console.warn(`[supabase] ${spec.table} : pagination par décalage en échec, reprise par curseur`, err);
+      break;
+    }
+    let waveFailed = false;
+    for (const page of waveResults) {
+      pages += 1;
+      if (page.error) {
+        console.warn(`[supabase] ${spec.table} : page en échec, reprise par curseur — ${page.error.message}`);
+        waveFailed = true;
+        break;
+      }
+      const rows = (page.data ?? []) as Record<string, unknown>[];
+      approxBytes += estimateBytes(rows);
+      for (const r of rows) out.push(fromRow(spec, r));
+      // Une page non pleine est la dernière : la table est entièrement lue.
+      if (rows.length < PAGE) {
+        done = true;
+        break;
+      }
+    }
+    if (waveFailed) break;
+  }
+
+  // REPRISE PAR CURSEUR (« keyset »).
+  //
+  // Une page lue par DÉCALAGE (`range(40000, 40999)`) oblige Postgres à
+  // parcourir — et à vérifier les droits de — toutes les lignes qui la
+  // précèdent : sur un gros historique de présences, les pages profondes
+  // dépassent le délai et la table entière était abandonnée, l'écran gardant
+  // une copie ancienne (les présences des semaines passées « disparaissaient »).
+  //
+  // On reprend donc là où la lecture s'est arrêtée, par CLÉ : `id > dernier lu`,
+  // via l'index de la clé primaire. Chaque page ne coûte que ses propres lignes,
+  // quelle que soit sa profondeur. Les lignes déjà lues forment un préfixe
+  // contigu dans l'ordre de la clé : rien n'est perdu, rien n'est doublé.
+  while (!done) {
+    const last = out.length ? String(out[out.length - 1][spec.pkField]) : null;
+    let page: QueryResult;
+    try {
+      page = await runRequest(
+        spec.table,
+        (signal) => {
+          let q = filter(supabase().from(spec.table).select("*"));
+          if (last !== null) q = q.gt(spec.pk, last);
+          return q.abortSignal(signal).order(spec.pk, { ascending: true }).limit(KEYSET_PAGE);
+        },
+        opts,
       );
     } catch (err) {
       if (err instanceof LoadCancelledError) {
@@ -458,18 +518,15 @@ async function readAll(
         ? err
         : new Error(`${spec.table}: ${err instanceof Error ? err.message : String(err)}`);
     }
-    for (const page of waveResults) {
-      pages += 1;
-      if (page.error) {
-        emit("error", out.length);
-        throw new Error(`${spec.table}: ${page.error.message}`);
-      }
-      const rows = (page.data ?? []) as Record<string, unknown>[];
-      approxBytes += estimateBytes(rows);
-      for (const r of rows) out.push(fromRow(spec, r));
-      // Une page non pleine est la dernière : la table est entièrement lue.
-      if (rows.length < PAGE) done = true;
+    pages += 1;
+    if (page.error) {
+      emit("error", out.length);
+      throw new Error(`${spec.table}: ${page.error.message}`);
     }
+    const rows = (page.data ?? []) as Record<string, unknown>[];
+    approxBytes += estimateBytes(rows);
+    for (const r of rows) out.push(fromRow(spec, r));
+    if (rows.length < KEYSET_PAGE) done = true;
   }
   emit("success", out.length);
   return out;

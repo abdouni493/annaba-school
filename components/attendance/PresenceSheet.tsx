@@ -65,6 +65,7 @@ import {
   Pencil,
   Printer,
   Receipt,
+  RefreshCw,
   RotateCcw,
   Search,
   Slash,
@@ -215,9 +216,41 @@ export function PresenceSheet({
   // chaque changement de jour), on relit sur le serveur les présences de ce
   // groupe : celles pointées par l'enseignant ou un autre poste depuis le
   // chargement de l'application apparaissent, sans recharger la page.
+  const [syncing, setSyncing] = useState(false);
+  const staleAttendance = useData((s) => s.staleTables.includes("attendance"));
   useEffect(() => {
-    void refreshSessionAttendance(session.id);
+    let alive = true;
+    setSyncing(true);
+    void refreshSessionAttendance(session.id).finally(() => {
+      if (alive) setSyncing(false);
+    });
+    return () => {
+      alive = false;
+    };
   }, [session.id, date]);
+
+  /** « Actualiser » : relit tout de suite, sur le serveur, l'appel de ce groupe. */
+  const reloadFromServer = async () => {
+    setSyncing(true);
+    const res = await refreshSessionAttendance(session.id, true);
+    setSyncing(false);
+    if (res.ok) {
+      addToast({
+        type: "success",
+        title: "Présences actualisées",
+        message:
+          res.changes > 0
+            ? `${res.changes} présence(s) récupérée(s) du serveur (${res.read} pour ce groupe).`
+            : `Tout est à jour — ${res.read} présence(s) enregistrée(s) pour ce groupe.`,
+      });
+    } else {
+      addToast({
+        type: "danger",
+        title: "Actualisation impossible",
+        message: res.error ?? "La base n'a pas répondu. Réessayez dans un instant.",
+      });
+    }
+  };
 
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -886,7 +919,25 @@ export function PresenceSheet({
           >
             <Printer className="h-3.5 w-3.5" /> Imprimer
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void reloadFromServer()}
+            disabled={syncing}
+            className="gap-1.5"
+            title="Relire sur le serveur les présences de ce groupe (pointées sur un autre poste)"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
+            {syncing ? "Actualisation…" : "Actualiser"}
+          </Button>
         </div>
+        {staleAttendance && (
+          <p className="mt-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-1.5 text-[11px] font-semibold text-warning">
+            L&apos;historique complet des présences n&apos;a pas encore pu être relu sur le
+            serveur. Les présences de ce groupe sont relues à part — cliquez « Actualiser »
+            en cas de doute.
+          </p>
+        )}
       </div>
 
       {/* ---- search + day -------------------------------------------------- */}

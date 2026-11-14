@@ -448,6 +448,9 @@ interface DataActions {
   /** Pourquoi la dernière relecture a échoué (affiché discrètement dans le
    *  bandeau hors-ligne, pour diagnostiquer sans console). */
   offlineReason: string | null;
+  /** Collections que la dernière relecture n'a PAS pu lire : l'écran les montre
+   *  depuis la copie locale, peut-être incomplète. Signalé, jamais silencieux. */
+  staleTables: string[];
   /** Mesures du dernier chargement (durée, lignes, octets, table la plus lente),
    *  pour diagnostiquer un démarrage lent sans deviner. */
   loadDiagnostics: LoadDiagnostics | null;
@@ -1969,6 +1972,7 @@ export const useData = create<DataStore>((set, get) => {
         revalidating: false,
         offline: false,
         offlineReason: null,
+        staleTables: stale,
         loadDiagnostics: getLastLoadDiagnostics(),
       });
       loadingInProgress = false;
@@ -1993,7 +1997,8 @@ export const useData = create<DataStore>((set, get) => {
       loadStatus: "success",
       revalidating: false,
       offline: false,
-      offlineReason: null,
+      offlineReason: stale.length ? res.reason : null,
+      staleTables: stale,
       loadDiagnostics: getLastLoadDiagnostics(),
     });
     loadingInProgress = false;
@@ -2042,6 +2047,10 @@ export const useData = create<DataStore>((set, get) => {
         (partial as unknown as Record<string, unknown>)[k] = phase1.collections[k] ?? [];
       }
       // L'écran se peint ICI — les présences arrivent juste après.
+      // Ce n'est PAS une saisie : sans ce drapeau, cet état SANS présences
+      // était rangé dans la copie locale comme « à envoyer » — et repeint au
+      // démarrage suivant avec un historique de présences vide.
+      loadingInProgress = true;
       set({
         ...partial,
         loaded: true,
@@ -2050,6 +2059,7 @@ export const useData = create<DataStore>((set, get) => {
         offline: false,
         loadDiagnostics: getLastLoadDiagnostics(),
       });
+      loadingInProgress = false;
 
       // PASSE 2 — l'historique lourd (présences), en arrière-plan.
       const phase2 = await loadSome(deferredKeys, {
@@ -2061,12 +2071,16 @@ export const useData = create<DataStore>((set, get) => {
 
       const patch: Record<string, unknown> = { revalidating: false };
       for (const k of deferredKeys) patch[k] = phase2.collections[k] ?? [];
+      patch.staleTables = [];
+      loadingInProgress = true;
       set(patch);
+      loadingInProgress = false;
       // Tout vient d'être lu depuis la base : c'est la référence confirmée.
       markSynced(get());
       persistSnapshot(pickDatabase(get()));
       return { kind: "fresh" };
     } catch (err) {
+      loadingInProgress = false;
       if (err instanceof LoadCancelledError) return { kind: "cancelled" };
       if (version !== loadRequestVersion) return { kind: "cancelled" };
       if (currentLoadAbort === abort) currentLoadAbort = null;
@@ -2075,7 +2089,13 @@ export const useData = create<DataStore>((set, get) => {
       // l'écran LISIBLE, on signale « hors-ligne » (présences incomplètes), et le
       // miroir reste en pause — une nouvelle tentative rechargera tout.
       if (get().loaded) {
-        set({ revalidating: false, offline: true });
+        loadingInProgress = false;
+        set({
+          revalidating: false,
+          offline: true,
+          offlineReason: err instanceof Error ? err.message : String(err),
+          staleTables: deferredKeys,
+        });
         return { kind: "cache-only" };
       }
       // La passe 1 elle-même a échoué : écran d'erreur (comme un échec complet).
@@ -2103,6 +2123,7 @@ export const useData = create<DataStore>((set, get) => {
   revalidating: false,
   offline: false,
   offlineReason: null,
+  staleTables: [],
   loadDiagnostics: null,
 
   /** The establishment alone — the login screen needs its name and logo before
@@ -2227,6 +2248,7 @@ export const useData = create<DataStore>((set, get) => {
       revalidating: false,
       offline: false,
       offlineReason: null,
+      staleTables: [],
     });
   },
 
@@ -5788,6 +5810,7 @@ export const useData = create<DataStore>((set, get) => {
       revalidating: false,
       offline: false,
       offlineReason: null,
+      staleTables: [],
     });
   },
   };
