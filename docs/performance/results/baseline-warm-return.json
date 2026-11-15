@@ -1,0 +1,6034 @@
+[
+  {
+    "variant": "baseline",
+    "history": 1000,
+    "roster": 500,
+    "sample": 0,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 9759.568193,
+    "searchMs": 991.4305630000017,
+    "mainThreadTaskSeconds": 8.114383,
+    "longTasks": {
+      "count": 17,
+      "ms": 5027
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "class_categories",
+          "rows": 3,
+          "bytes": 306,
+          "method": "GET"
+        },
+        {
+          "table": "modules",
+          "rows": 4,
+          "bytes": 395,
+          "method": "GET"
+        },
+        {
+          "table": "class_groups",
+          "rows": 3,
+          "bytes": 292,
+          "method": "GET"
+        },
+        {
+          "table": "salles",
+          "rows": 3,
+          "bytes": 289,
+          "method": "GET"
+        },
+        {
+          "table": "classes",
+          "rows": 4,
+          "bytes": 1074,
+          "method": "GET"
+        },
+        {
+          "table": "teachers",
+          "rows": 4,
+          "bytes": 1267,
+          "method": "GET"
+        },
+        {
+          "table": "worker_roles",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 91,
+          "method": "GET"
+        },
+        {
+          "table": "parents",
+          "rows": 3,
+          "bytes": 673,
+          "method": "GET"
+        },
+        {
+          "table": "schedule_sessions",
+          "rows": 6,
+          "bytes": 2828,
+          "method": "GET"
+        },
+        {
+          "table": "subscriptions",
+          "rows": 6,
+          "bytes": 1649,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 508,
+          "bytes": 330705,
+          "method": "GET"
+        },
+        {
+          "table": "student_credentials",
+          "rows": 2,
+          "bytes": 171,
+          "method": "GET"
+        },
+        {
+          "table": "enrollments",
+          "rows": 12,
+          "bytes": 3878,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 585891,
+          "method": "GET"
+        },
+        {
+          "table": "student_charges",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "absence_penalties",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 827891,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_acomptes",
+          "rows": 1,
+          "bytes": 216,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_expenses",
+          "rows": 2,
+          "bytes": 562,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_child_debts",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_absences",
+          "rows": 1,
+          "bytes": 184,
+          "method": "GET"
+        },
+        {
+          "table": "unpaid_teacher_sessions",
+          "rows": 4,
+          "bytes": 879,
+          "method": "GET"
+        },
+        {
+          "table": "worker_shifts",
+          "rows": 2,
+          "bytes": 597,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 10,
+          "bytes": 5079,
+          "method": "GET"
+        },
+        {
+          "table": "worker_acomptes",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "worker_absences",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1,
+          "bytes": 658,
+          "method": "GET"
+        },
+        {
+          "table": "worker_payments",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "free_periods",
+          "rows": 1,
+          "bytes": 348,
+          "method": "GET"
+        },
+        {
+          "table": "module_absence_rules",
+          "rows": 2,
+          "bytes": 108,
+          "method": "GET"
+        },
+        {
+          "table": "subjects",
+          "rows": 2,
+          "bytes": 508,
+          "method": "GET"
+        },
+        {
+          "table": "announcements",
+          "rows": 2,
+          "bytes": 624,
+          "method": "GET"
+        },
+        {
+          "table": "expense_categories",
+          "rows": 3,
+          "bytes": 303,
+          "method": "GET"
+        },
+        {
+          "table": "expenses",
+          "rows": 3,
+          "bytes": 526,
+          "method": "GET"
+        },
+        {
+          "table": "cash_transactions",
+          "rows": 7,
+          "bytes": 1312,
+          "method": "GET"
+        },
+        {
+          "table": "notifications",
+          "rows": 1,
+          "bytes": 313,
+          "method": "GET"
+        },
+        {
+          "table": "coursework",
+          "rows": 1,
+          "bytes": 247,
+          "method": "GET"
+        },
+        {
+          "table": "independent_sessions",
+          "rows": 1,
+          "bytes": 392,
+          "method": "GET"
+        },
+        {
+          "table": "group_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "solo_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 391534,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 4,
+          "bytes": 1569,
+          "method": "GET"
+        }
+      ],
+      "requests": 48,
+      "tables": [
+        "schools",
+        "profiles",
+        "class_categories",
+        "modules",
+        "class_groups",
+        "salles",
+        "classes",
+        "teachers",
+        "worker_roles",
+        "reception_staff",
+        "parents",
+        "schedule_sessions",
+        "subscriptions",
+        "students",
+        "student_credentials",
+        "enrollments",
+        "payments",
+        "student_charges",
+        "absence_penalties",
+        "teacher_payments",
+        "teacher_acomptes",
+        "teacher_expenses",
+        "teacher_child_debts",
+        "teacher_absences",
+        "unpaid_teacher_sessions",
+        "worker_shifts",
+        "worker_acomptes",
+        "worker_absences",
+        "worker_payments",
+        "free_periods",
+        "module_absence_rules",
+        "subjects",
+        "announcements",
+        "expense_categories",
+        "expenses",
+        "cash_transactions",
+        "notifications",
+        "coursework",
+        "independent_sessions",
+        "group_seances",
+        "solo_seances",
+        "attendance_records"
+      ],
+      "rows": 3610,
+      "bytes": 2163843
+    },
+    "searchRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 585891,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 391534,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 827891,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1569,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "writes": [
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions"
+    ],
+    "warmClickToUseMs": 5589.519644000002,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 585891,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 391534,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 827891,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1569,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 585891,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 391534,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 827891,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1569,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ]
+  },
+  {
+    "variant": "baseline",
+    "history": 1000,
+    "roster": 500,
+    "sample": 1,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 4196.665258999998,
+    "searchMs": 1111.5460619999976,
+    "mainThreadTaskSeconds": 3.349919,
+    "longTasks": {
+      "count": 7,
+      "ms": 1753
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "class_categories",
+          "rows": 3,
+          "bytes": 306,
+          "method": "GET"
+        },
+        {
+          "table": "modules",
+          "rows": 4,
+          "bytes": 395,
+          "method": "GET"
+        },
+        {
+          "table": "class_groups",
+          "rows": 3,
+          "bytes": 292,
+          "method": "GET"
+        },
+        {
+          "table": "salles",
+          "rows": 3,
+          "bytes": 289,
+          "method": "GET"
+        },
+        {
+          "table": "classes",
+          "rows": 4,
+          "bytes": 1074,
+          "method": "GET"
+        },
+        {
+          "table": "teachers",
+          "rows": 4,
+          "bytes": 1267,
+          "method": "GET"
+        },
+        {
+          "table": "worker_roles",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 91,
+          "method": "GET"
+        },
+        {
+          "table": "parents",
+          "rows": 3,
+          "bytes": 673,
+          "method": "GET"
+        },
+        {
+          "table": "schedule_sessions",
+          "rows": 6,
+          "bytes": 2828,
+          "method": "GET"
+        },
+        {
+          "table": "subscriptions",
+          "rows": 6,
+          "bytes": 1649,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 508,
+          "bytes": 330705,
+          "method": "GET"
+        },
+        {
+          "table": "student_credentials",
+          "rows": 2,
+          "bytes": 171,
+          "method": "GET"
+        },
+        {
+          "table": "enrollments",
+          "rows": 12,
+          "bytes": 3878,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 585891,
+          "method": "GET"
+        },
+        {
+          "table": "student_charges",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "absence_penalties",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 827891,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_acomptes",
+          "rows": 1,
+          "bytes": 216,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_expenses",
+          "rows": 2,
+          "bytes": 562,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_child_debts",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_absences",
+          "rows": 1,
+          "bytes": 184,
+          "method": "GET"
+        },
+        {
+          "table": "unpaid_teacher_sessions",
+          "rows": 4,
+          "bytes": 879,
+          "method": "GET"
+        },
+        {
+          "table": "worker_shifts",
+          "rows": 2,
+          "bytes": 597,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 10,
+          "bytes": 5079,
+          "method": "GET"
+        },
+        {
+          "table": "worker_acomptes",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "worker_absences",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1,
+          "bytes": 658,
+          "method": "GET"
+        },
+        {
+          "table": "worker_payments",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "free_periods",
+          "rows": 1,
+          "bytes": 348,
+          "method": "GET"
+        },
+        {
+          "table": "module_absence_rules",
+          "rows": 2,
+          "bytes": 108,
+          "method": "GET"
+        },
+        {
+          "table": "subjects",
+          "rows": 2,
+          "bytes": 508,
+          "method": "GET"
+        },
+        {
+          "table": "announcements",
+          "rows": 2,
+          "bytes": 624,
+          "method": "GET"
+        },
+        {
+          "table": "expense_categories",
+          "rows": 3,
+          "bytes": 303,
+          "method": "GET"
+        },
+        {
+          "table": "expenses",
+          "rows": 3,
+          "bytes": 526,
+          "method": "GET"
+        },
+        {
+          "table": "cash_transactions",
+          "rows": 7,
+          "bytes": 1312,
+          "method": "GET"
+        },
+        {
+          "table": "notifications",
+          "rows": 1,
+          "bytes": 313,
+          "method": "GET"
+        },
+        {
+          "table": "coursework",
+          "rows": 1,
+          "bytes": 247,
+          "method": "GET"
+        },
+        {
+          "table": "independent_sessions",
+          "rows": 1,
+          "bytes": 392,
+          "method": "GET"
+        },
+        {
+          "table": "group_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "solo_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 391534,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 4,
+          "bytes": 1569,
+          "method": "GET"
+        }
+      ],
+      "requests": 48,
+      "tables": [
+        "schools",
+        "profiles",
+        "class_categories",
+        "modules",
+        "class_groups",
+        "salles",
+        "classes",
+        "teachers",
+        "worker_roles",
+        "reception_staff",
+        "parents",
+        "schedule_sessions",
+        "subscriptions",
+        "students",
+        "student_credentials",
+        "enrollments",
+        "payments",
+        "student_charges",
+        "absence_penalties",
+        "teacher_payments",
+        "teacher_acomptes",
+        "teacher_expenses",
+        "teacher_child_debts",
+        "teacher_absences",
+        "unpaid_teacher_sessions",
+        "worker_shifts",
+        "worker_acomptes",
+        "worker_absences",
+        "worker_payments",
+        "free_periods",
+        "module_absence_rules",
+        "subjects",
+        "announcements",
+        "expense_categories",
+        "expenses",
+        "cash_transactions",
+        "notifications",
+        "coursework",
+        "independent_sessions",
+        "group_seances",
+        "solo_seances",
+        "attendance_records"
+      ],
+      "rows": 3610,
+      "bytes": 2163843
+    },
+    "searchRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 585891,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 391534,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 827891,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1569,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "writes": [
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions"
+    ],
+    "warmClickToUseMs": 3502.6902720000035,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 585891,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 391534,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 827891,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1569,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 585891,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 391534,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 827891,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1569,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ]
+  },
+  {
+    "variant": "baseline",
+    "history": 10000,
+    "roster": 500,
+    "sample": 0,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 6288.113276999997,
+    "searchMs": 1839.5249689999982,
+    "mainThreadTaskSeconds": 4.695278,
+    "longTasks": {
+      "count": 9,
+      "ms": 2670
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "class_categories",
+          "rows": 3,
+          "bytes": 306,
+          "method": "GET"
+        },
+        {
+          "table": "modules",
+          "rows": 4,
+          "bytes": 395,
+          "method": "GET"
+        },
+        {
+          "table": "class_groups",
+          "rows": 3,
+          "bytes": 292,
+          "method": "GET"
+        },
+        {
+          "table": "salles",
+          "rows": 3,
+          "bytes": 289,
+          "method": "GET"
+        },
+        {
+          "table": "classes",
+          "rows": 4,
+          "bytes": 1074,
+          "method": "GET"
+        },
+        {
+          "table": "teachers",
+          "rows": 4,
+          "bytes": 1267,
+          "method": "GET"
+        },
+        {
+          "table": "worker_roles",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 91,
+          "method": "GET"
+        },
+        {
+          "table": "parents",
+          "rows": 3,
+          "bytes": 673,
+          "method": "GET"
+        },
+        {
+          "table": "schedule_sessions",
+          "rows": 6,
+          "bytes": 2828,
+          "method": "GET"
+        },
+        {
+          "table": "subscriptions",
+          "rows": 6,
+          "bytes": 1649,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 508,
+          "bytes": 330705,
+          "method": "GET"
+        },
+        {
+          "table": "student_credentials",
+          "rows": 2,
+          "bytes": 171,
+          "method": "GET"
+        },
+        {
+          "table": "enrollments",
+          "rows": 12,
+          "bytes": 3878,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586887,
+          "method": "GET"
+        },
+        {
+          "table": "student_charges",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "absence_penalties",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828887,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_acomptes",
+          "rows": 1,
+          "bytes": 216,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_expenses",
+          "rows": 2,
+          "bytes": 562,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_child_debts",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_absences",
+          "rows": 1,
+          "bytes": 184,
+          "method": "GET"
+        },
+        {
+          "table": "unpaid_teacher_sessions",
+          "rows": 4,
+          "bytes": 879,
+          "method": "GET"
+        },
+        {
+          "table": "worker_shifts",
+          "rows": 2,
+          "bytes": 597,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "worker_acomptes",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "worker_absences",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "worker_payments",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "free_periods",
+          "rows": 1,
+          "bytes": 348,
+          "method": "GET"
+        },
+        {
+          "table": "module_absence_rules",
+          "rows": 2,
+          "bytes": 108,
+          "method": "GET"
+        },
+        {
+          "table": "subjects",
+          "rows": 2,
+          "bytes": 508,
+          "method": "GET"
+        },
+        {
+          "table": "announcements",
+          "rows": 2,
+          "bytes": 624,
+          "method": "GET"
+        },
+        {
+          "table": "expense_categories",
+          "rows": 3,
+          "bytes": 303,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586893,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 10,
+          "bytes": 5079,
+          "method": "GET"
+        },
+        {
+          "table": "expenses",
+          "rows": 3,
+          "bytes": 526,
+          "method": "GET"
+        },
+        {
+          "table": "cash_transactions",
+          "rows": 7,
+          "bytes": 1312,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828893,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1,
+          "bytes": 658,
+          "method": "GET"
+        },
+        {
+          "table": "notifications",
+          "rows": 1,
+          "bytes": 313,
+          "method": "GET"
+        },
+        {
+          "table": "coursework",
+          "rows": 1,
+          "bytes": 247,
+          "method": "GET"
+        },
+        {
+          "table": "independent_sessions",
+          "rows": 1,
+          "bytes": 392,
+          "method": "GET"
+        },
+        {
+          "table": "group_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "solo_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392526,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392893,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 4,
+          "bytes": 1573,
+          "method": "GET"
+        }
+      ],
+      "requests": 75,
+      "tables": [
+        "schools",
+        "profiles",
+        "class_categories",
+        "modules",
+        "class_groups",
+        "salles",
+        "classes",
+        "teachers",
+        "worker_roles",
+        "reception_staff",
+        "parents",
+        "schedule_sessions",
+        "subscriptions",
+        "students",
+        "student_credentials",
+        "enrollments",
+        "payments",
+        "student_charges",
+        "absence_penalties",
+        "teacher_payments",
+        "teacher_acomptes",
+        "teacher_expenses",
+        "teacher_child_debts",
+        "teacher_absences",
+        "unpaid_teacher_sessions",
+        "worker_shifts",
+        "worker_acomptes",
+        "worker_absences",
+        "worker_payments",
+        "free_periods",
+        "module_absence_rules",
+        "subjects",
+        "announcements",
+        "expense_categories",
+        "expenses",
+        "cash_transactions",
+        "notifications",
+        "coursework",
+        "independent_sessions",
+        "group_seances",
+        "solo_seances",
+        "attendance_records"
+      ],
+      "rows": 30610,
+      "bytes": 18444870
+    },
+    "searchRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586887,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392526,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828887,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586893,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392893,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1573,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828893,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "writes": [
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions"
+    ],
+    "warmClickToUseMs": 3890.3746640000027,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586887,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392526,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828887,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586893,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392893,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1573,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828893,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586887,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392526,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828887,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586893,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392893,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1573,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828893,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ]
+  },
+  {
+    "variant": "baseline",
+    "history": 10000,
+    "roster": 500,
+    "sample": 1,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 5517.152661,
+    "searchMs": 1678.162661999988,
+    "mainThreadTaskSeconds": 4.569624,
+    "longTasks": {
+      "count": 6,
+      "ms": 2120
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "class_categories",
+          "rows": 3,
+          "bytes": 306,
+          "method": "GET"
+        },
+        {
+          "table": "modules",
+          "rows": 4,
+          "bytes": 395,
+          "method": "GET"
+        },
+        {
+          "table": "class_groups",
+          "rows": 3,
+          "bytes": 292,
+          "method": "GET"
+        },
+        {
+          "table": "salles",
+          "rows": 3,
+          "bytes": 289,
+          "method": "GET"
+        },
+        {
+          "table": "classes",
+          "rows": 4,
+          "bytes": 1074,
+          "method": "GET"
+        },
+        {
+          "table": "teachers",
+          "rows": 4,
+          "bytes": 1267,
+          "method": "GET"
+        },
+        {
+          "table": "worker_roles",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 91,
+          "method": "GET"
+        },
+        {
+          "table": "parents",
+          "rows": 3,
+          "bytes": 673,
+          "method": "GET"
+        },
+        {
+          "table": "schedule_sessions",
+          "rows": 6,
+          "bytes": 2828,
+          "method": "GET"
+        },
+        {
+          "table": "subscriptions",
+          "rows": 6,
+          "bytes": 1649,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 508,
+          "bytes": 330705,
+          "method": "GET"
+        },
+        {
+          "table": "student_credentials",
+          "rows": 2,
+          "bytes": 171,
+          "method": "GET"
+        },
+        {
+          "table": "enrollments",
+          "rows": 12,
+          "bytes": 3878,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586887,
+          "method": "GET"
+        },
+        {
+          "table": "student_charges",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "absence_penalties",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828887,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_acomptes",
+          "rows": 1,
+          "bytes": 216,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_expenses",
+          "rows": 2,
+          "bytes": 562,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_child_debts",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_absences",
+          "rows": 1,
+          "bytes": 184,
+          "method": "GET"
+        },
+        {
+          "table": "unpaid_teacher_sessions",
+          "rows": 4,
+          "bytes": 879,
+          "method": "GET"
+        },
+        {
+          "table": "worker_shifts",
+          "rows": 2,
+          "bytes": 597,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "worker_acomptes",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "worker_absences",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "worker_payments",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "free_periods",
+          "rows": 1,
+          "bytes": 348,
+          "method": "GET"
+        },
+        {
+          "table": "module_absence_rules",
+          "rows": 2,
+          "bytes": 108,
+          "method": "GET"
+        },
+        {
+          "table": "subjects",
+          "rows": 2,
+          "bytes": 508,
+          "method": "GET"
+        },
+        {
+          "table": "announcements",
+          "rows": 2,
+          "bytes": 624,
+          "method": "GET"
+        },
+        {
+          "table": "expense_categories",
+          "rows": 3,
+          "bytes": 303,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586890,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 1000,
+          "bytes": 586893,
+          "method": "GET"
+        },
+        {
+          "table": "payments",
+          "rows": 10,
+          "bytes": 5079,
+          "method": "GET"
+        },
+        {
+          "table": "expenses",
+          "rows": 3,
+          "bytes": 526,
+          "method": "GET"
+        },
+        {
+          "table": "cash_transactions",
+          "rows": 7,
+          "bytes": 1312,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828890,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1000,
+          "bytes": 828893,
+          "method": "GET"
+        },
+        {
+          "table": "teacher_payments",
+          "rows": 1,
+          "bytes": 658,
+          "method": "GET"
+        },
+        {
+          "table": "notifications",
+          "rows": 1,
+          "bytes": 313,
+          "method": "GET"
+        },
+        {
+          "table": "coursework",
+          "rows": 1,
+          "bytes": 247,
+          "method": "GET"
+        },
+        {
+          "table": "independent_sessions",
+          "rows": 1,
+          "bytes": 392,
+          "method": "GET"
+        },
+        {
+          "table": "group_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "solo_seances",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392526,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392890,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 1000,
+          "bytes": 392893,
+          "method": "GET"
+        },
+        {
+          "table": "attendance_records",
+          "rows": 4,
+          "bytes": 1573,
+          "method": "GET"
+        }
+      ],
+      "requests": 75,
+      "tables": [
+        "schools",
+        "profiles",
+        "class_categories",
+        "modules",
+        "class_groups",
+        "salles",
+        "classes",
+        "teachers",
+        "worker_roles",
+        "reception_staff",
+        "parents",
+        "schedule_sessions",
+        "subscriptions",
+        "students",
+        "student_credentials",
+        "enrollments",
+        "payments",
+        "student_charges",
+        "absence_penalties",
+        "teacher_payments",
+        "teacher_acomptes",
+        "teacher_expenses",
+        "teacher_child_debts",
+        "teacher_absences",
+        "unpaid_teacher_sessions",
+        "worker_shifts",
+        "worker_acomptes",
+        "worker_absences",
+        "worker_payments",
+        "free_periods",
+        "module_absence_rules",
+        "subjects",
+        "announcements",
+        "expense_categories",
+        "expenses",
+        "cash_transactions",
+        "notifications",
+        "coursework",
+        "independent_sessions",
+        "group_seances",
+        "solo_seances",
+        "attendance_records"
+      ],
+      "rows": 30610,
+      "bytes": 18444870
+    },
+    "searchRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586887,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392526,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828887,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586893,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392893,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1573,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828893,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "writes": [
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions",
+      "unpaid_teacher_sessions"
+    ],
+    "warmClickToUseMs": 5278.547688999999,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586887,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392526,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828887,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586893,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392893,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1573,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828893,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "class_categories",
+        "rows": 3,
+        "bytes": 306,
+        "method": "GET"
+      },
+      {
+        "table": "modules",
+        "rows": 4,
+        "bytes": 395,
+        "method": "GET"
+      },
+      {
+        "table": "class_groups",
+        "rows": 3,
+        "bytes": 292,
+        "method": "GET"
+      },
+      {
+        "table": "salles",
+        "rows": 3,
+        "bytes": 289,
+        "method": "GET"
+      },
+      {
+        "table": "classes",
+        "rows": 4,
+        "bytes": 1074,
+        "method": "GET"
+      },
+      {
+        "table": "teachers",
+        "rows": 4,
+        "bytes": 1267,
+        "method": "GET"
+      },
+      {
+        "table": "worker_roles",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 91,
+        "method": "GET"
+      },
+      {
+        "table": "parents",
+        "rows": 3,
+        "bytes": 673,
+        "method": "GET"
+      },
+      {
+        "table": "schedule_sessions",
+        "rows": 6,
+        "bytes": 2828,
+        "method": "GET"
+      },
+      {
+        "table": "subscriptions",
+        "rows": 6,
+        "bytes": 1649,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 508,
+        "bytes": 330705,
+        "method": "GET"
+      },
+      {
+        "table": "student_credentials",
+        "rows": 2,
+        "bytes": 171,
+        "method": "GET"
+      },
+      {
+        "table": "enrollments",
+        "rows": 12,
+        "bytes": 3878,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586887,
+        "method": "GET"
+      },
+      {
+        "table": "student_charges",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392526,
+        "method": "GET"
+      },
+      {
+        "table": "absence_penalties",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828887,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_acomptes",
+        "rows": 1,
+        "bytes": 216,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_expenses",
+        "rows": 2,
+        "bytes": 562,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_child_debts",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_absences",
+        "rows": 1,
+        "bytes": 184,
+        "method": "GET"
+      },
+      {
+        "table": "unpaid_teacher_sessions",
+        "rows": 4,
+        "bytes": 879,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_shifts",
+        "rows": 2,
+        "bytes": 597,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_acomptes",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "worker_absences",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "worker_payments",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "free_periods",
+        "rows": 1,
+        "bytes": 348,
+        "method": "GET"
+      },
+      {
+        "table": "module_absence_rules",
+        "rows": 2,
+        "bytes": 108,
+        "method": "GET"
+      },
+      {
+        "table": "subjects",
+        "rows": 2,
+        "bytes": 508,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586890,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 1000,
+        "bytes": 586893,
+        "method": "GET"
+      },
+      {
+        "table": "payments",
+        "rows": 10,
+        "bytes": 5079,
+        "method": "GET"
+      },
+      {
+        "table": "announcements",
+        "rows": 2,
+        "bytes": 624,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392890,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 1000,
+        "bytes": 392893,
+        "method": "GET"
+      },
+      {
+        "table": "attendance_records",
+        "rows": 4,
+        "bytes": 1573,
+        "method": "GET"
+      },
+      {
+        "table": "expense_categories",
+        "rows": 3,
+        "bytes": 303,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828890,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1000,
+        "bytes": 828893,
+        "method": "GET"
+      },
+      {
+        "table": "teacher_payments",
+        "rows": 1,
+        "bytes": 658,
+        "method": "GET"
+      },
+      {
+        "table": "expenses",
+        "rows": 3,
+        "bytes": 526,
+        "method": "GET"
+      },
+      {
+        "table": "cash_transactions",
+        "rows": 7,
+        "bytes": 1312,
+        "method": "GET"
+      },
+      {
+        "table": "notifications",
+        "rows": 1,
+        "bytes": 313,
+        "method": "GET"
+      },
+      {
+        "table": "coursework",
+        "rows": 1,
+        "bytes": 247,
+        "method": "GET"
+      },
+      {
+        "table": "independent_sessions",
+        "rows": 1,
+        "bytes": 392,
+        "method": "GET"
+      },
+      {
+        "table": "group_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "solo_seances",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      }
+    ]
+  }
+]

@@ -1,0 +1,494 @@
+[
+  {
+    "variant": "current",
+    "history": 1000,
+    "roster": 500,
+    "sample": 0,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 3022.2643660000003,
+    "searchMs": 521.1634979999999,
+    "staticAssetsEncodedBytes": 7353057,
+    "mainThreadTaskSeconds": 1.565888,
+    "longTasks": {
+      "count": 4,
+      "ms": 803
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 82,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 31,
+          "bytes": 7096,
+          "method": "GET"
+        }
+      ],
+      "requests": 6,
+      "tables": [
+        "schools",
+        "profiles",
+        "reception_staff",
+        "students"
+      ],
+      "rows": 35,
+      "bytes": 7642
+    },
+    "searchRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "writes": [],
+    "warmClickToUseMs": 1930.332117,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 82,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ]
+  },
+  {
+    "variant": "current",
+    "history": 1000,
+    "roster": 500,
+    "sample": 1,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 2758.947515,
+    "searchMs": 519.6321179999995,
+    "staticAssetsEncodedBytes": 7353057,
+    "mainThreadTaskSeconds": 0.932749,
+    "longTasks": {
+      "count": 2,
+      "ms": 579
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 82,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 31,
+          "bytes": 7096,
+          "method": "GET"
+        }
+      ],
+      "requests": 6,
+      "tables": [
+        "schools",
+        "profiles",
+        "reception_staff",
+        "students"
+      ],
+      "rows": 35,
+      "bytes": 7642
+    },
+    "searchRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "writes": [],
+    "warmClickToUseMs": 2564.668385000001,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 82,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ]
+  },
+  {
+    "variant": "current",
+    "history": 10000,
+    "roster": 500,
+    "sample": 0,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 2389.179277000003,
+    "searchMs": 513.6211240000011,
+    "staticAssetsEncodedBytes": 7353057,
+    "mainThreadTaskSeconds": 0.816429,
+    "longTasks": {
+      "count": 1,
+      "ms": 396
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 82,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 31,
+          "bytes": 7096,
+          "method": "GET"
+        }
+      ],
+      "requests": 6,
+      "tables": [
+        "schools",
+        "profiles",
+        "reception_staff",
+        "students"
+      ],
+      "rows": 35,
+      "bytes": 7642
+    },
+    "searchRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "writes": [],
+    "warmClickToUseMs": 2830.998475999997,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 82,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ]
+  },
+  {
+    "variant": "current",
+    "history": 10000,
+    "roster": 500,
+    "sample": 1,
+    "entry": "authenticated direct /students",
+    "cache": "cold IndexedDB",
+    "browser": "156.0.8078.79",
+    "network": "local synthetic intercepted; no latency shaping",
+    "clickToUseMs": 2096.4255639999974,
+    "searchMs": 517.1485059999977,
+    "staticAssetsEncodedBytes": 7353057,
+    "mainThreadTaskSeconds": 0.785678,
+    "longTasks": {
+      "count": 1,
+      "ms": 335
+    },
+    "initial": {
+      "calls": [
+        {
+          "table": "schools",
+          "rows": 0,
+          "bytes": 2,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "profiles",
+          "rows": 1,
+          "bytes": 154,
+          "method": "GET"
+        },
+        {
+          "table": "reception_staff",
+          "rows": 1,
+          "bytes": 82,
+          "method": "GET"
+        },
+        {
+          "table": "students",
+          "rows": 31,
+          "bytes": 7096,
+          "method": "GET"
+        }
+      ],
+      "requests": 6,
+      "tables": [
+        "schools",
+        "profiles",
+        "reception_staff",
+        "students"
+      ],
+      "rows": 35,
+      "bytes": 7642
+    },
+    "searchRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "writes": [],
+    "warmClickToUseMs": 1562.336263000001,
+    "warmRequests": [
+      {
+        "table": "schools",
+        "rows": 0,
+        "bytes": 2,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "profiles",
+        "rows": 1,
+        "bytes": 154,
+        "method": "GET"
+      },
+      {
+        "table": "reception_staff",
+        "rows": 1,
+        "bytes": 82,
+        "method": "GET"
+      },
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ],
+    "returnAfterFourMinutesRequests": [
+      {
+        "table": "students",
+        "rows": 31,
+        "bytes": 7096,
+        "method": "GET"
+      }
+    ]
+  }
+]
