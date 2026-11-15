@@ -180,6 +180,14 @@ let currentActor: Actor | null = null;
 
 /** Appelé par `SessionProvider` — jamais par un écran. */
 export function setCurrentActor(actor: Actor | null): void {
+  if (currentActor?.id !== actor?.id) {
+    // Flush the previous account before switching the persistence identity.
+    if (currentActor && cacheDirty && useData.getState().loaded) {
+      persistSnapshot(pickDatabase(useData.getState()));
+    }
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = null;
+  }
   currentActor = actor;
 }
 
@@ -466,7 +474,7 @@ interface DataActions {
   boot: (userId: string) => Promise<BootResult>;
   /** Relance une revalidation réseau sur la donnée déjà affichée (nouvelle
    *  tentative après un passage hors-ligne, ou rafraîchissement manuel). */
-  revalidate: () => Promise<BootResult>;
+  revalidate: (staleOnly?: boolean) => Promise<BootResult>;
   clear: () => void;
 
   scanCard: (rfidOrStudentId: string, when?: Date) => Promise<ScanResult>;
@@ -1842,7 +1850,7 @@ type ReadOutcome =
  * La lecture est TOLÉRANTE : une table qui échoue n'annule plus tout. Seul un
  * échec de TOUTES les tables (réseau réellement coupé) est un échec.
  */
-async function readWholeDatabase(): Promise<ReadOutcome> {
+async function readWholeDatabase(keys?: CollectionKey[]): Promise<ReadOutcome> {
   // Une nouvelle lecture supplante toute lecture en vol : on annule l'ancienne
   // et on incrémente la version pour que son résultat tardif soit ignoré.
   currentLoadAbort?.abort();
@@ -1850,7 +1858,8 @@ async function readWholeDatabase(): Promise<ReadOutcome> {
   currentLoadAbort = abort;
   const version = ++loadRequestVersion;
   try {
-    const res = await loadDatabaseTolerant({ signal: abort.signal });
+    const retained = keys ? pickDatabase(useData.getState()) : null;
+    const res = await loadDatabaseTolerant({ signal: abort.signal, ...(keys ? { keys, withSchool: false } : {}) });
     if (version !== loadRequestVersion) return { status: "cancelled" };
     if (currentLoadAbort === abort) currentLoadAbort = null;
     const reason = res.failed.length
@@ -1860,11 +1869,11 @@ async function readWholeDatabase(): Promise<ReadOutcome> {
           .join(" · ")
       : null;
     const failedCollections = res.failed.filter((f) => f.key !== "school");
-    if (failedCollections.length >= COLLECTION_KEYS.length) {
+    if (failedCollections.length >= (keys ?? COLLECTION_KEYS).length) {
       const allTimeouts = res.failed.every((f) => f.timeout);
       return { status: allTimeouts ? "timeout" : "error", reason };
     }
-    const db = { school: res.school ?? emptyDatabase().school } as Database;
+    const db = { ...retained, school: res.school ?? retained?.school ?? emptyDatabase().school } as Database;
     for (const k of COLLECTION_KEYS) {
       const list = res.collections[k];
       if (list) (db as unknown as Record<string, unknown>)[k] = list;
@@ -1900,8 +1909,8 @@ export const useData = create<DataStore>((set, get) => {
    * cache en lecture seule. `painted` est l'état peint depuis le cache (ou `null`
    * s'il n'y avait pas de cache), pour détecter une modification faite entretemps.
    */
-  const finishRevalidation = async (painted: Database | null): Promise<BootResult> => {
-    const res = await readWholeDatabase();
+  const finishRevalidation = async (painted: Database | null, keys?: CollectionKey[]): Promise<BootResult> => {
+    const res = await readWholeDatabase(keys);
     if (res.status === "cancelled") return { kind: "cancelled" };
 
     // Une lecture partielle n'est exploitable que s'il y a une copie affichée
@@ -2061,6 +2070,8 @@ export const useData = create<DataStore>((set, get) => {
       });
       loadingInProgress = false;
 
+      syncedBaseline = pickDatabase(partial);
+
       // PASSE 2 — l'historique lourd (présences), en arrière-plan.
       const phase2 = await loadSome(deferredKeys, {
         signal: abort.signal,
@@ -2069,16 +2080,23 @@ export const useData = create<DataStore>((set, get) => {
       if (version !== loadRequestVersion) return { kind: "cancelled" };
       if (currentLoadAbort === abort) currentLoadAbort = null;
 
-      const patch: Record<string, unknown> = { revalidating: false };
-      for (const k of deferredKeys) patch[k] = phase2.collections[k] ?? [];
-      patch.staleTables = [];
+      // Do not mark edits made between phases as server-confirmed. Reconstruct
+      // the server baseline separately, then overlay only the local pending diff.
+      const fresh = { ...partial } as Database;
+      for (const k of deferredKeys) {
+        (fresh as unknown as Record<string, unknown>)[k] = phase2.collections[k] ?? [];
+      }
+      const live = pickDatabase(get());
+      const pending = diffUnpushed(partial, live);
+      const edited = hasUnpushed(pending);
+      const adopted = edited ? mergeUnpushed(fresh, live, pending) : fresh;
       loadingInProgress = true;
-      set(patch);
+      set({ ...adopted, revalidating: false, staleTables: [] });
       loadingInProgress = false;
-      // Tout vient d'être lu depuis la base : c'est la référence confirmée.
-      markSynced(get());
+      markSynced(fresh);
+      cacheDirty = edited;
       persistSnapshot(pickDatabase(get()));
-      return { kind: "fresh" };
+      return edited ? { kind: "keep-local", baseline: fresh } : { kind: "fresh" };
     } catch (err) {
       loadingInProgress = false;
       if (err instanceof LoadCancelledError) return { kind: "cancelled" };
@@ -2230,16 +2248,25 @@ export const useData = create<DataStore>((set, get) => {
   },
 
   /** Nouvelle tentative / rafraîchissement manuel sur la donnée déjà affichée. */
-  revalidate: async () => {
+  revalidate: async (staleOnly = false) => {
     const painted = get().loaded ? pickDatabase(get()) : null;
     // On garde le bandeau hors-ligne tel quel pendant la tentative : il ne
     // disparaît qu'au succès (sinon il clignote à chaque nouvel essai).
     set({ revalidating: true });
-    return finishRevalidation(painted);
+    const keys = staleOnly ? COLLECTION_KEYS.filter((key) => get().staleTables.includes(key)) : undefined;
+    if (keys?.length === 0) { set({ revalidating: false }); return { kind: "fresh" }; }
+    return finishRevalidation(painted, keys);
   },
 
   clear: () => {
     cancelInFlightLoad();
+    // Clearing an account is not a mutation, and must never persist an empty
+    // partial snapshot over its offline outbox.
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = null;
+    syncedBaseline = null;
+    cacheDirty = false;
+    loadingInProgress = true;
     set({
       ...emptyDatabase(),
       loaded: false,
@@ -2250,6 +2277,7 @@ export const useData = create<DataStore>((set, get) => {
       offlineReason: null,
       staleTables: [],
     });
+    loadingInProgress = false;
   },
 
   // ---------------------------------------------------------------------------
@@ -5839,7 +5867,7 @@ export const useData = create<DataStore>((set, get) => {
     lastSeen = live;
     // Pendant un chargement/une revalidation, les `set` ne sont pas des écritures
     // de l'utilisateur : on se contente de suivre l'état sans marquer quoi que ce soit.
-    if (loadingInProgress) return;
+    if (loadingInProgress || !state.loaded) return;
     if (!prev) return;
     // Seule une vraie modification de données compte (un changement de drapeau
     // d'interface ne doit jamais salir la copie locale).

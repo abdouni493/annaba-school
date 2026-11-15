@@ -26,7 +26,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { refreshSessionAttendance } from "@/lib/supabase/liveRefresh";
+import { refreshSessionAttendance, watchAttendance } from "@/lib/supabase/liveRefresh";
 import { motion } from "framer-motion";
 import { useData } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
@@ -219,24 +219,26 @@ export function PresenceSheet({
   const [syncing, setSyncing] = useState(false);
   const staleAttendance = useData((s) => s.staleTables.includes("attendance"));
   useEffect(() => {
+    const unwatch = watchAttendance(date, session.id);
     let alive = true;
     const run = async () => {
       await Promise.resolve();
       if (!alive) return;
       setSyncing(true);
-      await refreshSessionAttendance(session.id);
+      await refreshSessionAttendance(session.id, false, date);
       if (alive) setSyncing(false);
     };
     void run();
     return () => {
       alive = false;
+      unwatch();
     };
   }, [session.id, date]);
 
   /** « Actualiser » : relit tout de suite, sur le serveur, l'appel de ce groupe. */
   const reloadFromServer = async () => {
     setSyncing(true);
-    const res = await refreshSessionAttendance(session.id, true);
+    const res = await refreshSessionAttendance(session.id, true, date);
     setSyncing(false);
     if (res.ok) {
       addToast({

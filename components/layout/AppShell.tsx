@@ -1,5 +1,6 @@
 "use client";
 
+import { isDirectoryRoute, useDirectoryAccess } from "@/lib/repo/studentDirectory";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";
@@ -30,6 +31,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const staleTables = useData((s) => s.staleTables);
   const revalidate = useData((s) => s.revalidate);
   const rights = useAccessRights();
+  const directoryAccess = useDirectoryAccess();
+  const directoryReady = isDirectoryRoute(pathname, user) && directoryAccess.account === user?.id && !!directoryAccess.rights;
 
   useEffect(() => {
     if (hydrated && !user) router.replace("/login");
@@ -75,9 +78,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // sans cache. Le miroir d'écriture reste géré par `SessionProvider` : il ne
   // reprend qu'après une lecture complète fiable, donc rien d'affiché ici ne
   // peut être réécrit comme une suppression.
-  const dbReady = loaded && loadStatus === "success";
+  const dbReady = directoryReady || (loaded && loadStatus === "success");
   const dbTimedOut = loadStatus === "timeout";
-  const dbFailed = loadStatus === "error" || dbTimedOut;
+  const dbFailed = loadStatus === "error" || dbTimedOut || !!directoryAccess.error;
 
   return (
     <div className="flex h-dvh overflow-hidden bg-canvas">

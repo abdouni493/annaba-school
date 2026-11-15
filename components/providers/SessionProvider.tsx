@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import { isDirectoryRoute, prepareDirectory, clearDirectoryAccess } from "@/lib/repo/studentDirectory";
 import { useSession } from "@/lib/store/session";
 import { setCurrentActor, useData, type BootResult } from "@/lib/store/data";
 import {
@@ -10,7 +12,7 @@ import {
   startSync,
   stopSync,
 } from "@/lib/supabase/sync";
-import { refreshRecentAttendance } from "@/lib/supabase/liveRefresh";
+import { refreshActiveAttendance, resetAttendanceRefresh } from "@/lib/supabase/liveRefresh";
 
 /**
  * Boots the app: restores the Supabase session, loads the establishment (the
@@ -19,6 +21,8 @@ import { refreshRecentAttendance } from "@/lib/supabase/liveRefresh";
  * change back to Supabase.
  */
 export function SessionProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const [legacyAccount, setLegacyAccount] = useState<string | null>(null);
   const initSession = useSession((s) => s.initSession);
   const user = useSession((s) => s.user);
   const hydrated = useSession((s) => s.hydrated);
@@ -28,6 +32,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const clear = useData((s) => s.clear);
   const processWeeklyAbsences = useData((s) => s.processWeeklyAbsences);
   const dropVoidTeacherDues = useData((s) => s.dropVoidTeacherDues);
+
+  const directory = isDirectoryRoute(pathname, user);
+  const needsLegacy = !!user && ((!directory && pathname !== "/login") || legacyAccount === user.id);
+  const scopedEntry = directory && !needsLegacy;
+  // Remember activation for this account without a second post-paint effect.
+  if (needsLegacy && user && legacyAccount !== user.id) setLegacyAccount(user.id);
 
   useEffect(() => {
     fetchSchool();
@@ -57,6 +67,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!hydrated) return;
 
     if (!user) {
+      resetAttendanceRefresh();
+      clearDirectoryAccess();
       // Signed out: stop writing back and drop the data of the previous account.
       stopSync();
       clear();
@@ -64,6 +76,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    if (!needsLegacy) {
+      stopSync();
+      clear();
+      if (!scopedEntry) return;
+      void prepareDirectory(user).then((pending) => {
+        if (pending) setLegacyAccount(user.id);
+      });
+      return () => { clearDirectoryAccess(); };
+    }
+    clearDirectoryAccess();
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retries = 0;
@@ -77,6 +99,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     // Subscribe first but hold the writes: the rows we are about to READ (and the
     // cache we are about to PAINT) must not be written straight back.
+    resetAttendanceRefresh();
     pauseSync();
     // Never show a prior account's records while the next account is loading.
     // clear() also invalidates any in-flight read from the previous user.
@@ -94,7 +117,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // après l'affichage. On les diffère au premier temps mort : l'écran est
       // déjà peint et manipulable, le travail se fait ensuite, sans bloquer.
       const run = () => {
-        if (cancelled) return;
+        const state = useData.getState();
+        if (cancelled || !state.loaded || state.revalidating || state.offline || state.staleTables.length) {
+          postLoadDone = false;
+          return;
+        }
         processWeeklyAbsences();
         // Les parts d'enseignant restées sur un emploi coché offert après coup
         // quittent la base (idempotent) : la paie ne les lit déjà plus, les
@@ -145,14 +172,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         staleTimer = null;
         if (cancelled) return;
         pauseSync();
-        void revalidate().then(apply);
+        void revalidate(true).then(apply);
       }, wait);
     };
 
     const goOnline = () => {
       awaitingReconnect = false;
       retries = 0;
-      if (!postLoadDone) {
+      const state = useData.getState();
+      if (!postLoadDone && state.loaded && !state.revalidating && !state.offline && !state.staleTables.length) {
         postLoadDone = true;
         runPostLoadJobs();
       }
@@ -213,13 +241,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const kick = () => {
       if (cancelled) return;
       if (!awaitingReconnect) {
+        void refreshActiveAttendance();
         // En ligne mais avec des tables à relire : on avance la relecture.
         if (staleTimer) {
           clearTimeout(staleTimer);
           staleTimer = null;
           staleRetries = 0;
           pauseSync();
-          void revalidate().then(apply);
+          void revalidate(true).then(apply);
         }
         return;
       }
@@ -230,47 +259,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       retries = 0;
       void revalidate().then(apply);
     };
-    /**
-     * RESTER À JOUR SANS RECHARGER LA PAGE.
-     *
-     * Un poste reste souvent ouvert toute la journée — et la nuit. Sans relecture,
-     * il ne voyait jamais ce que les autres postes saisissaient depuis.
-     *  - Toutes les 45 s (onglet visible) : les présences des 7 derniers jours,
-     *    lecture ciblée et légère.
-     *  - Au retour sur l'onglet après 3 min d'absence : relecture COMPLÈTE de la
-     *    base (élèves, versements, caisse…), miroir en pause le temps de la
-     *    lecture — les saisies faites entretemps sont retrouvées et envoyées.
-     */
-    let hiddenAt: number | null = null;
+    // Only mounted day/session consumers poll, at the existing 45-second cadence.
+    // Returning after four minutes does not bootstrap the school again.
     const liveTimer = setInterval(() => {
       if (cancelled || document.visibilityState !== "visible") return;
-      void refreshRecentAttendance(7);
+      void refreshActiveAttendance();
     }, 45_000);
-    const fullRefresh = () => {
-      if (cancelled || awaitingReconnect || staleTimer || !useData.getState().loaded) return;
-      if (useData.getState().revalidating) return;
-      pauseSync();
-      void revalidate().then(apply);
-    };
     const onVisible = () => {
       if (document.visibilityState === "hidden") {
-        hiddenAt = Date.now();
         return;
       }
-      const away = hiddenAt ? Date.now() - hiddenAt : 0;
-      hiddenAt = null;
+      // Visibility refreshes mounted scopes, regardless of time away.
       if (awaitingReconnect || staleTimer) {
         kick();
         return;
       }
-      if (away >= 3 * 60_000) fullRefresh();
-      else void refreshRecentAttendance(7);
+      void refreshActiveAttendance();
     };
     window.addEventListener("online", kick);
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       cancelled = true;
+      resetAttendanceRefresh();
       clearInterval(liveTimer);
       if (retryTimer) clearTimeout(retryTimer);
       if (staleTimer) clearTimeout(staleTimer);
@@ -278,7 +289,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, user?.id]);
+  }, [hydrated, user?.id, user?.role, user?.entityId, needsLegacy, scopedEntry]);
 
   return <>{children}</>;
 }

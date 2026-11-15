@@ -677,7 +677,10 @@ export interface TolerantLoad {
   failed: { key: CollectionKey | "school"; message: string; timeout: boolean }[];
 }
 
-export async function loadDatabaseTolerant(opts: LoadOptions = {}): Promise<TolerantLoad> {
+export async function loadDatabaseTolerant(
+  opts: LoadOptions & { keys?: CollectionKey[]; withSchool?: boolean } = {},
+): Promise<TolerantLoad> {
+  const keys = opts.keys ?? COLLECTION_ORDER;
   throwIfAborted(opts.signal);
   const t0 = now();
   const startedAt = Date.now();
@@ -693,12 +696,12 @@ export async function loadDatabaseTolerant(opts: LoadOptions = {}): Promise<Tole
   const describe = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
   const [school, lists] = await Promise.all([
-    loadSchool(collect).catch((err) => {
+    (opts.withSchool === false ? Promise.resolve(undefined) : loadSchool(collect)).catch((err) => {
       if (err instanceof LoadCancelledError) throw err;
       failed.push({ key: "school", message: describe(err), timeout: err instanceof LoadTimeoutError });
       return undefined;
     }),
-    mapWithConcurrency(COLLECTION_ORDER, TABLE_CONCURRENCY, (key) =>
+    mapWithConcurrency(keys, TABLE_CONCURRENCY, (key) =>
       readAll(TABLES[key], collect).catch((err) => {
         if (err instanceof LoadCancelledError) throw err;
         failed.push({ key, message: describe(err), timeout: err instanceof LoadTimeoutError });
@@ -709,7 +712,7 @@ export async function loadDatabaseTolerant(opts: LoadOptions = {}): Promise<Tole
   throwIfAborted(opts.signal);
 
   const collections: TolerantLoad["collections"] = {};
-  COLLECTION_ORDER.forEach((key, i) => {
+  keys.forEach((key, i) => {
     const list = lists[i];
     if (list) collections[key] = list;
   });
@@ -742,13 +745,13 @@ export async function loadDatabaseTolerant(opts: LoadOptions = {}): Promise<Tole
  */
 export async function loadRowsWhere(
   key: CollectionKey,
-  where: { column: string; op: "eq" | "gte"; value: string }[],
+  where: { column: string; op: "eq" | "gte" | "lt"; value: string }[],
   opts: LoadOptions = {},
 ): Promise<Record<string, unknown>[]> {
   throwIfAborted(opts.signal);
   return readAll(TABLES[key], opts, (q) => {
     let out = q;
-    for (const w of where) out = w.op === "eq" ? out.eq(w.column, w.value) : out.gte(w.column, w.value);
+    for (const w of where) out = out[w.op](w.column, w.value);
     return out;
   });
 }

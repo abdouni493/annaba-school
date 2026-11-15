@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import { useData } from "@/lib/store/data";
 import { useState } from "react";
 import { Menu, PanelLeftClose, PanelLeftOpen, ScanLine } from "lucide-react";
 import { ThemeToggle } from "@/components/controls/ThemeToggle";
@@ -11,6 +13,9 @@ import { useSidebar } from "@/lib/store/ui";
 import { useTranslation } from "@/lib/i18n/useTranslation";
 
 export function Topbar({ onMenu }: { onMenu: () => void }) {
+  const router = useRouter();
+  const loaded = useData((s) => s.loaded);
+  const revalidating = useData((s) => s.revalidating);
   const { t } = useTranslation();
   const user = useSession((s) => s.user);
   const [scanOpen, setScanOpen] = useState(false);
@@ -55,7 +60,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
 
       <div className="ms-auto flex items-center gap-2 md:gap-3">
         {canScan && (
-          <Button size="sm" onClick={() => setScanOpen(true)} className="hidden sm:inline-flex">
+          <Button size="sm" onClick={() => { setScanOpen(true); if (!loaded) router.push("/students/complete"); }} className="hidden sm:inline-flex">
             <ScanLine className="h-4 w-4" />
             {t("act.scanCard")}
           </Button>
@@ -75,7 +80,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         </div>
       </div>
 
-      <ScanModal open={scanOpen} onClose={() => setScanOpen(false)} />
+      <ScanModal open={scanOpen && loaded && !revalidating} onClose={() => setScanOpen(false)} />
     </header>
   );
 }

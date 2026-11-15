@@ -1,5 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import { useData } from "@/lib/store/data";
+import { useSession } from "@/lib/store/session";
+import { useDeferredScan } from "@/lib/store/deferredScan";
 import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useToast, type Toast } from "@/lib/store/toast";
@@ -10,6 +14,22 @@ import { useScanProcessor } from "@/lib/useScanProcessor";
 
 export function GlobalRFIDListener() {
   const processScan = useScanProcessor();
+  const router = useRouter();
+  const account = useSession((s) => s.user?.id);
+  const loaded = useData((s) => s.loaded);
+  const revalidating = useData((s) => s.revalidating);
+  const pending = useDeferredScan();
+  useEffect(() => {
+    if (pending.account !== account) {
+      useDeferredScan.setState({ account: account ?? null, codes: [] });
+      return;
+    }
+    if (pending.codes.length && loaded && !revalidating) {
+      const code = pending.codes[0];
+      useDeferredScan.setState({ codes: pending.codes.slice(1) });
+      void processScan(code);
+    }
+  }, [pending, account, loaded, revalidating, processScan]);
   const { toasts, removeToast } = useToast();
 
   const bufferRef = useRef<string>("");
@@ -43,7 +63,12 @@ export function GlobalRFIDListener() {
           if (!isInputField || isRFID) {
             e.preventDefault();
             e.stopPropagation();
-            processScan(code);
+            if (!loaded || revalidating) {
+              useDeferredScan.setState((state) => ({ account: account ?? null,
+                codes: state.account === account ? [...state.codes, code] : [code],
+              }));
+              if (!loaded) router.push("/students/complete");
+            } else void processScan(code);
           }
         }
         return;
@@ -74,7 +99,7 @@ export function GlobalRFIDListener() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [processScan]);
+  }, [processScan, loaded, revalidating, account, router]);
 
   return (
     <div className="fixed bottom-5 right-5 z-50 space-y-3 w-96 max-w-[calc(100vw-40px)] no-print pointer-events-none">

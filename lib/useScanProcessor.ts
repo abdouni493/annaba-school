@@ -54,18 +54,22 @@ async function sendAutoBalanceAlert(opts: {
 /**
  * The single check-in pipeline shared by every entry point — the hardware
  * RFID reader (GlobalRFIDListener) and the manual scanner of the topbar
- * (ScanModal). Both run the same scan_card RPC, the same voice announcement,
+ * (ScanModal). Both run Annaba’s client-side scanCard business rules, the same voice announcement,
  * the same toasts and the same automatic low-balance/debt parent alerts, so
  * a manually typed code behaves exactly like a card swipe.
  */
 export function useScanProcessor() {
-  const db = useData();
-  const { scanCard, scanWorkerCard, students, parents, school, push } = db;
-  const { language, autoSendWhatsapp, autoSendEmail } = useSettings();
-  const { addToast } = useToast();
+  const language = useSettings((s) => s.language);
+  const autoSendWhatsapp = useSettings((s) => s.autoSendWhatsapp);
+  const autoSendEmail = useSettings((s) => s.autoSendEmail);
+  const addToast = useToast((s) => s.addToast);
 
   const processScan = useCallback(
     async (code: string): Promise<ScanResult> => {
+      // Read at intent time: an unrelated payroll/cash update must not rerender
+      // the global keyboard listener or capture an older roster in its callback.
+      const db = useData.getState();
+      const { scanCard, scanWorkerCard, students, parents, school, push } = db;
       const result = await scanCard(code);
 
       // Same reader for both populations: a badge unknown to the students
@@ -286,7 +290,7 @@ export function useScanProcessor() {
 
       return result;
     },
-    [scanCard, scanWorkerCard, students, parents, school, language, autoSendWhatsapp, autoSendEmail, addToast, push],
+    [language, autoSendWhatsapp, autoSendEmail, addToast],
   );
 
   return processScan;

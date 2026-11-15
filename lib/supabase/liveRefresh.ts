@@ -27,11 +27,46 @@ const lastBySession = new Map<string, number>();
 /** Une même feuille n'est pas relue plus d'une fois toutes les N ms. */
 const SESSION_THROTTLE_MS = 15_000;
 
-function isoDaysAgo(days: number): string {
+/** A local calendar day, converted to a half-open UTC interval (DST safe). */
+function dayBounds(day: string): [string, string] {
+  const start = new Date(`${day}T00:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return [start.toISOString(), end.toISOString()];
+}
+function today(): string {
   const d = new Date();
-  d.setDate(d.getDate() - days);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+let generation = 0;
+let controller = new AbortController();
+const requests = new Map<string, Promise<RefreshResult>>();
+const interests = new Map<symbol, { sessionId?: string; day: string }>();
+
+/** Account boundary: abort old reads and invalidate queued completions. */
+export function resetAttendanceRefresh() {
+  generation += 1;
+  controller.abort();
+  controller = new AbortController();
+  inFlight = null;
+  requests.clear();
+  lastBySession.clear();
+}
+
+/** Only mounted attendance consumers request background freshness. */
+export function watchAttendance(day: string, sessionId?: string): () => void {
+  const key = Symbol();
+  interests.set(key, { day, sessionId });
+  return () => { interests.delete(key); };
+}
+
+export async function refreshActiveAttendance(): Promise<RefreshResult[]> {
+  const scopes = [...interests.values()];
+  const unique = new Map(scopes.map((scope) => [`${scope.day}|${scope.sessionId ?? "*"}`, scope]));
+  return Promise.all([...unique.values()]
+    .filter((s) => !s.sessionId || !unique.has(`${s.day}|*`))
+    .map((s) => refreshDayAttendance(s.day, s.sessionId, true)));
 }
 
 export interface RefreshResult {
@@ -43,43 +78,28 @@ export interface RefreshResult {
   error?: string;
 }
 
-/** Attend la fin d'une relecture complète en cours (au plus `maxMs`). */
-function untilNotRevalidating(maxMs: number): Promise<boolean> {
-  if (!useData.getState().revalidating) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      unsub();
-      resolve(false);
-    }, maxMs);
-    const unsub = useData.subscribe((st) => {
-      if (st.revalidating) return;
-      clearTimeout(timer);
-      unsub();
-      resolve(true);
-    });
-  });
-}
-
 async function refreshAttendance(
-  where: { column: string; op: "eq" | "gte"; value: string }[],
+  where: { column: string; op: "eq" | "gte" | "lt"; value: string }[],
   inScope: (r: Row) => boolean,
 ): Promise<RefreshResult> {
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return { ok: false, changes: 0, read: 0, error: "Pas de connexion Internet" };
   }
-  // Une relecture complète en cours : on la laisse finir, PUIS on relit — la
-  // feuille ouverte pendant le démarrage reçoit quand même ses présences.
-  if (!(await untilNotRevalidating(90_000))) {
-    return { ok: false, changes: 0, read: 0, error: "Chargement de la base encore en cours" };
+  // Never park a focused screen behind a 90-second global load. The next
+  // focus/poll retries the same scope. Failed/pending writes must not be adopted
+  // as confirmed server rows, even if the write queue itself has settled.
+  if (useData.getState().revalidating || !useData.getState().loaded || !syncRunning()) {
+    return { ok: false, changes: 0, read: 0, error: "Chargement ou synchronisation en cours" };
   }
-  if (!useData.getState().loaded) return { ok: false, changes: 0, read: 0, error: "Base non chargée" };
-  // Laisser partir les écritures en vol AVANT de lire : la lecture les inclut.
-  if (syncRunning()) await syncSettled();
+  const epoch = generation;
+  const signal = controller.signal;
+  if (!syncIdle()) await syncSettled();
+  if (epoch !== generation || !syncIdle()) return { ok: false, changes: 0, read: 0 };
   const before = useData.getState().attendance as unknown as Row[];
   const idleAtStart = syncIdle();
   let rows: Row[];
   try {
-    const raw = await loadRowsWhere("attendance", where, { timeoutMs: 20_000 });
+    const raw = await loadRowsWhere("attendance", where, { timeoutMs: 20_000, signal });
     rows = raw.map((r) => fromRow(TABLES.attendance, r));
   } catch (err) {
     if (err instanceof LoadCancelledError) return { ok: false, changes: 0, read: 0 };
@@ -87,7 +107,9 @@ async function refreshAttendance(
     return { ok: false, changes: 0, read: 0, error: err instanceof Error ? err.message : String(err) };
   }
   // Une relecture complète a démarré pendant la nôtre : elle fait foi.
-  if (useData.getState().revalidating) return { ok: true, changes: 0, read: rows.length };
+  if (epoch !== generation || useData.getState().revalidating || !syncIdle()) {
+    return { ok: false, changes: 0, read: rows.length };
+  }
   let changes = 0;
   absorbExternal(() => {
     changes = absorbServerRows("attendance", rows, {
@@ -102,41 +124,52 @@ async function refreshAttendance(
 }
 
 function serialize(task: () => Promise<RefreshResult>): Promise<RefreshResult> {
+  const epoch = generation;
   const run = (inFlight ?? Promise.resolve(null))
     .catch(() => null)
-    .then(task);
-  inFlight = run.finally(() => {
-    if (inFlight === run) inFlight = null;
+    .then(() => epoch === generation ? task() : { ok: false, changes: 0, read: 0 });
+  // The queue entry and the identity tested in cleanup MUST be the same promise.
+  const entry = run.finally(() => {
+    if (inFlight === entry) inFlight = null;
   });
-  return run;
+  inFlight = entry;
+  return entry;
 }
 
-/** Relit toutes les présences d'un groupe (emploi du temps). `force` ignore
- *  la limite de fréquence (bouton « Actualiser »). */
-export async function refreshSessionAttendance(sessionId: string, force = false): Promise<RefreshResult> {
-  const now = Date.now();
-  if (!force && now - (lastBySession.get(sessionId) ?? 0) < SESSION_THROTTLE_MS) {
-    return { ok: true, changes: 0, read: 0 };
+function refreshDayAttendance(day: string, sessionId?: string, force = false): Promise<RefreshResult> {
+  const key = `${day}|${sessionId ?? "*"}`;
+  const pending = requests.get(key);
+  if (pending) return pending;
+  if (!force && Date.now() - (lastBySession.get(key) ?? 0) < SESSION_THROTTLE_MS) {
+    return Promise.resolve({ ok: true, changes: 0, read: 0 });
   }
-  const res = await serialize(() =>
-    refreshAttendance([{ column: "session_id", op: "eq", value: sessionId }], (r) => r.sessionId === sessionId),
-  );
-  // Seule une relecture RÉUSSIE compte pour la limite : un échec se retente.
-  if (res.ok) lastBySession.set(sessionId, Date.now());
-  return res;
+  const [start, end] = dayBounds(day);
+  const where: { column: string; op: "eq" | "gte" | "lt"; value: string }[] = [
+    { column: "occurred_at", op: "gte", value: start },
+    { column: "occurred_at", op: "lt", value: end },
+  ];
+  if (sessionId) where.push({ column: "session_id", op: "eq", value: sessionId });
+  const epoch = generation;
+  const entry = serialize(() => refreshAttendance(where, (r) =>
+    (!sessionId || r.sessionId === sessionId) && typeof r.timestamp === "string" &&
+    r.timestamp >= start && r.timestamp < end,
+  )).then((result) => {
+    if (epoch === generation && result.ok) lastBySession.set(key, Date.now());
+    return result;
+  }).finally(() => {
+    if (requests.get(key) === entry) requests.delete(key);
+  });
+  requests.set(key, entry);
+  return entry;
 }
 
-/** Relit les présences des `days` derniers jours, tous groupes confondus. */
-export function refreshRecentAttendance(days = 7): Promise<RefreshResult> {
-  // Pas de relecture de fond pendant qu'une autre lecture tourne déjà.
-  if (inFlight || useData.getState().revalidating) return Promise.resolve({ ok: true, changes: 0, read: 0 });
-  const since = isoDaysAgo(days);
-  // Marge d'un jour pour les retraits : une ligne tout au bord de la fenêtre
-  // (fuseau, format d'heure) n'est jamais retirée sur un doute de comparaison.
-  const safe = isoDaysAgo(Math.max(0, days - 1));
-  return serialize(() =>
-    refreshAttendance([{ column: "occurred_at", op: "gte", value: since }], (r) =>
-      typeof r.timestamp === "string" ? r.timestamp >= safe : false,
-    ),
-  );
+/** Refresh the displayed day, never the session's entire history. */
+export function refreshSessionAttendance(sessionId: string, force = false, day = today()): Promise<RefreshResult> {
+  return refreshDayAttendance(day, sessionId, force);
+}
+
+/** Compatibility entry point: a background poll only needs today's marks. */
+export function refreshRecentAttendance(): Promise<RefreshResult> {
+  if (inFlight) return Promise.resolve({ ok: true, changes: 0, read: 0 });
+  return refreshDayAttendance(today(), undefined, true);
 }

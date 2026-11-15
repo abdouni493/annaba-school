@@ -148,3 +148,19 @@ describe("repo/students — getStudent", () => {
     expect(captured.filters).toContain("eq:id=x");
   });
 });
+
+it("searches phones, email, full names in either order and padded registration numbers", async () => {
+  await listStudents({ search: "Anne Nom" });
+  const query = captured.filters.join(" ");
+  for (const column of ["phone", "phone2", "email", "registration_number"]) expect(query).toContain(`${column}.ilike`);
+  expect(query).toContain("and(first_name.ilike");
+  expect(query).toContain("and(last_name.ilike");
+  captured.filters = [];
+  await listStudents({ search: "00012" });
+  expect(captured.filters.join(" ")).toContain('registration_number.ilike."%12%"');
+});
+it("quotes punctuation in cursor values instead of changing their sort identity", async () => {
+  await listStudents({ cursor: { lastName: 'A,B', firstName: 'C"D', id: "id-1" } });
+  expect(captured.filters.join(" ")).toContain('last_name.gt."A,B"');
+  expect(captured.filters.join(" ")).toContain('first_name.gt."C\\"D"');
+});

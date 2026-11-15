@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  */
 
 let cachedDb: Record<string, unknown> | null = null;
+let lastLoadOptions: unknown;
 let failedKeys: string[] = [];
 let networkDb: Record<string, unknown> | null = null;
 
@@ -25,7 +26,8 @@ vi.mock("@/lib/supabase/load", async () => {
   const actual = await vi.importActual<typeof import("@/lib/supabase/load")>("@/lib/supabase/load");
   return {
     ...actual,
-    loadDatabaseTolerant: async () => {
+    loadDatabaseTolerant: async (opts: unknown) => {
+      lastLoadOptions = opts;
       const { school, ...all } = (networkDb ?? actual.emptyDatabase()) as Record<string, unknown>;
       const collections: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(all)) if (!failedKeys.includes(k)) collections[k] = v;
@@ -102,4 +104,14 @@ describe("relecture partielle", () => {
     const res = await useData.getState().revalidate();
     expect(res.kind).toBe("failed");
   });
+});
+
+
+it("stale-only retry asks for precisely the failed scope without reloading school", async () => {
+  cachedDb = db(["a"], ["old"]); networkDb = db(["a"], ["remote"]);
+  failedKeys = ["attendance"]; await useData.getState().boot("u");
+  failedKeys = [];
+  await useData.getState().revalidate(true);
+  expect(lastLoadOptions).toMatchObject({ keys: ["attendance"], withSchool: false });
+  expect(ids("attendance")).toEqual(["remote"]);
 });

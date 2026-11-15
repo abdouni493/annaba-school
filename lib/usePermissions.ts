@@ -10,6 +10,7 @@
  * travailleur ne voit que ce que sa fiche autorise.
  */
 
+import { useDirectoryAccess } from "@/lib/repo/studentDirectory";
 import { useMemo } from "react";
 import { useSession } from "@/lib/store/session";
 import { useData } from "@/lib/store/data";
@@ -18,8 +19,10 @@ import { accessRightsOf, canDoAction, canSeePage, type AccessRights } from "@/li
 /** Les droits complets — pour la barre latérale et le garde-fou des routes. */
 export function useAccessRights(): AccessRights {
   const user = useSession((s) => s.user);
+  const directory = useDirectoryAccess();
   const workers = useData((s) => s.reception);
-  return useMemo(() => accessRightsOf(user, workers), [user, workers]);
+  return useMemo(() => directory.account === user?.id && directory.rights
+    ? directory.rights : accessRightsOf(user, workers), [user, workers, directory]);
 }
 
 /** `can("create")` sur UN écran. */

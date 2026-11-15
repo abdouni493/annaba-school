@@ -106,3 +106,23 @@ describe("boot progressif — premier chargement sans cache", () => {
     expect(useData.getState().loadStatus).toBe("error");
   });
 });
+
+describe("edits between bootstrap phases", () => {
+  it("retains an attendance and student edit as pending, rather than server-confirmed", async () => {
+    phase1Students = [{ id: "s1" }]; attendanceRows = [{ id: "remote" }];
+    let release!: () => void;
+    deferredAttendance = new Promise((r) => { release = r; });
+    const pending = useData.getState().boot("user-1");
+    await wait(10);
+    useData.setState({ students: [{ id: "s1", firstName: "Edited" }], attendance: [{ id: "local" }] } as never);
+    release();
+    const result = await pending;
+    expect(result.kind).toBe("keep-local");
+    expect(useData.getState().attendance.map((r) => r.id).sort()).toEqual(["local", "remote"]);
+    expect(useData.getState().students[0].firstName).toBe("Edited");
+    if (result.kind === "keep-local") {
+      expect(result.baseline.attendance.map((r) => r.id)).toEqual(["remote"]);
+      expect(result.baseline.students[0].firstName).toBeUndefined();
+    }
+  });
+});

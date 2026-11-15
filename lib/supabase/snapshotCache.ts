@@ -393,3 +393,18 @@ function scheduleIdle(task: () => void): void {
     setTimeout(task, 300);
   }
 }
+
+/** Metadata-only outbox check. Clean chunked snapshots need no history reads
+ * for the directory. Legacy v2 snapshots remain readable by the normal boot. */
+export async function hasPendingSnapshot(userId: string): Promise<boolean> {
+  const db = await openDB();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    const transaction = db.transaction(STORE, "readonly");
+    const request = transaction.objectStore(STORE).get(userId);
+    request.onsuccess = () => resolve(request.result?.dirty === true);
+    request.onerror = () => resolve(false);
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => { db.close(); resolve(false); };
+  });
+}

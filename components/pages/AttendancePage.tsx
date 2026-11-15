@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { watchAttendance } from "@/lib/supabase/liveRefresh";
 import { useData } from "@/lib/store/data";
 import { useSettings } from "@/lib/store/settings";
 import { Card, CardBody } from "@/components/ui/Card";
@@ -68,6 +69,7 @@ export function AttendancePage() {
   const todayStr = isoOf(new Date());
 
   const [sheetDate, setSheetDate] = useState<string>(todayStr);
+  useEffect(() => watchAttendance(sheetDate), [sheetDate]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [month, setMonth] = useState<string>("M1");
   const [createOpen, setCreateOpen] = useState(false);

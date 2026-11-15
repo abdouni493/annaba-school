@@ -24,6 +24,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { watchAttendance } from "@/lib/supabase/liveRefresh";
 import { useData, uid } from "@/lib/store/data";
 import { useSession } from "@/lib/store/session";
 import { useToast } from "@/lib/store/toast";
@@ -146,6 +147,7 @@ function AdminDashboard() {
 
   /** The day the whole screen works on — today until the desk moves it. */
   const [date, setDate] = useState<string>(todayIso);
+  useEffect(() => watchAttendance(date), [date]);
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
   const [openDate, setOpenDate] = useState<string>(todayIso);
   const [month, setMonth] = useState<string>("M1");

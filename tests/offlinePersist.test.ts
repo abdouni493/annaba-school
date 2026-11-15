@@ -185,3 +185,14 @@ describe("durabilité hors-ligne — aucune saisie perdue", () => {
     expect(persisted!.syncedStudents).toEqual(["a"]);
   });
 });
+
+it("clearing the account does not overwrite its offline outbox with empty arrays", async () => {
+  cached = { db: dbWithStudents(["a", "offline"]), synced: dbWithStudents(["a"]), dirty: true };
+  failNetwork = true;
+  await useData.getState().boot("user-1");
+  writes.length = 0;
+  useData.getState().clear();
+  await new Promise((r) => setTimeout(r, 450));
+  expect(writes).toHaveLength(0);
+  expect(cached.db.students).toHaveLength(2);
+});

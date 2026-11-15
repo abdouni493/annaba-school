@@ -10,7 +10,7 @@ import type { Student } from "@/lib/types";
  * Contrairement à `lib/supabase/load.ts` qui télécharge TOUTE la table, ce
  * module lit par PAGES BORNÉES, avec PROJECTION DE COLONNES et PAGINATION PAR
  * CLÉ (keyset), sans `count` exact. Il est la brique de base pour sortir du
- * chargement intégral écran par écran, derrière le drapeau `scopedStudentReads`.
+ * chargement intégral écran par écran, utilisée par le répertoire `/students`.
  *
  * Principes :
  *   • Ordre stable déterministe (last_name, first_name, id) : deux élèves
@@ -31,6 +31,8 @@ const LIST_COLUMNS = [
   "first_name",
   "last_name",
   "phone",
+  "phone2",
+  "email",
   "rfid",
   "enrollment_level",
   "enrollment_year",
@@ -43,6 +45,8 @@ export interface StudentListItem {
   firstName: string;
   lastName: string;
   phone: string;
+  phone2?: string;
+  email?: string;
   rfid: string;
   enrollmentLevel?: string;
   enrollmentYear?: string;
@@ -65,7 +69,7 @@ export interface StudentPage {
 export interface ListStudentsParams {
   pageSize?: number;
   cursor?: StudentCursor | null;
-  /** Recherche par préfixe sur nom/prénom (insensible à la casse). */
+  /** Recherche nom, prénom, matricule, téléphone et email (insensible à la casse). */
   search?: string;
   /** Filtre optionnel par niveau. */
   level?: string;
@@ -83,6 +87,8 @@ function rowToListItem(row: Record<string, unknown>): StudentListItem {
     firstName: (row.first_name as string | null) ?? "",
     lastName: (row.last_name as string | null) ?? "",
     phone: (row.phone as string | null) ?? "",
+    phone2: (row.phone2 as string | null) ?? undefined,
+    email: (row.email as string | null) ?? undefined,
     rfid: (row.rfid as string | null) ?? "",
     enrollmentLevel: (row.enrollment_level as string | null) ?? undefined,
     enrollmentYear: (row.enrollment_year as string | null) ?? undefined,
@@ -108,24 +114,36 @@ export async function listStudents(params: ListStudentsParams = {}): Promise<Stu
 
   if (params.level) q = q.eq("enrollment_level", params.level);
 
-  if (params.search && params.search.trim()) {
-    const term = params.search.trim().replace(/[%,()]/g, " ");
-    // Préfixe insensible à la casse sur nom OU prénom (sert les index
-    // fonctionnels lower(last_name)/lower(first_name) de la migration).
-    q = q.or(`last_name.ilike.${term}%,first_name.ilike.${term}%`);
+  // Quote PostgREST literals: punctuation in names must not alter the filter
+  // grammar or move a cursor. LIKE metacharacters are treated as literal input.
+  const literal = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const like = (v: string) => literal(`%${v.replace(/[%_*\\]/g, (c) => `\\${c}`)}%`);
+  if (params.search?.trim()) {
+    const term = params.search.trim();
+    const tokens = term.split(/\s+/);
+    const filters = ["last_name", "first_name", "phone", "phone2", "email", "registration_number"]
+      .map((column) => `${column}.ilike.${like(term)}`);
+    if (/^0*\d+$/.test(term)) {
+      const number = term.replace(/^0+/, "") || "0";
+      filters.push(`registration_number.ilike.${like(number)}`);
+    }
+    if (tokens.length > 1) {
+      for (let split = 1; split < tokens.length; split += 1) {
+        const first = like(tokens.slice(0, split).join(" "));
+        const last = like(tokens.slice(split).join(" "));
+        filters.push(`and(first_name.ilike.${first},last_name.ilike.${last})`,
+          `and(last_name.ilike.${first},first_name.ilike.${last})`);
+      }
+    }
+    q = q.or(filters.join(","));
   }
-
-  // Pagination par clé : uniquement les lignes APRÈS le curseur.
   if (params.cursor) {
     const { lastName, firstName, id } = params.cursor;
-    const esc = (v: string) => v.replace(/[(),]/g, " ");
-    q = q.or(
-      [
-        `last_name.gt.${esc(lastName)}`,
-        `and(last_name.eq.${esc(lastName)},first_name.gt.${esc(firstName)})`,
-        `and(last_name.eq.${esc(lastName)},first_name.eq.${esc(firstName)},id.gt.${esc(id)})`,
-      ].join(","),
-    );
+    q = q.or([
+      `last_name.gt.${literal(lastName)}`,
+      `and(last_name.eq.${literal(lastName)},first_name.gt.${literal(firstName)})`,
+      `and(last_name.eq.${literal(lastName)},first_name.eq.${literal(firstName)},id.gt.${literal(id)})`,
+    ].join(","));
   }
 
   if (params.signal) q = q.abortSignal(params.signal);
