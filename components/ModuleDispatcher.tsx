@@ -65,7 +65,6 @@ const dyn = (loader: () => Promise<React.ComponentType<Record<string, never>>>) 
 const ClassesPage = dyn(loaders.classes);
 const PlannerPage = dyn(loaders.planner);
 const SubscriptionsPage = dyn(loaders.subscriptions);
-const StudentDirectoryPage = dynamic(() => import("@/components/pages/StudentDirectoryPage").then((m) => m.StudentDirectoryPage), { ssr: false, loading: () => <PageFallback /> });
 const StudentsPage = dyn(loaders.students);
 const AttendancePage = dyn(loaders.attendance);
 const TeachersPage = dyn(loaders.teachers);
@@ -134,7 +133,7 @@ export function ModuleDispatcher({ slug }: { slug: string[] }) {
     case "subscriptions":
       return <SubscriptionsPage />;
     case "students":
-      return slug[1] === "complete" ? <StudentsPage /> : <StudentDirectoryPage key={user?.id} />;
+      return <StudentsPage />;
     case "attendance":
       return <AttendancePage />;
     case "teachers":
