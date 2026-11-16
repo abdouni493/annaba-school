@@ -29,7 +29,6 @@ vi.mock("@/lib/store/session", () => ({ useSession: create(() => ({
   user: { id: "desk-a", role: "reception", entityId: "worker-a" }, hydrated: true, initSession: () => {},
 })) }));
 import { SessionProvider } from "@/components/providers/SessionProvider";
-import { useDirectoryAccess } from "@/lib/repo/studentDirectory";
 import { useSession } from "@/lib/store/session";
 let root: Root; let host: HTMLDivElement;
 const render = async () => act(async () => { root.render(<SessionProvider><p>Screen</p></SessionProvider>); });
@@ -46,21 +45,21 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 describe("real SessionProvider entry path", () => {
-  it("direct Students entry loads only worker permissions, no full boot, no maintenance, no mirror", async () => {
+  it.each(["/students", "/students/complete"])("boots the card workspace on direct entry to %s", async (path) => {
+    mocks.path = path;
     await render();
-    expect(mocks.boot).not.toHaveBeenCalled(); expect(mocks.jobs).not.toHaveBeenCalled();
-    expect(mocks.writes).not.toHaveBeenCalled();
-    expect(mocks.query.mock.calls.map((c) => c[0])).toEqual(["reception_staff"]);
-    expect(useDirectoryAccess.getState().rights?.pages).toEqual(["students"]);
+    expect(mocks.boot).toHaveBeenCalledExactlyOnceWith("worker-a");
+    expect(mocks.query).not.toHaveBeenCalled();
   });
-  it("preserves the normal landing page and full legacy workflows on navigation", async () => {
-    await render(); mocks.path = "/dashboard"; await render();
-    expect(mocks.boot).toHaveBeenCalledTimes(1);
-    mocks.path = "/students"; await render();
-    expect(mocks.boot).toHaveBeenCalledTimes(1);
-  });
-  it("automatically replays an existing dirty offline snapshot through legacy boot", async () => {
-    mocks.pending = true; await render(); expect(mocks.boot).toHaveBeenCalledWith("worker-a");
+  it("boots once when login lands on Dashboard and the sidebar opens Students", async () => {
+    mocks.path = "/login";
+    await render();
+    expect(mocks.boot).not.toHaveBeenCalled();
+    mocks.path = "/dashboard";
+    await render();
+    mocks.path = "/students";
+    await render();
+    expect(mocks.boot).toHaveBeenCalledExactlyOnceWith("worker-a");
   });
   it("four-minute return and reconnect refresh scopes, not the database", async () => {
     mocks.path = "/dashboard"; await render(); mocks.revalidate.mockClear();
@@ -75,7 +74,6 @@ describe("real SessionProvider entry path", () => {
   it("switches accounts without adopting old worker permissions", async () => {
     await render();
     await act(async () => useSession.setState({ user: { id: "desk-b", role: "admin" } } as never));
-    expect(useDirectoryAccess.getState().account).toBe("desk-b");
-    expect(useDirectoryAccess.getState().rights?.unrestricted).toBe(true);
+    expect(mocks.boot.mock.calls).toEqual([["worker-a"], ["desk-b"]]);
   });
 });

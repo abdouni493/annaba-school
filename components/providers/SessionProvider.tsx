@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
-import { isDirectoryRoute, prepareDirectory, clearDirectoryAccess } from "@/lib/repo/studentDirectory";
 import { useSession } from "@/lib/store/session";
 import { setCurrentActor, useData, type BootResult } from "@/lib/store/data";
 import {
@@ -22,7 +21,7 @@ import { refreshActiveAttendance, resetAttendanceRefresh } from "@/lib/supabase/
  */
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [legacyAccount, setLegacyAccount] = useState<string | null>(null);
+  const onLoginPage = pathname === "/login";
   const initSession = useSession((s) => s.initSession);
   const user = useSession((s) => s.user);
   const hydrated = useSession((s) => s.hydrated);
@@ -32,12 +31,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const clear = useData((s) => s.clear);
   const processWeeklyAbsences = useData((s) => s.processWeeklyAbsences);
   const dropVoidTeacherDues = useData((s) => s.dropVoidTeacherDues);
-
-  const directory = isDirectoryRoute(pathname, user);
-  const needsLegacy = !!user && ((!directory && pathname !== "/login") || legacyAccount === user.id);
-  const scopedEntry = directory && !needsLegacy;
-  // Remember activation for this account without a second post-paint effect.
-  if (needsLegacy && user && legacyAccount !== user.id) setLegacyAccount(user.id);
 
   useEffect(() => {
     fetchSchool();
@@ -68,7 +61,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     if (!user) {
       resetAttendanceRefresh();
-      clearDirectoryAccess();
       // Signed out: stop writing back and drop the data of the previous account.
       stopSync();
       clear();
@@ -76,16 +68,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (!needsLegacy) {
-      stopSync();
-      clear();
-      if (!scopedEntry) return;
-      void prepareDirectory(user).then((pending) => {
-        if (pending) setLegacyAccount(user.id);
-      });
-      return () => { clearDirectoryAccess(); };
-    }
-    clearDirectoryAccess();
+    if (onLoginPage) return;
+
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retries = 0;
@@ -289,7 +273,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, user?.id, user?.role, user?.entityId, needsLegacy, scopedEntry]);
+  }, [hydrated, user?.id, user?.role, user?.entityId, onLoginPage]);
 
   return <>{children}</>;
 }

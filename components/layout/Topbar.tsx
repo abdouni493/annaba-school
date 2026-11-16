@@ -60,7 +60,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
 
       <div className="ms-auto flex items-center gap-2 md:gap-3">
         {canScan && (
-          <Button size="sm" onClick={() => { setScanOpen(true); if (!loaded) router.push("/students/complete"); }} className="hidden sm:inline-flex">
+          <Button size="sm" onClick={() => { setScanOpen(true); if (!loaded) router.push("/students"); }} className="hidden sm:inline-flex">
             <ScanLine className="h-4 w-4" />
             {t("act.scanCard")}
           </Button>

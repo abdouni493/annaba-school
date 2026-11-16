@@ -67,7 +67,7 @@ export function GlobalRFIDListener() {
               useDeferredScan.setState((state) => ({ account: account ?? null,
                 codes: state.account === account ? [...state.codes, code] : [code],
               }));
-              if (!loaded) router.push("/students/complete");
+              if (!loaded) router.push("/students");
             } else void processScan(code);
           }
         }

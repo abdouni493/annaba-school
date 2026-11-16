@@ -28,7 +28,7 @@ const swipe = async (code: string) => act(async () => {
 });
 it("a card outside the directory page is queued, not reported missing, and processed once after complete boot", async () => {
   await swipe("RFID-outside-page"); await swipe("RFID-second");
-  expect(mocks.scan).not.toHaveBeenCalled(); expect(mocks.push).toHaveBeenCalledWith("/students/complete");
+  expect(mocks.scan).not.toHaveBeenCalled(); expect(mocks.push).toHaveBeenCalledWith("/students");
   await act(async () => useData.setState({ loaded: true, revalidating: true }));
   expect(mocks.scan).not.toHaveBeenCalled();
   await act(async () => useData.setState({ revalidating: false }));
