@@ -1,0 +1,3693 @@
+{
+  "fixture": "/tmp/annaba-synthetic-base.json",
+  "network": "local intercepted synthetic; no latency/CPU shaping; no production calls",
+  "results": [
+    {
+      "variant": "before-card-parity",
+      "history": 1000,
+      "scenario": "direct",
+      "sample": 0,
+      "browser": "156.0.8078.79",
+      "stages": [
+        {
+          "name": "direct /students",
+          "usableMs": 3763.210768,
+          "foreground": {
+            "requests": 48,
+            "rows": 3610,
+            "jsonBytes": 2164010,
+            "calls": [
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "class_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 306
+              },
+              {
+                "table": "modules",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 395
+              },
+              {
+                "table": "class_groups",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 292
+              },
+              {
+                "table": "salles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 289
+              },
+              {
+                "table": "classes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1074
+              },
+              {
+                "table": "teachers",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1267
+              },
+              {
+                "table": "worker_roles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "reception_staff",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 253
+              },
+              {
+                "table": "parents",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 673
+              },
+              {
+                "table": "schedule_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 2833
+              },
+              {
+                "table": "subscriptions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 1649
+              },
+              {
+                "table": "students",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 508,
+                "bytes": 330705
+              },
+              {
+                "table": "student_credentials",
+                "method": "GET",
+                "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 171
+              },
+              {
+                "table": "enrollments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 12,
+                "bytes": 3878
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 585891
+              },
+              {
+                "table": "student_charges",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "absence_penalties",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 827891
+              },
+              {
+                "table": "teacher_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 216
+              },
+              {
+                "table": "teacher_expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 562
+              },
+              {
+                "table": "teacher_child_debts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 184
+              },
+              {
+                "table": "unpaid_teacher_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 879
+              },
+              {
+                "table": "worker_shifts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 597
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 10,
+                "bytes": 5079
+              },
+              {
+                "table": "worker_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "worker_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1,
+                "bytes": 658
+              },
+              {
+                "table": "worker_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "free_periods",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 348
+              },
+              {
+                "table": "module_absence_rules",
+                "method": "GET",
+                "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 108
+              },
+              {
+                "table": "subjects",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 508
+              },
+              {
+                "table": "announcements",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 624
+              },
+              {
+                "table": "expense_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 303
+              },
+              {
+                "table": "expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 526
+              },
+              {
+                "table": "cash_transactions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 7,
+                "bytes": 1312
+              },
+              {
+                "table": "notifications",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 313
+              },
+              {
+                "table": "coursework",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 247
+              },
+              {
+                "table": "independent_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 392
+              },
+              {
+                "table": "group_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "solo_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 391534
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 4,
+                "bytes": 1569
+              }
+            ]
+          },
+          "background": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "writes": [
+            {
+              "table": "unpaid_teacher_sessions",
+              "method": "DELETE"
+            }
+          ],
+          "cards": 508,
+          "cardTextDigest": "1766d911d4e6af2529054992a73135edebb72ab890d58feda6a347fae7123ae9",
+          "filterCounts": [
+            "Tous508",
+            "En dette2",
+            "Solde faible1",
+            "À jour506",
+            "Cas spéciaux2"
+          ]
+        },
+        {
+          "name": "refresh /students",
+          "usableMs": 3442.5013789999994,
+          "foreground": {
+            "requests": 48,
+            "rows": 3610,
+            "jsonBytes": 2164010,
+            "calls": [
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "class_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 306
+              },
+              {
+                "table": "modules",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 395
+              },
+              {
+                "table": "class_groups",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 292
+              },
+              {
+                "table": "salles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 289
+              },
+              {
+                "table": "classes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1074
+              },
+              {
+                "table": "teachers",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1267
+              },
+              {
+                "table": "worker_roles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "reception_staff",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 253
+              },
+              {
+                "table": "parents",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 673
+              },
+              {
+                "table": "schedule_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 2833
+              },
+              {
+                "table": "subscriptions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 1649
+              },
+              {
+                "table": "students",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 508,
+                "bytes": 330705
+              },
+              {
+                "table": "student_credentials",
+                "method": "GET",
+                "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 171
+              },
+              {
+                "table": "enrollments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 12,
+                "bytes": 3878
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 585891
+              },
+              {
+                "table": "student_charges",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 391534
+              },
+              {
+                "table": "absence_penalties",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 827891
+              },
+              {
+                "table": "teacher_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 216
+              },
+              {
+                "table": "teacher_expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 562
+              },
+              {
+                "table": "teacher_child_debts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 184
+              },
+              {
+                "table": "unpaid_teacher_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 879
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 10,
+                "bytes": 5079
+              },
+              {
+                "table": "worker_shifts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 597
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 4,
+                "bytes": 1569
+              },
+              {
+                "table": "worker_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1,
+                "bytes": 658
+              },
+              {
+                "table": "worker_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "worker_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "free_periods",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 348
+              },
+              {
+                "table": "module_absence_rules",
+                "method": "GET",
+                "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 108
+              },
+              {
+                "table": "subjects",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 508
+              },
+              {
+                "table": "announcements",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 624
+              },
+              {
+                "table": "expense_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 303
+              },
+              {
+                "table": "expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 526
+              },
+              {
+                "table": "cash_transactions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 7,
+                "bytes": 1312
+              },
+              {
+                "table": "notifications",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 313
+              },
+              {
+                "table": "coursework",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 247
+              },
+              {
+                "table": "independent_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 392
+              },
+              {
+                "table": "group_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "solo_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              }
+            ]
+          },
+          "background": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "writes": [
+            {
+              "table": "unpaid_teacher_sessions",
+              "method": "DELETE"
+            },
+            {
+              "table": "unpaid_teacher_sessions",
+              "method": "DELETE"
+            }
+          ],
+          "cards": 508,
+          "cardTextDigest": "1766d911d4e6af2529054992a73135edebb72ab890d58feda6a347fae7123ae9",
+          "filterCounts": [
+            "Tous508",
+            "En dette2",
+            "Solde faible1",
+            "À jour506",
+            "Cas spéciaux2"
+          ]
+        },
+        {
+          "name": "46-second background polling window",
+          "usableMs": 261.38268699999935,
+          "foreground": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "background": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "writes": [],
+          "cards": 508,
+          "cardTextDigest": "1766d911d4e6af2529054992a73135edebb72ab890d58feda6a347fae7123ae9",
+          "filterCounts": [
+            "Tous508",
+            "En dette2",
+            "Solde faible1",
+            "À jour506",
+            "Cas spéciaux2"
+          ]
+        }
+      ],
+      "errors": [],
+      "total": {
+        "requests": 96,
+        "rows": 7220,
+        "jsonBytes": 4328020,
+        "calls": [
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "class_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 306
+          },
+          {
+            "table": "modules",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 395
+          },
+          {
+            "table": "class_groups",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 292
+          },
+          {
+            "table": "salles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 289
+          },
+          {
+            "table": "classes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1074
+          },
+          {
+            "table": "teachers",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1267
+          },
+          {
+            "table": "worker_roles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "reception_staff",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 253
+          },
+          {
+            "table": "parents",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 673
+          },
+          {
+            "table": "schedule_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 2833
+          },
+          {
+            "table": "subscriptions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 1649
+          },
+          {
+            "table": "students",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 508,
+            "bytes": 330705
+          },
+          {
+            "table": "student_credentials",
+            "method": "GET",
+            "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 171
+          },
+          {
+            "table": "enrollments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 12,
+            "bytes": 3878
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 585891
+          },
+          {
+            "table": "student_charges",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "absence_penalties",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 827891
+          },
+          {
+            "table": "teacher_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 216
+          },
+          {
+            "table": "teacher_expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 562
+          },
+          {
+            "table": "teacher_child_debts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 184
+          },
+          {
+            "table": "unpaid_teacher_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 879
+          },
+          {
+            "table": "worker_shifts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 597
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 10,
+            "bytes": 5079
+          },
+          {
+            "table": "worker_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "worker_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1,
+            "bytes": 658
+          },
+          {
+            "table": "worker_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "free_periods",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 348
+          },
+          {
+            "table": "module_absence_rules",
+            "method": "GET",
+            "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 108
+          },
+          {
+            "table": "subjects",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 508
+          },
+          {
+            "table": "announcements",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 624
+          },
+          {
+            "table": "expense_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 303
+          },
+          {
+            "table": "expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 526
+          },
+          {
+            "table": "cash_transactions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 7,
+            "bytes": 1312
+          },
+          {
+            "table": "notifications",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 313
+          },
+          {
+            "table": "coursework",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 247
+          },
+          {
+            "table": "independent_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 392
+          },
+          {
+            "table": "group_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "solo_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 391534
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 4,
+            "bytes": 1569
+          },
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "class_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 306
+          },
+          {
+            "table": "modules",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 395
+          },
+          {
+            "table": "class_groups",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 292
+          },
+          {
+            "table": "salles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 289
+          },
+          {
+            "table": "classes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1074
+          },
+          {
+            "table": "teachers",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1267
+          },
+          {
+            "table": "worker_roles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "reception_staff",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 253
+          },
+          {
+            "table": "parents",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 673
+          },
+          {
+            "table": "schedule_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 2833
+          },
+          {
+            "table": "subscriptions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 1649
+          },
+          {
+            "table": "students",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 508,
+            "bytes": 330705
+          },
+          {
+            "table": "student_credentials",
+            "method": "GET",
+            "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 171
+          },
+          {
+            "table": "enrollments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 12,
+            "bytes": 3878
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 585891
+          },
+          {
+            "table": "student_charges",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 391534
+          },
+          {
+            "table": "absence_penalties",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 827891
+          },
+          {
+            "table": "teacher_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 216
+          },
+          {
+            "table": "teacher_expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 562
+          },
+          {
+            "table": "teacher_child_debts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 184
+          },
+          {
+            "table": "unpaid_teacher_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 879
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 10,
+            "bytes": 5079
+          },
+          {
+            "table": "worker_shifts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 597
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 4,
+            "bytes": 1569
+          },
+          {
+            "table": "worker_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1,
+            "bytes": 658
+          },
+          {
+            "table": "worker_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "worker_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "free_periods",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 348
+          },
+          {
+            "table": "module_absence_rules",
+            "method": "GET",
+            "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 108
+          },
+          {
+            "table": "subjects",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 508
+          },
+          {
+            "table": "announcements",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 624
+          },
+          {
+            "table": "expense_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 303
+          },
+          {
+            "table": "expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 526
+          },
+          {
+            "table": "cash_transactions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 7,
+            "bytes": 1312
+          },
+          {
+            "table": "notifications",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 313
+          },
+          {
+            "table": "coursework",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 247
+          },
+          {
+            "table": "independent_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 392
+          },
+          {
+            "table": "group_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "solo_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          }
+        ]
+      },
+      "writes": [
+        {
+          "table": "unpaid_teacher_sessions",
+          "method": "DELETE"
+        },
+        {
+          "table": "unpaid_teacher_sessions",
+          "method": "DELETE"
+        },
+        {
+          "table": "unpaid_teacher_sessions",
+          "method": "DELETE"
+        }
+      ]
+    },
+    {
+      "variant": "before-card-parity",
+      "history": 10000,
+      "scenario": "direct",
+      "sample": 0,
+      "browser": "156.0.8078.79",
+      "stages": [
+        {
+          "name": "direct /students",
+          "usableMs": 5740.204619999999,
+          "foreground": {
+            "requests": 75,
+            "rows": 30610,
+            "jsonBytes": 18445037,
+            "calls": [
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "class_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 306
+              },
+              {
+                "table": "modules",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 395
+              },
+              {
+                "table": "class_groups",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 292
+              },
+              {
+                "table": "salles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 289
+              },
+              {
+                "table": "classes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1074
+              },
+              {
+                "table": "teachers",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1267
+              },
+              {
+                "table": "worker_roles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "reception_staff",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 253
+              },
+              {
+                "table": "parents",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 673
+              },
+              {
+                "table": "schedule_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 2833
+              },
+              {
+                "table": "subscriptions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 1649
+              },
+              {
+                "table": "students",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 508,
+                "bytes": 330705
+              },
+              {
+                "table": "student_credentials",
+                "method": "GET",
+                "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 171
+              },
+              {
+                "table": "enrollments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 12,
+                "bytes": 3878
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 586887
+              },
+              {
+                "table": "student_charges",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "absence_penalties",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 828887
+              },
+              {
+                "table": "teacher_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 216
+              },
+              {
+                "table": "teacher_expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 562
+              },
+              {
+                "table": "teacher_child_debts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 184
+              },
+              {
+                "table": "unpaid_teacher_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 879
+              },
+              {
+                "table": "worker_shifts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 597
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "worker_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "worker_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "worker_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "free_periods",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 348
+              },
+              {
+                "table": "module_absence_rules",
+                "method": "GET",
+                "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 108
+              },
+              {
+                "table": "subjects",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 508
+              },
+              {
+                "table": "announcements",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 624
+              },
+              {
+                "table": "expense_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 303
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+                "rows": 1000,
+                "bytes": 586893
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+                "rows": 10,
+                "bytes": 5079
+              },
+              {
+                "table": "expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 526
+              },
+              {
+                "table": "cash_transactions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 7,
+                "bytes": 1312
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+                "rows": 1000,
+                "bytes": 828893
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+                "rows": 1,
+                "bytes": 658
+              },
+              {
+                "table": "notifications",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 313
+              },
+              {
+                "table": "coursework",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 247
+              },
+              {
+                "table": "independent_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 392
+              },
+              {
+                "table": "group_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "solo_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 392526
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+                "rows": 1000,
+                "bytes": 392893
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+                "rows": 4,
+                "bytes": 1573
+              }
+            ]
+          },
+          "background": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "writes": [
+            {
+              "table": "unpaid_teacher_sessions",
+              "method": "DELETE"
+            }
+          ],
+          "cards": 508,
+          "cardTextDigest": "1766d911d4e6af2529054992a73135edebb72ab890d58feda6a347fae7123ae9",
+          "filterCounts": [
+            "Tous508",
+            "En dette2",
+            "Solde faible1",
+            "À jour506",
+            "Cas spéciaux2"
+          ]
+        },
+        {
+          "name": "refresh /students",
+          "usableMs": 4843.069218000001,
+          "foreground": {
+            "requests": 75,
+            "rows": 30610,
+            "jsonBytes": 18445037,
+            "calls": [
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "profiles",
+                "method": "GET",
+                "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+                "rows": 1,
+                "bytes": 154
+              },
+              {
+                "table": "schools",
+                "method": "GET",
+                "query": "?select=*&id=eq.school",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "class_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 306
+              },
+              {
+                "table": "modules",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 395
+              },
+              {
+                "table": "class_groups",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 292
+              },
+              {
+                "table": "salles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 289
+              },
+              {
+                "table": "classes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1074
+              },
+              {
+                "table": "teachers",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 1267
+              },
+              {
+                "table": "worker_roles",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "reception_staff",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 253
+              },
+              {
+                "table": "parents",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 673
+              },
+              {
+                "table": "schedule_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 2833
+              },
+              {
+                "table": "subscriptions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 6,
+                "bytes": 1649
+              },
+              {
+                "table": "students",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 508,
+                "bytes": 330705
+              },
+              {
+                "table": "student_credentials",
+                "method": "GET",
+                "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 171
+              },
+              {
+                "table": "enrollments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 12,
+                "bytes": 3878
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 586887
+              },
+              {
+                "table": "student_charges",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 392526
+              },
+              {
+                "table": "absence_penalties",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1000,
+                "bytes": 828887
+              },
+              {
+                "table": "teacher_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 216
+              },
+              {
+                "table": "teacher_expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 562
+              },
+              {
+                "table": "teacher_child_debts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 184
+              },
+              {
+                "table": "unpaid_teacher_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 4,
+                "bytes": 879
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "worker_shifts",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 597
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "worker_acomptes",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "worker_absences",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "worker_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "free_periods",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 348
+              },
+              {
+                "table": "module_absence_rules",
+                "method": "GET",
+                "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 108
+              },
+              {
+                "table": "subjects",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 508
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+                "rows": 1000,
+                "bytes": 586890
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+                "rows": 1000,
+                "bytes": 586893
+              },
+              {
+                "table": "payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+                "rows": 10,
+                "bytes": 5079
+              },
+              {
+                "table": "announcements",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 2,
+                "bytes": 624
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+                "rows": 1000,
+                "bytes": 392890
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+                "rows": 1000,
+                "bytes": 392893
+              },
+              {
+                "table": "attendance_records",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+                "rows": 4,
+                "bytes": 1573
+              },
+              {
+                "table": "expense_categories",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 303
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+                "rows": 1000,
+                "bytes": 828890
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+                "rows": 1000,
+                "bytes": 828893
+              },
+              {
+                "table": "teacher_payments",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+                "rows": 1,
+                "bytes": 658
+              },
+              {
+                "table": "expenses",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 3,
+                "bytes": 526
+              },
+              {
+                "table": "cash_transactions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 7,
+                "bytes": 1312
+              },
+              {
+                "table": "notifications",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 313
+              },
+              {
+                "table": "coursework",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 247
+              },
+              {
+                "table": "independent_sessions",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 1,
+                "bytes": 392
+              },
+              {
+                "table": "group_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              },
+              {
+                "table": "solo_seances",
+                "method": "GET",
+                "query": "?select=*&order=id.asc&offset=0&limit=1000",
+                "rows": 0,
+                "bytes": 2
+              }
+            ]
+          },
+          "background": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "writes": [
+            {
+              "table": "unpaid_teacher_sessions",
+              "method": "DELETE"
+            }
+          ],
+          "cards": 508,
+          "cardTextDigest": "1766d911d4e6af2529054992a73135edebb72ab890d58feda6a347fae7123ae9",
+          "filterCounts": [
+            "Tous508",
+            "En dette2",
+            "Solde faible1",
+            "À jour506",
+            "Cas spéciaux2"
+          ]
+        },
+        {
+          "name": "46-second background polling window",
+          "usableMs": 449.3522280000034,
+          "foreground": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "background": {
+            "requests": 0,
+            "rows": 0,
+            "jsonBytes": 0,
+            "calls": []
+          },
+          "writes": [],
+          "cards": 508,
+          "cardTextDigest": "1766d911d4e6af2529054992a73135edebb72ab890d58feda6a347fae7123ae9",
+          "filterCounts": [
+            "Tous508",
+            "En dette2",
+            "Solde faible1",
+            "À jour506",
+            "Cas spéciaux2"
+          ]
+        }
+      ],
+      "errors": [],
+      "total": {
+        "requests": 150,
+        "rows": 61220,
+        "jsonBytes": 36890074,
+        "calls": [
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "class_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 306
+          },
+          {
+            "table": "modules",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 395
+          },
+          {
+            "table": "class_groups",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 292
+          },
+          {
+            "table": "salles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 289
+          },
+          {
+            "table": "classes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1074
+          },
+          {
+            "table": "teachers",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1267
+          },
+          {
+            "table": "worker_roles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "reception_staff",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 253
+          },
+          {
+            "table": "parents",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 673
+          },
+          {
+            "table": "schedule_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 2833
+          },
+          {
+            "table": "subscriptions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 1649
+          },
+          {
+            "table": "students",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 508,
+            "bytes": 330705
+          },
+          {
+            "table": "student_credentials",
+            "method": "GET",
+            "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 171
+          },
+          {
+            "table": "enrollments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 12,
+            "bytes": 3878
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 586887
+          },
+          {
+            "table": "student_charges",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "absence_penalties",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 828887
+          },
+          {
+            "table": "teacher_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 216
+          },
+          {
+            "table": "teacher_expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 562
+          },
+          {
+            "table": "teacher_child_debts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 184
+          },
+          {
+            "table": "unpaid_teacher_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 879
+          },
+          {
+            "table": "worker_shifts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 597
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "worker_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "worker_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "worker_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "free_periods",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 348
+          },
+          {
+            "table": "module_absence_rules",
+            "method": "GET",
+            "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 108
+          },
+          {
+            "table": "subjects",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 508
+          },
+          {
+            "table": "announcements",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 624
+          },
+          {
+            "table": "expense_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 303
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+            "rows": 1000,
+            "bytes": 586893
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+            "rows": 10,
+            "bytes": 5079
+          },
+          {
+            "table": "expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 526
+          },
+          {
+            "table": "cash_transactions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 7,
+            "bytes": 1312
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+            "rows": 1000,
+            "bytes": 828893
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+            "rows": 1,
+            "bytes": 658
+          },
+          {
+            "table": "notifications",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 313
+          },
+          {
+            "table": "coursework",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 247
+          },
+          {
+            "table": "independent_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 392
+          },
+          {
+            "table": "group_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "solo_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 392526
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+            "rows": 1000,
+            "bytes": 392893
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+            "rows": 4,
+            "bytes": 1573
+          },
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "profiles",
+            "method": "GET",
+            "query": "?select=role%2Cfull_name%2Cusername%2Cemail%2Centity_id&id=eq.00000000-0000-4000-8000-000000000001",
+            "rows": 1,
+            "bytes": 154
+          },
+          {
+            "table": "schools",
+            "method": "GET",
+            "query": "?select=*&id=eq.school",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "class_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 306
+          },
+          {
+            "table": "modules",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 395
+          },
+          {
+            "table": "class_groups",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 292
+          },
+          {
+            "table": "salles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 289
+          },
+          {
+            "table": "classes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1074
+          },
+          {
+            "table": "teachers",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 1267
+          },
+          {
+            "table": "worker_roles",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "reception_staff",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 253
+          },
+          {
+            "table": "parents",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 673
+          },
+          {
+            "table": "schedule_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 2833
+          },
+          {
+            "table": "subscriptions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 6,
+            "bytes": 1649
+          },
+          {
+            "table": "students",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 508,
+            "bytes": 330705
+          },
+          {
+            "table": "student_credentials",
+            "method": "GET",
+            "query": "?select=*&order=student_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 171
+          },
+          {
+            "table": "enrollments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 12,
+            "bytes": 3878
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 586887
+          },
+          {
+            "table": "student_charges",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 392526
+          },
+          {
+            "table": "absence_penalties",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1000,
+            "bytes": 828887
+          },
+          {
+            "table": "teacher_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 216
+          },
+          {
+            "table": "teacher_expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 562
+          },
+          {
+            "table": "teacher_child_debts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 184
+          },
+          {
+            "table": "unpaid_teacher_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 4,
+            "bytes": 879
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "worker_shifts",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 597
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "worker_acomptes",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=1000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=2000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=3000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=4000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=5000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=6000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "worker_absences",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "worker_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "free_periods",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 348
+          },
+          {
+            "table": "module_absence_rules",
+            "method": "GET",
+            "query": "?select=*&order=module_id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 108
+          },
+          {
+            "table": "subjects",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 508
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+            "rows": 1000,
+            "bytes": 586890
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+            "rows": 1000,
+            "bytes": 586893
+          },
+          {
+            "table": "payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+            "rows": 10,
+            "bytes": 5079
+          },
+          {
+            "table": "announcements",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 2,
+            "bytes": 624
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+            "rows": 1000,
+            "bytes": 392890
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+            "rows": 1000,
+            "bytes": 392893
+          },
+          {
+            "table": "attendance_records",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+            "rows": 4,
+            "bytes": 1573
+          },
+          {
+            "table": "expense_categories",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 303
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=7000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=8000&limit=1000",
+            "rows": 1000,
+            "bytes": 828890
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=9000&limit=1000",
+            "rows": 1000,
+            "bytes": 828893
+          },
+          {
+            "table": "teacher_payments",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=10000&limit=1000",
+            "rows": 1,
+            "bytes": 658
+          },
+          {
+            "table": "expenses",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 3,
+            "bytes": 526
+          },
+          {
+            "table": "cash_transactions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 7,
+            "bytes": 1312
+          },
+          {
+            "table": "notifications",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 313
+          },
+          {
+            "table": "coursework",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 247
+          },
+          {
+            "table": "independent_sessions",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 1,
+            "bytes": 392
+          },
+          {
+            "table": "group_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          },
+          {
+            "table": "solo_seances",
+            "method": "GET",
+            "query": "?select=*&order=id.asc&offset=0&limit=1000",
+            "rows": 0,
+            "bytes": 2
+          }
+        ]
+      },
+      "writes": [
+        {
+          "table": "unpaid_teacher_sessions",
+          "method": "DELETE"
+        },
+        {
+          "table": "unpaid_teacher_sessions",
+          "method": "DELETE"
+        }
+      ]
+    }
+  ],
+  "fixtureSha256": "e9583363edc25741605334942f253075f6763a19d737d0cdfc0f8d8360a6ea9f"
+}

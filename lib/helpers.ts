@@ -1411,6 +1411,23 @@ function attendanceOf(
  */
 const paymentIndex = new WeakMap<Payment[], Map<string, Payment[]>>();
 
+// Arrays in useData are immutable. Keep student lookups tied to that exact
+// array, rather than rescanning the school's ledger for every card/filter.
+const studentRowsIndex = new WeakMap<object, Map<string, { studentId: string }[]>>();
+function rowsForStudent<T extends { studentId: string }>(rows: T[], studentId: string): T[] {
+  let index = studentRowsIndex.get(rows);
+  if (!index) {
+    index = new Map();
+    for (const row of rows) {
+      const list = index.get(row.studentId);
+      if (list) list.push(row);
+      else index.set(row.studentId, [row]);
+    }
+    studentRowsIndex.set(rows, index);
+  }
+  return (index.get(studentId) ?? []) as T[];
+}
+
 function paymentsOf(db: Database, studentId: string, subscriptionId: string): Payment[] {
   let index = paymentIndex.get(db.payments);
   if (!index) {
@@ -1433,8 +1450,7 @@ export function sessionAttendance(
   studentId: string,
   sessionId: string,
 ): AttendanceRecord[] {
-  return db.attendance
-    .filter((a) => a.studentId === studentId && a.sessionId === sessionId)
+  return [...attendanceOf(db, studentId, sessionId)]
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
@@ -1636,8 +1652,7 @@ export function enrollmentCycles(
 
   // Money is attributed to the month reception credited it to.
   const credits: Record<string, number> = {};
-  for (const p of db.payments) {
-    if (p.studentId !== studentId || p.subscriptionId !== subscriptionId) continue;
+  for (const p of paymentsOf(db, studentId, subscriptionId)) {
     const code = p.monthCode || "M1";
     credits[code] = (credits[code] ?? 0) + p.amountPaid;
   }
@@ -1946,7 +1961,7 @@ export function seanceBalance(enrollment: Enrollment): number {
 }
 
 export function studentEnrollments(db: Database, studentId: string): Enrollment[] {
-  return db.enrollments.filter((e) => e.studentId === studentId);
+  return [...rowsForStudent(db.enrollments, studentId)];
 }
 
 /** Total séances left across every inscription of a student. */
@@ -1961,8 +1976,7 @@ export function attendedSeances(db: Database, studentId: string): number {
 }
 
 export function studentPayments(db: Database, studentId: string): Payment[] {
-  return db.payments
-    .filter((p) => p.studentId === studentId)
+  return [...rowsForStudent(db.payments, studentId)]
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
@@ -1971,8 +1985,7 @@ export function studentPayments(db: Database, studentId: string): Payment[] {
  * the red, plus whatever an old purchase left unpaid.
  */
 export function studentDebt(db: Database, studentId: string): number {
-  const rests = db.payments
-    .filter((p) => p.studentId === studentId)
+  const rests = rowsForStudent(db.payments, studentId)
     .reduce((s, p) => s + p.rest, 0);
   return Math.max(0, rests + studentSoldDebt(db, studentId));
 }
@@ -1997,7 +2010,7 @@ export function studentUnpaidPayments(db: Database, studentId: string): Payment[
 export function studentSubscriptionHistory(db: Database, student: Student): string[] {
   const ids = new Set(student.subscriptionIds);
   for (const id of Object.keys(student.subscriptionDates ?? {})) ids.add(id);
-  for (const e of db.enrollments) if (e.studentId === student.id) ids.add(e.subscriptionId);
+  for (const e of rowsForStudent(db.enrollments, student.id)) ids.add(e.subscriptionId);
   return [...ids].filter((id) => db.subscriptions.some((s) => s.id === id));
 }
 
@@ -2145,8 +2158,7 @@ export function chargeRemaining(charge: StudentCharge): number {
 
 /** TOUS les frais d'un élève, du plus récent au plus ancien. */
 export function studentChargesOf(db: Database, studentId: string): StudentCharge[] {
-  return db.studentCharges
-    .filter((c) => c.studentId === studentId)
+  return [...rowsForStudent(db.studentCharges, studentId)]
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 

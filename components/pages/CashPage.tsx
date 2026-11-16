@@ -44,6 +44,11 @@ import { useToast } from "@/lib/store/toast";
 
 import { useCan } from "@/lib/usePermissions";
 export function CashPage() {
+  // Bound DOM work only. Totals, running balances, filters and printing below
+  // continue to use the full selected period, never these visible slices.
+  const [settlementLimit, setSettlementLimit] = useState(50);
+  const [groupLimit, setGroupLimit] = useState(50);
+  const [journalLimit, setJournalLimit] = useState(50);
   const can = useCan("cash");
   const db = useData();
   const { addToast } = useToast();
@@ -476,10 +481,11 @@ export function CashPage() {
   const journalRows = (() => {
     const chrono = tabTxList.slice().sort((a, b) => a.date.localeCompare(b.date));
     let running = 0;
-    const rows = chrono.map((tx) => {
+    const rows: { tx: CashTransaction; running: number }[] = [];
+    for (const tx of chrono) {
       running += tx.amount;
-      return { tx, running };
-    });
+      rows.push({ tx, running });
+    }
     return rows.reverse();
   })();
 
@@ -1119,7 +1125,7 @@ export function CashPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {periodSettlements.map((pay) => {
+                  {periodSettlements.slice(0, settlementLimit).map((pay) => {
                     const b = pay.board;
                     return (
                       <tr key={pay.id}>
@@ -1175,6 +1181,7 @@ export function CashPage() {
                 </tbody>
               </table>
             </div>
+            <HistoryMore label="règlements enseignants" shown={settlementLimit} total={periodSettlements.length} onMore={() => setSettlementLimit((n) => n + 50)} />
             <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
               Un règlement se lit en trois tables : les <strong>élèves du mois</strong>, les{" "}
               <strong>arriérés rattrapés</strong> (des parts d&apos;un mois déjà réglé, libérées par
@@ -1206,7 +1213,7 @@ export function CashPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {periodGroupSeances.map((g) => {
+                  {periodGroupSeances.slice(0, groupLimit).map((g) => {
                     const t = groupSeanceTotals(g);
                     return (
                       <tr key={g.id}>
@@ -1243,6 +1250,7 @@ export function CashPage() {
           </div>
         )}
 
+        {periodGroupSeances.length > 0 && <HistoryMore label="séances libres" shown={groupLimit} total={periodGroupSeances.length} onMore={() => setGroupLimit((n) => n + 50)} />}
         {/* Transaction Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
@@ -1272,7 +1280,7 @@ export function CashPage() {
                   </td>
                 </tr>
               ) : (
-                journalRows.map(({ tx, running }) => (
+                journalRows.slice(0, journalLimit).map(({ tx, running }) => (
                   <tr key={tx.id} className="hover:bg-primary-50/10 transition-colors group">
                     <td className="p-4 pl-6 font-mono text-[10px] text-muted">
                       <div className="flex items-center gap-1.5">
@@ -1366,6 +1374,7 @@ export function CashPage() {
       </div>
 
       {/* Deposit Modal */}
+      <HistoryMore label="transactions" shown={journalLimit} total={journalRows.length} onMore={() => setJournalLimit((n) => n + 50)} />
       <Modal open={isDepositOpen} onClose={() => setIsDepositOpen(false)} title="Nouveau dépôt en caisse">
         <div className="space-y-4">
           <div>
@@ -1535,6 +1544,7 @@ function StudentPaymentsHistory({
   to: string;
   query: string;
 }) {
+  const [visibleLimit, setVisibleLimit] = useState(50);
   const db = useData();
   const { payments, students, subscriptions, sessions } = db;
   const [source, setSource] = useState<"all" | PaymentSource>("all");
@@ -1646,7 +1656,7 @@ function StudentPaymentsHistory({
                 </td>
               </tr>
             ) : (
-              rows.map((p) => {
+              rows.slice(0, visibleLimit).map((p) => {
                 const stu = students.find((s) => s.id === p.studentId);
                 const sub = subscriptions.find((s) => s.id === p.subscriptionId);
                 const ses = sub && sessions.find((s) => s.id === sub.sessionId);
@@ -1715,7 +1725,16 @@ function StudentPaymentsHistory({
           </tbody>
         </table>
       </div>
+      <HistoryMore label="paiements élèves" shown={visibleLimit} total={rows.length} onMore={() => setVisibleLimit((n) => n + 50)} />
     </div>
   );
+}
+
+function HistoryMore({ label, shown, total, onMore }: { label: string; shown: number; total: number; onMore: () => void }) {
+  if (shown >= total) return null;
+  return <button type="button" aria-label={`Afficher plus de ${label}`} onClick={onMore}
+    className="m-3 rounded-lg border border-line px-3 py-2 text-xs font-semibold text-primary hover:bg-primary-50">
+    Afficher 50 de plus · {shown} / {total}
+  </button>;
 }
 

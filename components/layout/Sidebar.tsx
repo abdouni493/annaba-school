@@ -10,6 +10,7 @@ import { useTranslation } from "@/lib/i18n/useTranslation";
 import { PERMISSION_PAGES } from "@/lib/permissions";
 import { useAccessRights } from "@/lib/usePermissions";
 import { cn } from "@/lib/utils";
+import { prefetchStaffModule } from "@/lib/staffModuleIntent";
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + "/");
@@ -110,6 +111,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <Link
               key={item.key}
               href={item.href}
+              onPointerEnter={() => { void prefetchStaffModule(item.href, role, rights); }}
+              onFocus={() => { void prefetchStaffModule(item.href, role, rights); }}
               onClick={() => handleClick(item)}
               className={classes}
             >

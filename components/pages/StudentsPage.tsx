@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useState, useEffect } from "react";
 import { useData, uid } from "@/lib/store/data";
+import { studentCardSummaries } from "@/lib/studentCardSummary";
 import { deleteRoleUser } from "@/lib/accounts/users";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -240,6 +241,9 @@ function RegistrationFeeModal({
 
 export function StudentsPage() {
   const db = useData();
+  // Keystrokes, filters and modal state do not change the financial snapshot.
+  // Share these values across cards, filter counts and alert totals.
+  const cardSummaries = React.useMemo(() => studentCardSummaries(db), [db]);
   const can = useCan("students");
   const {
     school,
@@ -509,36 +513,17 @@ export function StudentsPage() {
 
   /** Money left across every emploi du temps — his soldes added up. */
   const remainingFor = (student: Student) =>
-    student.subscriptionIds.reduce((t, subId) => t + soldFor(db, student.id, subId), 0);
-  const debtFor = (student: Student) => studentDebt(db, student.id);
+    cardSummaries.get(student.id)?.remaining ?? 0;
+  const debtFor = (student: Student) => cardSummaries.get(student.id)?.debt ?? 0;
+  const chargeDebtFor = (student: Student) => cardSummaries.get(student.id)?.chargeDebt ?? 0;
 
   /** How many séances his soldes still cover — what the WhatsApp templates
    *  speak in (they count séances, not dinars). */
-  const seancesLeftFor = (student: Student) =>
-    student.subscriptionIds.reduce((t, subId) => {
-      // SON tarif à LUI sur cet emploi du temps : une réduction cochée ici, ou
-      // « école seule », fait durer le même solde plus longtemps. Compter au
-      // tarif affiché de l'emploi annoncerait moins de séances qu'il n'en a.
-      const sub = subscriptions.find((x) => x.id === subId);
-      const unit = studentListPrice(student, sub);
-      const sold = soldFor(db, student.id, subId);
-      return t + (unit > 0 ? Math.max(0, Math.floor(sold / unit)) : 0);
-    }, 0);
+  const seancesLeftFor = (student: Student) => cardSummaries.get(student.id)?.seancesLeft ?? 0;
 
   /** At least one emploi du temps whose solde no longer covers two séances —
    *  the alert reception relaunches families on. */
-  const isSoonToRunOut = (student: Student) => {
-    if (student.subscriptionIds.length === 0) return false;
-    return student.subscriptionIds.some((subId) => {
-      // Un emploi du temps OFFERT n'a pas de solde à surveiller : la gratuité
-      // se coche module par module, donc la question se pose emploi par emploi.
-      if (isFreeSub(student, subId)) return false;
-      const sub = subscriptions.find((x) => x.id === subId);
-      // Au tarif de CET élève sur CET emploi du temps — réduction comprise.
-      const st = soldStatus(soldFor(db, student.id, subId), studentListPrice(student, sub));
-      return st !== "ok";
-    });
-  };
+  const isSoonToRunOut = (student: Student) => cardSummaries.get(student.id)?.soon ?? false;
 
   // Filter students based on queries
   const getFilteredStudents = () => {
@@ -555,9 +540,9 @@ export function StudentsPage() {
       // frais divers. Un élève qui ne doit qu'un livre reste un élève à qui il
       // faut réclamer quelque chose.
       if (filterType === "debt")
-        return debtFor(s) > 0 || (s.registrationDue ?? 0) > 0 || studentChargeDebt(db, s.id) > 0;
+        return debtFor(s) > 0 || (s.registrationDue ?? 0) > 0 || chargeDebtFor(s) > 0;
       if (filterType === "paid")
-        return debtFor(s) === 0 && (s.registrationDue ?? 0) === 0 && studentChargeDebt(db, s.id) === 0;
+        return debtFor(s) === 0 && (s.registrationDue ?? 0) === 0 && chargeDebtFor(s) === 0;
       if (filterType === "free") return s.isFree;
       if (filterType === "soon") return isSoonToRunOut(s);
 
@@ -1690,10 +1675,10 @@ export function StudentsPage() {
 
   // Les chiffres du bandeau et des filtres : comptés une fois par rendu.
   const debtStudents = students.filter(
-    (s) => debtFor(s) > 0 || (s.registrationDue ?? 0) > 0 || studentChargeDebt(db, s.id) > 0,
+    (s) => debtFor(s) > 0 || (s.registrationDue ?? 0) > 0 || chargeDebtFor(s) > 0,
   );
   const debtAmount = debtStudents.reduce(
-    (t, s) => t + debtFor(s) + (s.registrationDue ?? 0) + studentChargeDebt(db, s.id),
+    (t, s) => t + debtFor(s) + (s.registrationDue ?? 0) + chargeDebtFor(s),
     0,
   );
   const lowStudents = students.filter(isSoonToRunOut);
@@ -1987,7 +1972,7 @@ export function StudentsPage() {
           const isOverlaid = overlayStudentId === stu.id;
           const debt = debtFor(stu);
           /** ses frais hors scolarité, avances de l'école comprises */
-          const chargeDue = studentChargeDebt(db, stu.id);
+          const chargeDue = chargeDebtFor(stu);
           const feeDue = positiveMoney(stu.registrationDue ?? 0);
           const number = registrationNumberOf(db, stu);
           const caseLabel = studentCaseLabel(stu);
@@ -2258,7 +2243,7 @@ export function StudentsPage() {
                     <div className="max-h-[86px] space-y-1 overflow-y-auto pe-0.5">
                       {stu.subscriptionIds.map((id) => {
                         const sub = subscriptions.find((x) => x.id === id);
-                        const sold = soldFor(db, stu.id, id);
+                        const sold = cardSummaries.get(stu.id)?.sold.get(id) ?? 0;
                         const offered = isFreeSub(stu, id);
                         // La réduction se coche emploi par emploi : la pastille
                         // ne la signale que là où elle s'applique, et le solde
@@ -2269,7 +2254,7 @@ export function StudentsPage() {
                           st === "debt" ? "bg-danger" : st === "empty" || st === "low" ? "bg-warning" : "bg-success";
                         const soldCls =
                           st === "debt" ? "text-danger" : st === "empty" || st === "low" ? "text-warning" : "text-ink";
-                        const month = currentCycleIndex(db, stu.id, id) + 1;
+                        const month = cardSummaries.get(stu.id)?.months.get(id) ?? 1;
                         return (
                           <div
                             key={id}
