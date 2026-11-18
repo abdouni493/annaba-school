@@ -12,7 +12,7 @@ const user = { id: uid, aud: 'authenticated', role: 'authenticated', email: 'syn
 const jwt = `e30.${Buffer.from(JSON.stringify({ sub: uid, role: 'authenticated', aud: 'authenticated', exp: Math.floor(Date.now()/1000)+3600 })).toString('base64url')}.synthetic`;
 const auth = { access_token: jwt, refresh_token: 'synthetic-refresh', token_type: 'bearer', expires_in: 3600,
   expires_at: Math.floor(Date.now()/1000)+3600, user };
-const sessionKey = 'altech-school-auth-vkdbinhvkswjoafcvhos';
+const sessionKey = 'altech-school-auth-nxbdvyfmtksknbvfcfdk';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });

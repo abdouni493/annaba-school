@@ -10,11 +10,11 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * setup; put them in `.env.local` to point the app at another project.
  */
 export const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://vkdbinhvkswjoafcvhos.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://nxbdvyfmtksknbvfcfdk.supabase.co";
 
 export const SUPABASE_ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZrZGJpbmh2a3N3am9hZmN2aG9zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQwNjM1MzMsImV4cCI6MjEwOTYzOTUzM30.rMYpkch45B-Lm3v0anv74BIq-82tus53DUZBf0tjJ8k";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im54YmR2eWZtdGtza25idmZjZmRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ5NTY2MDMsImV4cCI6MjExMDUzMjYwM30.UGHs3xfAjRVtmI6873JkO44SSJviDfMY8t1oHr8m0QA";
 
 let cached: SupabaseClient | null = null;
 

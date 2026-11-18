@@ -44,3 +44,6 @@ next-env.d.ts
 
 # supabase cli cache (jamais du code)
 supabase/.temp/
+
+# local DB migration backups (contain data) — never commit
+backups/

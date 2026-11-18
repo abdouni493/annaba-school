@@ -9,7 +9,7 @@ export const auth = {
   refresh_token: 'synthetic-refresh', token_type: 'bearer', expires_in: 3600,
   expires_at: Math.floor(Date.now()/1000)+3600, user,
 };
-export const sessionKey = 'altech-school-auth-vkdbinhvkswjoafcvhos';
+export const sessionKey = 'altech-school-auth-nxbdvyfmtksknbvfcfdk';
 
 export function historyFixture(base, history) {
   const data = structuredClone(base);
